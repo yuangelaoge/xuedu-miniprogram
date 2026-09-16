@@ -1,0 +1,66 @@
+.metric-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  margin-top: 22rpx;
+}
+.metric-field {
+  width: 48%;
+  box-sizing: border-box;
+  margin-bottom: 18rpx;
+  padding: 25rpx;
+  background: white;
+  border: 1rpx solid #eaf0f7;
+  border-radius: 22rpx;
+}
+.metric-input {
+  font-size: 44rpx;
+  font-weight: 600;
+  height: 65rpx;
+  color: #295caa;
+}
+.metric-unit {
+  font-size: 20rpx;
+  color: #9aa7b9;
+  margin-top: 12rpx;
+}
+.photo-list {
+  display: flex;
+  gap: 18rpx;
+  flex-wrap: wrap;
+}
+.photo-wrap {
+  position: relative;
+}
+.photo,
+.photo-add {
+  width: 185rpx;
+  height: 185rpx;
+  border-radius: 16rpx;
+}
+.photo-add {
+  background: #f1f5fc;
+  border: 2rpx dashed #cfdbed;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  color: #7f95b6;
+  font-size: 23rpx;
+}
+.photo-plus {
+  font-size: 44rpx;
+  margin-bottom: 12rpx;
+}
+.remove {
+  position: absolute;
+  right: 5rpx;
+  top: 5rpx;
+  background: #263a55b0;
+  color: white;
+  width: 42rpx;
+  height: 42rpx;
+  text-align: center;
+  border-radius: 50%;
+  font-size: 32rpx;
+}

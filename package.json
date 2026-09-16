@@ -1,0 +1,19 @@
+{
+  "name": "xuedu-miniprogram",
+  "version": "0.1.0",
+  "description": "学风督察小程序，本地交互体验版",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "",
+  "dependencies": {},
+  "devDependencies": {
+    "miniprogram-api-typings": "^2.8.3-1",
+    "typescript": "~5.9.3",
+    "tsx": "^4.20.0",
+    "miniprogram-automator": "0.12.1"
+  }
+}

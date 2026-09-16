@@ -1,0 +1,25 @@
+{
+  "classes": [
+    {
+      "id": "26-example-class",
+      "grade": "26",
+      "major": "示例专业",
+      "name": "26示例专业1班"
+    }
+  ],
+  "courses": [
+    {
+      "id": "course-example-01",
+      "name": "程序设计基础",
+      "teacher": "示例教师",
+      "nature": "专业必修",
+      "classIds": ["26-example-class"],
+      "classroom": "示例教学楼 101",
+      "weekday": 2,
+      "start": 3,
+      "end": 4,
+      "weeks": [1, 2, 3, 4, 5, 6, 7, 8],
+      "expected": 40
+    }
+  ]
+}

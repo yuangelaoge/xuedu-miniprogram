@@ -1,0 +1,16 @@
+node_modules/
+.DS_Store
+artifacts/
+project.private.config.json
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+cloudfunctions/**/node_modules/
+cloudfunctions/**/generated/
+*.log
+miniprogram/**/*.js
+miniprogram/**/*.wxss
+!miniprogram/assets/**

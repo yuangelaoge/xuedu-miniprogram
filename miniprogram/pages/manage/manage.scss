@@ -1,0 +1,16 @@
+.import-text {
+  margin-top: 22rpx;
+  min-height: 230rpx;
+  max-height: 600rpx;
+  font-family: monospace;
+  font-size: 22rpx;
+}
+.member-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 30rpx;
+  padding-top: 24rpx;
+  margin-top: 20rpx;
+  border-top: 1rpx solid #edf1f7;
+}
+.danger { color: #c73535; }

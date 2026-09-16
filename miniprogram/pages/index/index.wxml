@@ -1,0 +1,30 @@
+<view class="page">
+ <view class="row between"><view><view class="eyebrow">CAMPUS OBSERVATION</view><view class="title">让好学风，成为日常。</view></view><view class="brand-mark">督</view></view>
+ <view class="subtitle">西南大学 · 计信院学风督察小组</view>
+ <view class="semester-hero">
+  <view class="row between"><text class="hero-label">{{semesterName}}</text><text class="hero-dot">本地体验</text></view>
+  <view class="hero-week">第 {{week}} 周<text class="hero-date">{{dates}}</text></view>
+  <view class="hero-line"></view>
+  <view class="row between"><text class="hero-greeting">{{name}}，你好</text><text class="hero-role">{{role}}</text></view>
+  <view class="hero-orbit orbit-one"></view><view class="hero-orbit orbit-two"></view>
+ </view>
+ <view class="quick-card row" bindtap="availability">
+  <view class="quick-icon mint">▦</view><view class="grow"><view class="quick-name">填写无课时间</view><view class="muted small">{{availabilityReady ? '下周已填写，可继续调整' : '提前安排下周听课'}}</view></view><text class="chevron">›</text>
+ </view>
+ <view class="notice row"><text class="announcement-tag">提示</text><text class="grow">提交前请核对人数，并上传老师签字的听课表。</text></view>
+ <view class="section row between"><text class="section-title">我的本周任务</text><text class="link" bindtap="schedule">全部安排 ›</text></view>
+ <view wx:for="{{tasks}}" wx:key="id" class="card task-card">
+  <view class="row between"><text class="pill">{{item.classLabel}}</text><text class="pill {{item.done ? 'green' : 'amber'}}">{{item.done ? '已提交' : '待完成'}}</text></view>
+  <view class="course-title">{{item.course.name}}</view>
+  <view class="course-meta">{{item.timeLabel}} · {{item.course.teacher}}</view>
+  <view class="course-meta">{{item.course.classroom}}</view>
+  <view class="divider"></view>
+  <view class="row between"><text class="muted small">每一次认真记录，都有意义</text><text wx:if="{{!item.done}}" class="link" data-id="{{item.id}}" bindtap="submit">去填写 →</text><text wx:else class="link" data-id="{{item.recordId}}" bindtap="record">查看记录 →</text></view>
+ </view>
+ <view wx:if="{{!tasks.length}}" class="card empty"><view class="empty-icon">✓</view><view class="empty-title">{{skipped ? '本周已跳过听课' : '本周暂无个人任务'}}</view><view class="muted">可以先填写下周无课时间，等待安排确认。</view></view>
+ <block wx:if="{{manager}}">
+  <view class="section row between"><text class="section-title">本周进度</text><text class="link" bindtap="reports">查看汇总 ›</text></view>
+  <view class="card stat-row home-stats"><view class="stat"><view class="number">{{taskCount}}</view><view class="stat-label">已安排任务</view></view><view class="stat"><view class="number">{{recordCount}}</view><view class="stat-label">已提交记录</view></view><view class="stat"><view class="number">{{coverage}}</view><view class="stat-label">已覆盖教学班</view></view></view>
+ </block>
+ <view class="footer-note">本地体验版 · 示例人物与课程均为虚构 · 数据不跨设备同步</view>
+</view>

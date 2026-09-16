@@ -1,0 +1,17 @@
+<view class="page">
+  <view class="title">开发体验</view>
+  <view class="subtitle">仅用于本机验证，不是正式账号功能。</view>
+  <view class="notice warn" style="margin-top:24rpx">示例人物与课程均为虚构。数据和照片只保存在此设备，尚未接入微信身份与跨设备同步。正式上线前必须移除身份切换。</view>
+  <view class="card">
+    <view class="section-title">切换体验身份</view>
+    <view class="muted" style="margin:16rpx 0">选择管理员或组部长进入成员审核，选择普通成员进入首页。</view>
+    <picker range="{{members}}" range-key="label" value="{{actorIndex < 0 ? 0 : actorIndex}}" bindchange="switchActor">
+      <view class="input row between"><text>{{actorIndex < 0 ? '选择体验身份' : members[actorIndex].label}}</text><text class="link">切换 ›</text></view>
+    </picker>
+  </view>
+  <view class="card">
+    <view class="section-title">申请者视角</view>
+    <view class="muted" style="margin:16rpx 0">体验提交申请、等待审核和通过后进入。使用同一个本地模拟身份保留申请进度，不代表已绑定微信。</view>
+    <button class="secondary" bindtap="joinDemo">体验入组申请</button>
+  </view>
+</view>

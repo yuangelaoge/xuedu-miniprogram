@@ -1,0 +1,58 @@
+.grid-card {
+  padding: 26rpx 20rpx;
+}
+.grid-row {
+  display: flex;
+  gap: 7rpx;
+  margin-bottom: 7rpx;
+  align-items: center;
+}
+.grid-label {
+  width: 44rpx;
+  flex-shrink: 0;
+  text-align: center;
+  color: #a5aec0;
+  font-size: 21rpx;
+}
+.day-head {
+  flex: 1;
+  text-align: center;
+  font-size: 23rpx;
+  padding: 14rpx 0 20rpx;
+  color: #7185a2;
+}
+.time-cell {
+  flex: 1;
+  height: 57rpx;
+  background: #f3f6fa;
+  border: 1rpx solid #edf1f7;
+  border-radius: 8rpx;
+  color: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 27rpx;
+}
+.time-cell.selected {
+  background: #e8f0ff;
+  border-color: #cfddfa;
+  color: #3976df;
+}
+.grid-legend {
+  justify-content: center;
+  font-size: 21rpx;
+  color: #91a0b4;
+  margin-top: 25rpx;
+}
+.legend-square {
+  width: 22rpx;
+  height: 22rpx;
+  background: #e8f0ff;
+  border: 1rpx solid #cfddfa;
+  border-radius: 4rpx;
+}
+.legend-square.off {
+  background: #f3f6fa;
+  border-color: #e7ecf4;
+  margin-left: 20rpx;
+}

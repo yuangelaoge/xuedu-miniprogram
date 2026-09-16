@@ -2,12 +2,16 @@ import { context, run } from "../../services/store";
 import { METRIC_FIELDS, Observation, UiEvent } from "../../domain/types";
 import { ratio, percent } from "../../domain/metrics";
 import { memberPage } from "../../services/member-page";
+import { isCloud } from "../../config/runtime";
+import { recordPhotoUrls } from "../../services/photos";
+import { notifyError } from "../../services/store";
 memberPage({
   data: {
     record: null as Observation | null,
     fields: [] as { label: string; value: string }[],
     attendance: "",
     canView: false,
+    photos: [] as string[],
   },
   onLoad(query: Record<string, string>) {
     run(() => {
@@ -18,6 +22,7 @@ memberPage({
         throw new Error("体验版暂仅允许查看自己的明细与照片");
       this.setData({
         record,
+        photos: isCloud() ? [] : record.photos,
         canView: true,
         fields: METRIC_FIELDS.map((f) => ({
           label: f.label,
@@ -30,9 +35,15 @@ memberPage({
           ratio(record.metrics.actual, record.metrics.expected),
         ),
       });
+      if (isCloud()) void recordPhotoUrls(record.id).then(photos => this.setData({ photos })).catch(notifyError);
     });
   },
-  preview(e: UiEvent) {
+  async preview(e: UiEvent) {
+    if (isCloud() && this.data.record) {
+      try { const photos = await recordPhotoUrls(this.data.record.id); this.setData({ photos }); wx.previewImage({ urls: photos }); }
+      catch (e) { notifyError(e); }
+      return;
+    }
     if (this.data.record)
       wx.previewImage({
         urls: this.data.record.photos,

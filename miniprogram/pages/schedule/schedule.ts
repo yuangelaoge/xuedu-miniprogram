@@ -1,6 +1,5 @@
-import { context, published, transact, run } from "../../services/store";
+import { context, published, command, runAsync } from "../../services/store";
 import { taskView } from "../../services/views";
-import { confirm, generate, skip } from "../../domain/actions";
 import { UiEvent } from "../../domain/types";
 import { weekRange } from "../../domain/calendar";
 import { memberPage } from "../../services/member-page";
@@ -86,8 +85,8 @@ memberPage({
     this.setData({ search: e.detail.value });
     this.refresh();
   },
-  generate() {
-    run(() => transact((s) => generate(s, this.data.week)));
+  async generate() {
+    await runAsync(() => command({ type: "generate", week: this.data.week }));
     this.refresh();
   },
   confirm() {
@@ -101,11 +100,10 @@ memberPage({
           ? "确认后将替换原安排，请核对成员与课程变动。"
           : "成员将在个人任务中看到安排。"),
       confirmText: "确认发布",
-      success: (result) => {
+      success: async (result) => {
         if (result.confirm) {
-          run(
-            () =>
-              transact((s) => confirm(s, this.data.week, this.data.revision)),
+          await runAsync(
+            () => command({ type: "confirm", week: this.data.week, revision: this.data.revision }),
             "排班已确认",
           );
           this.refresh();
@@ -120,11 +118,10 @@ memberPage({
       editable: true,
       placeholderText: "例如：国庆假期",
       confirmText: "跳过本周",
-      success: (result) => {
+      success: async (result) => {
         if (result.confirm) {
-          run(
-            () =>
-              transact((s) => skip(s, this.data.week, result.content || "")),
+          await runAsync(
+            () => command({ type: "skip", week: this.data.week, reason: result.content || "" }),
             "本周已跳过",
           );
           this.refresh();

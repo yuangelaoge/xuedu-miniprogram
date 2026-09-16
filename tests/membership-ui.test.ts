@@ -10,6 +10,7 @@ test("页面流程：申请→驳回→重申→批量通过→进入→删除�
   delete (seed as any).applications;
   storage.set("xuedu.demo.v1", seed);
   let registered: any, route = "", modal = { confirm: true, content: "请核对资料" };
+  let modalDone: Promise<unknown> = Promise.resolve();
   const clone = (v: any) => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
   runtime.Page = (options: any) => { registered = options; };
   runtime.wx = {
@@ -18,7 +19,7 @@ test("页面流程：申请→驳回→重申→批量通过→进入→删除�
     showToast() {},
     reLaunch: (o: any) => { route = o.url; o.complete?.(); },
     navigateTo: (o: any) => { route = o.url; },
-    showModal: (o: any) => o.success?.(modal),
+    showModal: (o: any) => { modalDone = Promise.resolve(o.success?.(modal)); },
     showActionSheet: (o: any) => o.success?.({ tapIndex: 0 }),
   };
   const instance = (options: any) => ({ ...options, data: clone(options.data),
@@ -60,11 +61,13 @@ test("页面流程：申请→驳回→重申→批量通过→进入→删除�
     const manage = instance(manageOptions); manage.onLoad({ tab: "members" }); manage.onShow();
     assert.equal(manage.data.pendingCount, 1);
     manage.review(event({ id: manage.data.pending[0].id, decision: "rejected" }));
+    await modalDone;
     assert.equal(readState().applications[0].status, "rejected");
     startJoinDemo(); join.refresh(); assert.equal(join.data.reason, "请核对资料");
     join.submit(); assert.equal(join.data.status, "pending");
     switchToManager(); manage.refresh(); manage.selectAll();
     manage.review(event({ decision: "approved" }));
+    await modalDone;
     assert.equal(manage.data.pendingCount, 0);
     const member = readState().members.find(m => m.name === "本地申请者")!;
     assert.equal(member.role, "member");
@@ -72,11 +75,14 @@ test("页面流程：申请→驳回→重申→批量通过→进入→删除�
     assert.equal(readState().actorId, member.id);
     // 普通成员即使直接打开管理页也拿不到申请、成员及审计列表。
     const denied = instance(manageOptions); denied.onLoad({}); denied.onShow();
+    await modalDone;
     assert.equal(denied.data.manager, false); assert.equal(denied.data.members.length, 0);
     changeDemoActor("m6"); manage.refresh();
     modal = { confirm: false, content: "" }; manage.removeMember(event({ id: member.id }));
+    await modalDone;
     assert.equal(readState().members.find(m => m.id === member.id)!.active, true);
     modal = { confirm: true, content: "" }; manage.removeMember(event({ id: member.id }));
+    await modalDone;
     assert.equal(readState().members.find(m => m.id === member.id)!.active, false);
     assert.ok(!manage.data.members.some((m: any) => m.id === member.id));
     startJoinDemo(); join.refresh(); assert.equal(join.data.status, "removed");

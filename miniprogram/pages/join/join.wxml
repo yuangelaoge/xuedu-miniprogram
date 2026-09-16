@@ -2,7 +2,9 @@
   <view class="eyebrow">JOIN OUR TEAM</view>
   <view class="title">加入学风督察小组</view>
   <view class="subtitle">西南大学 · 计信院</view>
-  <view class="notice" style="margin-top:30rpx">本地流程演示：尚未连接微信身份与云端审核，不能供其他手机扫码入组。</view>
+  <view class="notice" style="margin-top:30rpx">{{cloudMode ? modeLabel + '：微信身份自动关联，资料提交后由管理人员审核。试用数据不会带入正式版。' : '本地流程演示：尚未连接微信身份与云端审核，不能供其他手机扫码入组。'}}</view>
+  <view wx:if="{{connecting}}" class="notice">正在连接云端…</view>
+  <view wx:if="{{connectionError}}" class="notice warn" bindtap="refresh">{{connectionError}} · 点击重试</view>
   <view class="card">
     <view class="section-title">{{statusTitle}}</view>
     <view class="muted" style="margin-top:16rpx">{{statusText}}</view>
@@ -17,5 +19,6 @@
     </block>
     <block wx:elif="{{status === 'pending'}}"><view class="field">{{name}} · {{studentNo}}</view><button class="secondary" bindtap="refresh">刷新审核状态</button></block>
   </view>
-  <view class="footer-note" bindtap="openDemo" style="padding:22rpx">开发体验 ›</view>
+  <view wx:if="{{!cloudMode}}" class="footer-note" bindtap="openDemo" style="padding:22rpx">开发体验 ›</view>
+  <view wx:else class="footer-note" bindtap="copyIdentity" style="padding:22rpx">首次配置管理员：复制本人微信标识</view>
 </view>

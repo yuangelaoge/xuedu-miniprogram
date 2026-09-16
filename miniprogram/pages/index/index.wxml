@@ -2,7 +2,7 @@
  <view class="row between"><view><view class="eyebrow">CAMPUS OBSERVATION</view><view class="title">让好学风，成为日常。</view></view><view class="brand-mark">督</view></view>
  <view class="subtitle">西南大学 · 计信院学风督察小组</view>
  <view class="semester-hero">
-  <view class="row between"><text class="hero-label">{{semesterName}}</text><text class="hero-dot">本地体验</text></view>
+  <view class="row between"><text class="hero-label">{{semesterName}}</text><text class="hero-dot">{{modeLabel}}</text></view>
   <view class="hero-week">第 {{week}} 周<text class="hero-date">{{dates}}</text></view>
   <view class="hero-line"></view>
   <view class="row between"><text class="hero-greeting">{{name}}，你好</text><text class="hero-role">{{role}}</text></view>
@@ -26,5 +26,5 @@
   <view class="section row between"><text class="section-title">本周进度</text><text class="link" bindtap="reports">查看汇总 ›</text></view>
   <view class="card stat-row home-stats"><view class="stat"><view class="number">{{taskCount}}</view><view class="stat-label">已安排任务</view></view><view class="stat"><view class="number">{{recordCount}}</view><view class="stat-label">已提交记录</view></view><view class="stat"><view class="number">{{coverage}}</view><view class="stat-label">已覆盖教学班</view></view></view>
  </block>
- <view class="footer-note">本地体验版 · 示例人物与课程均为虚构 · 数据不跨设备同步</view>
+ <view class="footer-note">{{cloudMode ? modeLabel + ' · 下拉刷新同步最新数据' : '本地体验版 · 示例人物与课程均为虚构 · 数据不跨设备同步'}}</view>
 </view>

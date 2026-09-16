@@ -1,5 +1,4 @@
-import { context, transact, run } from "../../services/store";
-import { saveAvailability } from "../../domain/actions";
+import { context, command, runAsync } from "../../services/store";
 import { UiEvent } from "../../domain/types";
 import { WEEKDAYS, weekRange } from "../../domain/calendar";
 import { memberPage } from "../../services/member-page";
@@ -140,13 +139,12 @@ memberPage({
       },
     });
   },
-  save() {
+  async save() {
     const { semester, user } = context();
     if (
-      run(
+      await runAsync(
         () =>
-          transact((s) =>
-            saveAvailability(s, {
+          command({ type: "availability", value: {
               semesterId: semester.id,
               memberId: user.id,
               week: this.data.week,
@@ -154,8 +152,7 @@ memberPage({
               note: this.data.note,
               optedIn: this.data.optedIn,
               updatedAt: "",
-            }),
-          ),
+            } }),
         "无课时间已保存",
       )
     )

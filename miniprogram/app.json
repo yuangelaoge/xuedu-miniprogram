@@ -17,7 +17,8 @@
     "navigationStyle": "default",
     "navigationBarTitleText": "学风督察",
     "navigationBarBackgroundColor": "#f5f7fb",
-    "backgroundColor": "#f5f7fb"
+    "backgroundColor": "#f5f7fb",
+    "enablePullDownRefresh": true
   },
   "tabBar": {
     "color": "#8c96a8",

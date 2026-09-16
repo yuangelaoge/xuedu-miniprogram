@@ -1,5 +1,6 @@
-import { context, transact, run, notifyError } from "../../services/store";
-import { submitRecord } from "../../domain/actions";
+import { context, command, run, runAsync, notifyError, draftPrefix } from "../../services/store";
+import { isCloud } from "../../config/runtime";
+import { uploadRecordPhotos } from "../../services/photos";
 import {
   METRIC_FIELDS,
   MetricKey,
@@ -59,7 +60,7 @@ memberPage({
       return;
     }
     this.task = task;
-    this.draftKey = "xuedu.form." + user.id + "." + task.id;
+    this.draftKey = draftPrefix() + user.id + "." + task.id;
     const saved = wx.getStorageSync(this.draftKey) as
       | Partial<Observation>
       | undefined;
@@ -225,17 +226,18 @@ memberPage({
       content:
         "请确认人数、名单与纸质表一致，照片包含清晰的老师签字。提交后体验版暂不支持修改。",
       confirmText: "确认提交",
-      success: (r) => {
+      success: async (r) => {
         if (!r.confirm) return;
         this.setData({ busy: true });
         let id = "";
-        const ok = run(() => {
+        const ok = await runAsync(async () => {
           const record = this.build();
           id = record.id;
           record.photos.forEach((path) =>
             wx.getFileSystemManager().accessSync(path),
           );
-          transact((s) => submitRecord(s, record));
+          if (isCloud()) record.photos = await uploadRecordPhotos(record.photos, record.taskId);
+          await command({ type: "submit", record });
           wx.removeStorageSync(this.draftKey);
         }, "听课记录已提交");
         this.setData({ busy: false });

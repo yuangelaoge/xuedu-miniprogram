@@ -1,7 +1,8 @@
 import { readState } from "./services/store";
+import { isCloud } from "./config/runtime";
 App<IAppOption>({
   globalData: {},
   onLaunch() {
-    readState();
+    if (!isCloud()) readState();
   },
 });

@@ -2,9 +2,13 @@ import { AppState, Plan } from "../domain/types";
 import { createSeed } from "../domain/seed";
 import { actor } from "../domain/actions";
 import { boundedWeek } from "../domain/calendar";
+import { isCloud, runtime } from "../config/runtime";
+import { acceptSnapshot, cloudCall, CloudSnapshot, currentSnapshot, requestId } from "./cloud";
+import { Command, executeCommand } from "../domain/commands";
 const STORAGE_KEY = "xuedu.demo.v1";
 // 单设备演示适配层，不是服务器鉴权。正式版需替换为服务端 API。
 export function readState(): AppState {
+  if (isCloud()) return currentSnapshot().state;
   const saved = wx.getStorageSync(STORAGE_KEY) as AppState | undefined;
   if (saved && saved.schema === 1) return { ...saved, applications: saved.applications || [] };
   const initial = createSeed();
@@ -12,6 +16,7 @@ export function readState(): AppState {
   return initial;
 }
 export function transact(action: (state: AppState) => void): AppState {
+  if (isCloud()) throw new Error("云端模式不允许本地修改身份或业务数据");
   const next = JSON.parse(JSON.stringify(readState())) as AppState;
   action(next);
   wx.setStorageSync(STORAGE_KEY, next);
@@ -61,4 +66,21 @@ export function changeDemoActor(id: string): void {
       throw new Error("体验身份不可用");
     state.actorId = id;
   });
+}
+
+export async function command(value: Command, identity = ""): Promise<void> {
+  if (!isCloud()) { transact(s => executeCommand(s, value, identity)); return; }
+  const id = requestId(), epoch = currentSnapshot().epoch;
+  const next = await cloudCall<CloudSnapshot>("command", { command: value, requestId: id, epoch });
+  acceptSnapshot(next);
+}
+export async function runAsync(action: () => Promise<void>, message = ""): Promise<boolean> {
+  try {
+    await action();
+    if (message) wx.showToast({ title: message, icon: "success" });
+    return true;
+  } catch (error) { notifyError(error); return false; }
+}
+export function draftPrefix(): string {
+  return isCloud() ? "xuedu.form." + runtime.env + "." + runtime.mode + "." + currentSnapshot().epoch + "." : "xuedu.form.";
 }

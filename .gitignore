@@ -10,6 +10,7 @@ project.private.config.json
 secrets/
 cloudfunctions/**/node_modules/
 cloudfunctions/**/generated/
+cloudfunctions/xueduProduction/index.js
 *.log
 miniprogram/**/*.js
 miniprogram/**/*.wxss

@@ -1,17 +1,34 @@
-import { readState, run, transact } from "../../services/store";
+import { readState, run, transact, command, runAsync, notifyError } from "../../services/store";
 import { demoIdentity, submitJoin, enterAsApprovedApplicant } from "../../services/join";
+import { isCloud, modeLabel } from "../../config/runtime";
+import { syncCloud, cloudCall } from "../../services/cloud";
 import { latestApplication, membershipFor } from "../../domain/membership";
 import { UiEvent } from "../../domain/types";
 
 Page({
   data: {
+    cloudMode: isCloud(), modeLabel: modeLabel(), connecting: false, connectionError: "",
     status: "new", reason: "", name: "", studentNo: "", classId: "",
     classIndex: -1, classes: [] as { id: string; label: string }[], busy: false,
     statusTitle: "申请加入学督", statusText: "首次填写资料，由管理员或组部长审核。",
   },
-  onLoad() { transact(s => { s.actorId = ""; }); },
+  onLoad() { if (!isCloud()) transact(s => { s.actorId = ""; }); },
   onShow() { this.refresh(); },
+  onPullDownRefresh() {
+    if (isCloud()) void this.loadCloud().finally(() => wx.stopPullDownRefresh());
+    else { this.render(); wx.stopPullDownRefresh(); }
+  },
   refresh() {
+    if (isCloud()) { void this.loadCloud(); return; }
+    this.render();
+  },
+  async loadCloud() {
+    this.setData({ connecting: true, connectionError: "" });
+    try { await syncCloud(); this.render(); }
+    catch (e) { this.setData({ connectionError: e instanceof Error ? e.message : "连接失败" }); }
+    finally { this.setData({ connecting: false }); }
+  },
+  render() {
     if (enterAsApprovedApplicant()) return;
     const state = readState(), identity = demoIdentity();
     const member = membershipFor(state, identity), application = latestApplication(state, identity);
@@ -35,12 +52,24 @@ Page({
   },
   submit() {
     if (this.data.busy) return;
+    if (isCloud()) { void this.submitCloud(); return; }
     this.setData({ busy: true });
     const ok = run(() => submitJoin({ name: this.data.name, studentNo: this.data.studentNo, classId: this.data.classId }), "申请已提交");
     this.setData({ busy: false });
     if (ok) this.refresh();
   },
+  async submitCloud() {
+    this.setData({ busy: true });
+    const ok = await runAsync(() => command({ type: "join", form: { name: this.data.name, studentNo: this.data.studentNo, classId: this.data.classId } }), "申请已提交");
+    this.setData({ busy: false });
+    if (ok) this.render();
+  },
+  async copyIdentity() {
+    try { const data = await cloudCall<{ openid: string }>("identity"); wx.setClipboardData({ data: data.openid }); }
+    catch (e) { notifyError(e); }
+  },
   openDemo() {
+    if (isCloud()) return;
     wx.navigateTo({ url: "/pages/demo/demo" });
   },
 });

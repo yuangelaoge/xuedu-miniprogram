@@ -1,14 +1,12 @@
-import { context, transact, run } from "../../services/store";
+import { context, run, command, runAsync } from "../../services/store";
 import { UiEvent, Semester, JoinApplication } from "../../domain/types";
 import {
   inspectImport,
-  commitImport,
-  addSemester,
   ImportKind,
 } from "../../domain/imports";
-import { requireRole } from "../../domain/actions";
-import { removeMember, reviewApplications, setMemberRole } from "../../domain/membership";
 import { memberPage } from "../../services/member-page";
+import { cloudCall, CloudSnapshot, acceptSnapshot } from "../../services/cloud";
+import { runtime } from "../../config/runtime";
 memberPage({
   data: {
     tab: "members",
@@ -131,9 +129,9 @@ memberPage({
     wx.showModal({ title: decision === "approved" ? "通过入组申请" : "驳回入组申请",
       content: decision === "approved" ? "确认通过 " + ids.length + " 份申请？通过后均为普通成员。" : "",
       editable: decision === "rejected", placeholderText: "填写驳回原因，方便成员修改",
-      success: r => {
+      success: async r => {
         if (!r.confirm) return;
-        if (run(() => transact(s => reviewApplications(s, ids, decision, r.content || "")), "申请已处理")) this.setData({ selected: [] });
+        if (await runAsync(() => command({ type: "review", ids, decision, reason: r.content || "" }), "申请已处理")) this.setData({ selected: [] });
         this.refresh();
       },
     });
@@ -145,13 +143,13 @@ memberPage({
     wx.showModal({ title: "删除组员 " + member.name,
       content: "删除后立即取消访问与排班资格，未完成的任务将取消并列为待处理安排；历史听课记录、照片保留。确定删除吗？",
       confirmText: "删除组员", confirmColor: "#c73535",
-      success: r => { if (r.confirm) { run(() => transact(s => removeMember(s, id)), "组员已删除"); this.refresh(); } },
+      success: async r => { if (r.confirm) { await runAsync(() => command({ type: "removeMember", id }), "组员已删除"); this.refresh(); } },
     });
   },
   role(e: UiEvent) {
     const id = e.currentTarget.dataset.id, role = e.currentTarget.dataset.role === "leader" ? "leader" : "member";
     wx.showModal({ title: "调整成员角色", content: "确认将该成员设为" + (role === "leader" ? "组部长？" : "普通成员？"),
-      success: r => { if (r.confirm) { run(() => transact(s => setMemberRole(s, id, role)), "角色已更新"); this.refresh(); } },
+      success: async r => { if (r.confirm) { await runAsync(() => command({ type: "role", id, role }), "角色已更新"); this.refresh(); } },
     });
   },
   input(e: UiEvent) {
@@ -170,7 +168,7 @@ memberPage({
       count: 1,
       type: "file",
       extension: ["json", "txt"],
-      success: (r) => {
+      success: async (r) => {
         if (r.tempFiles[0].size > 1024 * 1024) {
           wx.showToast({ title: "请选择小于 1MB 的文件", icon: "none" });
           return;
@@ -252,14 +250,11 @@ memberPage({
         " 条数据及 " +
         this.data.classCount +
         " 个班级。已有正式任务保留，待确认草稿需重新生成。",
-      success: (r) => {
+      success: async (r) => {
         if (
           r.confirm &&
-          run(
-            () =>
-              transact((s) =>
-                commitImport(s, this.data.tab as ImportKind, this.data.text),
-              ),
+          await runAsync(
+            () => command({ type: "import", text: this.data.text }),
             "导入成功",
           )
         ) {
@@ -269,20 +264,14 @@ memberPage({
       },
     });
   },
-  semester(e: UiEvent) {
-    run(() =>
-      transact((s) => {
-        requireRole(s, ["admin"]);
-        s.activeSemesterId = this.data.semesters[Number(e.detail.value)].id;
-      }),
-    );
+  async semester(e: UiEvent) {
+    await runAsync(() => command({ type: "semester", id: this.data.semesters[Number(e.detail.value)].id }));
     this.refresh();
   },
-  createSemester() {
-    run(() => {
+  async createSemester() {
+    await runAsync(async () => {
       const f = this.data.form;
-      transact((s) =>
-        addSemester(s, {
+      await command({ type: "createSemester", value: {
           id: "semester-" + Date.now(),
           name: f.name,
           startDate: f.startDate,
@@ -293,9 +282,25 @@ memberPage({
           days: Number(f.days),
           periods: Number(f.periods),
           edition: "学风督察小组",
-        }),
-      );
+        } });
       this.refresh();
     }, "新学期已建立");
+  },
+  async cleanupTrial() {
+    if (runtime.mode !== "trial" || !this.data.admin) return;
+    await runAsync(async () => {
+      const plan = await cloudCall<{ epoch: string; version: number; members: number; applications: number; records: number; files: number }>("cleanupPreview");
+      wx.showModal({ title: "清理多人试用数据",
+        content: `将永久删除 ${plan.members} 名试用成员、${plan.applications} 份申请、全部无课时间和排班、${plan.records} 份记录及 ${plan.files} 张照片。保留管理员和基础课表配置。此操作不可撤销。请输入：清空试用数据`,
+        editable: true, confirmText: "确认清理", confirmColor: "#c73535",
+        success: async r => {
+          if (!r.confirm) return;
+          await runAsync(async () => {
+            const next = await cloudCall<CloudSnapshot>("cleanup", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
+            acceptSnapshot(next); this.refresh();
+          }, "试用数据已清理");
+        },
+      });
+    });
   },
 });

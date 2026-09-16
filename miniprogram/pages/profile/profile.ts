@@ -1,6 +1,7 @@
 import { context } from "../../services/store";
 import { ROLE_NAMES } from "../../domain/types";
 import { memberPage } from "../../services/member-page";
+import { isCloud } from "../../config/runtime";
 memberPage({
   data: {
     name: "",
@@ -41,6 +42,7 @@ memberPage({
     });
   },
   openDemo() {
+    if (isCloud()) return;
     wx.navigateTo({ url: "/pages/demo/demo" });
   },
   availability() {

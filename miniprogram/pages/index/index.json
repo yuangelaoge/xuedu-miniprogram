@@ -1,1 +1,5 @@
-{ "navigationBarTitleText": "学风督察" }
+{
+  "navigationBarTitleText": "学风督察",
+  "navigationBarBackgroundColor": "#f6f8fc",
+  "backgroundColor": "#f6f8fc"
+}

@@ -16,7 +16,6 @@ memberPage({
     coverage: 0,
     skipped: false,
     availabilityReady: false,
-    availabilityWeek: 1,
     tasks: [] as ReturnType<typeof taskView>[],
   },
   onShow() {
@@ -36,7 +35,6 @@ memberPage({
       ).length,
       coverage: tasks.length,
       skipped: plan?.status === "skipped",
-      availabilityWeek: Math.min(semester.weeks, week + 1),
       availabilityReady: state.availability.some(
         (a) =>
           a.memberId === user.id &&

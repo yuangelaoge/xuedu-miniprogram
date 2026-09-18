@@ -1,6 +1,5 @@
 <view class="home-page">
   <view class="home-heading">
-    <view class="home-organization">西南大学 · 计信院学风督察小组</view>
     <view class="home-welcome">
       <text class="home-greeting">{{name}}，你好</text>
       <text class="home-role">{{role}}</text>
@@ -33,7 +32,6 @@
     <view class="availability-icon" aria-hidden="true"><view class="time-dial"><view class="time-hand"></view></view></view>
     <view class="availability-copy">
       <view class="availability-heading">无课时间<text wx:if="{{availabilityReady}}" class="availability-saved">已填写</text></view>
-      <view class="availability-description">{{availabilityReady ? '第 ' + availabilityWeek + ' 周已填写，可继续调整' : '填写第 ' + availabilityWeek + ' 周空闲时段，方便安排听课'}}</view>
     </view>
     <view class="home-chevron" aria-hidden="true"></view>
   </view>
@@ -78,6 +76,5 @@
     </view>
   </block>
 
-  <view class="home-reminder"><view class="reminder-icon">i</view><text>提交前请核对人数，并上传老师签字的听课表。</text></view>
   <view class="home-footer">{{cloudMode ? modeLabel + ' · 下拉刷新同步最新数据' : '本地体验版 · 示例人物与课程均为虚构'}}<view wx:if="{{!cloudMode}}">数据仅保存在当前设备，不跨设备同步</view></view>
 </view>

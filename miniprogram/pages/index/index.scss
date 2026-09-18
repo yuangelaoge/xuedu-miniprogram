@@ -8,12 +8,6 @@ page {
 .home-heading {
   padding: 4rpx 2rpx 28rpx;
 }
-.home-organization {
-  color: #727f94;
-  font-size: 23rpx;
-  line-height: 1.6;
-  letter-spacing: 1rpx;
-}
 .home-welcome {
   display: flex;
   align-items: center;
@@ -217,12 +211,6 @@ page {
   padding: 2rpx 9rpx;
   border-radius: 6rpx;
 }
-.availability-description {
-  color: #77849a;
-  font-size: 22rpx;
-  line-height: 1.6;
-  margin-top: 6rpx;
-}
 .home-chevron {
   flex-shrink: 0;
   width: 11rpx;
@@ -304,7 +292,5 @@ page {
 .overview-blue { color: #285de0; }
 .overview-unit { color: #8491a5; font-size: 20rpx; font-weight: 400; margin-left: 6rpx; }
 .overview-label { color: #7a879b; font-size: 21rpx; line-height: 1.5; margin-top: 10rpx; }
-.home-reminder { display: flex; align-items: flex-start; gap: 12rpx; padding: 28rpx 8rpx 0; color: #77859c; font-size: 21rpx; line-height: 1.7; }
-.reminder-icon { flex-shrink: 0; width: 25rpx; height: 25rpx; border: 2rpx solid #8e9db4; border-radius: 50%; text-align: center; font-size: 18rpx; line-height: 22rpx; margin-top: 5rpx; font-weight: 600; }
 .home-footer { padding-top: 30rpx; text-align: center; color: #8591a5; font-size: 19rpx; line-height: 1.9; }
 .home-pressed { opacity: 0.72; }

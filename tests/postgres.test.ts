@@ -133,3 +133,38 @@ test("彻底重置扫描全部试用目录含孤儿照片，拒绝越界路径�
   error = null;
   assert.deepEqual(await photos.listResetFiles(), []);
 });
+
+test("PG CAS 上的换届清空并发开始及步骤共享一个任务，不重复删照片", async () => {
+  const f = fixture(); let sequence = 0, now = 0;
+  const photos = new Set(["old-photo"]), deleted: string[] = [];
+  const gateway = createGateway({ stage: "trial", appid: "app", bootstrapOpenid: "owner", transact: f.transact,
+    uuid: () => "id-" + ++sequence, now: () => now,
+    async listResetFiles() { return [...photos]; },
+    async upload() { return "unused"; }, async urls() { return []; },
+    async deleteFiles(ids) { deleted.push(...ids); ids.forEach(id => photos.delete(id)); },
+  });
+  const context = { OPENID: "owner", APPID: "app" };
+  await gateway({ operation: "snapshot" }, context);
+  await gateway({ operation: "command", epoch: "epoch-1", requestId: "create-admin", command: {
+    type: "join", form: { name: "管理员", studentNo: "20250001", classId: f.state().state.classes[0].id },
+  } }, context);
+  const plan = await gateway({ operation: "businessClearPreview" }, context) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  const results = await Promise.allSettled([1, 2].map(() => gateway({ operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }, context)));
+  assert.equal(results.filter(r => r.status === "fulfilled").length, 1);
+  const jobId = f.state().businessClear!.id; now = 11000;
+  const steps = await Promise.all([1, 2].map(() => gateway({ operation: "businessClearStep", jobId }, context))) as { waitMs: number }[];
+  assert.ok(steps.some(s => s.waitMs > 0)); assert.deepEqual(deleted, ["old-photo"]);
+  await gateway({ operation: "businessClearStep", jobId }, context);
+  assert.equal(f.state().cleaning, false); assert.equal(f.state().state.actorId, "");
+  assert.equal(f.state().state.classes.length, 0); assert.equal(f.state().state.members.length, 1);
+});
+
+test("正式业务照片清空仅扫描 production 前缀，不接受试用照片标识", async () => {
+  const photos = postgresPhotos({
+    async list(path) { assert.equal(path, "production/"); return { data: { folders: [], objects: [{ name: "trial/epoch/photo.jpg" }], hasNext: false }, error: null }; },
+    async upload() { return { data: null, error: null }; },
+    async remove() { throw new Error("must not delete"); }, async createSignedUrls() { return { data: [], error: null }; },
+  }, "production");
+  await assert.rejects(photos.listResetFiles(), /路径/);
+  await assert.rejects(photos.deleteFiles(["pg://xuedu-photos/trial/epoch/photo.jpg"]), /路径/);
+});

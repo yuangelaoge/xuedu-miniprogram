@@ -2,8 +2,10 @@ import { AppState } from "../miniprogram/domain/types";
 import { Command, executeCommand } from "../miniprogram/domain/commands";
 import { membershipFor, applyForMembership } from "../miniprogram/domain/membership";
 import { requireRole } from "../miniprogram/domain/actions";
-import { clearTrialPeople, emptyWorkspace, initialState, visibleState } from "./policy";
+import { clearBusiness, clearTrialPeople, emptyWorkspace, initialState, visibleState } from "./policy";
 import { validateSemester } from "../miniprogram/domain/imports";
+
+import { BUSINESS_CLEAR_CONFIRMATION, BusinessClearPreview } from "../miniprogram/domain/business-clear";
 
 export interface Document {
   stage: "trial" | "production";
@@ -15,6 +17,8 @@ export interface Document {
   cleaning?: boolean;
   resetAll?: { id: string; startedAt: number };
   lastResetId?: string;
+  businessClear?: { id: string; startedAt: number; lease?: { token: string; until: number } };
+  lastBusinessClearId?: string;
 }
 export interface Dependencies {
   stage: "trial" | "production";
@@ -42,10 +46,78 @@ export function createGateway(deps: Dependencies) {
     };
     const result = (doc: Document) => ({ stage: doc.stage, epoch: doc.epoch, version: doc.version, identity: "self", state: visibleState(doc.state, openid) });
     const checkEpoch = (doc: Document) => {
-      if (event.epoch !== doc.epoch) throw new Error("试用数据已重置，请重新打开小程序");
-      if (doc.cleaning) throw new Error("试用数据正在清理，请稍后再进入");
+      if (event.epoch !== doc.epoch) throw new Error("业务数据已重置，请重新打开小程序");
+      if (doc.cleaning) throw new Error("业务数据正在清理，请稍后再进入");
     };
     if (event.operation === "identity") return { openid };
+    if (["businessClearPreview", "businessClearBegin", "businessClearStep"].includes(event.operation)) {
+      if (!deps.listResetFiles) throw new Error("当前后端不支持完整照片核查，不能清空业务数据");
+      const now = () => deps.now?.() ?? Date.now();
+      const authorize = (doc: Document) => {
+        attach(doc); requireRole(doc.state, ["admin"]);
+        if (doc.resetAll || (doc.cleaning && !doc.businessClear)) throw new Error("请先完成正在进行的其他清理任务");
+      };
+      if (event.operation === "businessClearPreview") {
+        const preview = await deps.transact(async (doc): Promise<BusinessClearPreview> => {
+          authorize(doc);
+          return { stage: doc.stage, epoch: doc.epoch, version: doc.version, jobId: doc.businessClear?.id || "",
+            administrators: doc.state.members.filter(m => m.role === "admin").length,
+            members: doc.state.members.filter(m => m.role !== "admin").length,
+            applications: doc.state.applications.length, semesters: doc.state.semesters.length,
+            classes: doc.state.classes.length, courses: doc.state.courses.length,
+            records: doc.state.records.length, files: doc.files.length };
+        });
+        await deps.listResetFiles(); // Probe without deleting or freezing.
+        return preview;
+      }
+      if (event.operation === "businessClearBegin") return deps.transact(async doc => {
+        authorize(doc);
+        if (event.confirmation !== BUSINESS_CLEAR_CONFIRMATION || event.epoch !== doc.epoch || event.version !== doc.version)
+          throw new Error("确认文字不符或数据已变化，请重新预览");
+        if (!doc.businessClear) {
+          doc.businessClear = { id: deps.uuid(), startedAt: now() };
+          doc.cleaning = true; doc.version++;
+        }
+        return { jobId: doc.businessClear.id };
+      });
+      // Serialize storage sweeps. The 10s lease/drain exceeds the deployed 3s function limit.
+      // A timed-out holder must be dead before another holder can finalize or sweep a new epoch.
+      const token = deps.uuid();
+      const status = await deps.transact(async doc => {
+        authorize(doc);
+        if (typeof event.jobId !== "string" || !event.jobId) throw new Error("清空任务标识无效");
+        if (doc.lastBusinessClearId === event.jobId) return { done: true, waitMs: 0, snapshot: result(doc) };
+        const job = doc.businessClear;
+        if (!doc.cleaning || !job || job.id !== event.jobId) throw new Error("清空任务不存在");
+        const waitMs = Math.max(0, job.startedAt + 10000 - now(), (job.lease?.until || 0) - now());
+        if (!waitMs) job.lease = { token, until: now() + 10000 };
+        return { done: false, waitMs };
+      });
+      if (status.done || status.waitMs) return status;
+      try {
+        const files = await deps.listResetFiles();
+        if (files.length) { await deps.deleteFiles(files); return { done: false, waitMs: 0 }; }
+        return await deps.transact(async doc => {
+          authorize(doc);
+          const job = doc.businessClear;
+          if (!doc.cleaning || !job || job.id !== event.jobId || job.lease?.token !== token)
+            throw new Error("清空任务已变化，请重新预览");
+          const actorId = doc.state.actorId;
+          doc.state = clearBusiness(doc.state); doc.files = []; doc.receipts = [];
+          doc.state.audit = [{ at: new Date(now()).toISOString(), actor: actorId, action: "清空业务数据", detail: "保留管理员；已清空旧业务及照片，等待建立新学期" }];
+          doc.epoch = deps.uuid(); doc.version++; doc.cleaning = false;
+          doc.lastBusinessClearId = job.id; delete doc.businessClear;
+          return { done: true, waitMs: 0, snapshot: result(doc) };
+        });
+      } finally {
+        await deps.transact(async doc => {
+          attach(doc);
+          const job = doc.businessClear;
+          if (job && job.id === event.jobId && job.lease?.token === token) delete job.lease;
+        });
+      }
+    }
+
     if (event.operation === "bootstrapWorkspace") {
       if (deps.stage !== "trial" || !deps.bootstrapOpenid || openid !== deps.bootstrapOpenid) throw new Error("无权重新初始化");
       return deps.transact(async doc => {
@@ -132,7 +204,7 @@ export function createGateway(deps: Dependencies) {
         return { classId, created: true };
       });
     }
-    if (event.operation === "snapshot") return deps.transact(async doc => { attach(doc); if (doc.cleaning && membershipFor(doc.state, openid)?.role !== "admin") throw new Error("试用数据正在清理"); return result(doc); });
+    if (event.operation === "snapshot") return deps.transact(async doc => { attach(doc); if (doc.cleaning && membershipFor(doc.state, openid)?.role !== "admin") throw new Error("业务数据正在清理"); return result(doc); });
     if (event.operation === "command") return deps.transact(async doc => {
       attach(doc); checkEpoch(doc);
       const id = event.requestId;
@@ -196,7 +268,7 @@ export function createGateway(deps: Dependencies) {
       if (deps.stage !== "trial" || event.confirmation !== "清空试用数据") throw new Error("仅允许明确确认后清理试用数据");
       const ids = await deps.transact(async doc => {
         attach(doc); requireRole(doc.state, ["admin"]);
-        if (doc.resetAll) throw new Error("正在彻底重置，不能切换为普通试用清理");
+        if (doc.resetAll || doc.businessClear) throw new Error("正在执行其他清理，不能切换为普通试用清理");
         if (event.epoch !== doc.epoch || event.version !== doc.version) throw new Error("数据已变化，请重新查看清理范围");
         doc.cleaning = true;
         return doc.files.map(f => f.id);

@@ -93,6 +93,7 @@ export function skip(state: AppState, week: number, reason: string): void {
 }
 export function saveAvailability(state: AppState, value: Availability): void {
   const user = actor(state);
+  if (!state.classes.some(c => c.id === user.classId)) throw new Error("请先在管理工作台设置本人真实班级，再报名听课");
   if (value.memberId !== user.id || value.semesterId !== state.activeSemesterId)
     throw new Error("只能保存自己的当前学期无课时间");
   const semester = state.semesters.find((s) => s.id === value.semesterId)!;

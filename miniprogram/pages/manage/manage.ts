@@ -1,4 +1,4 @@
-import { context, run, command, runAsync } from "../../services/store";
+import { readState, run, command, runAsync } from "../../services/store";
 import { UiEvent, Semester, JoinApplication } from "../../domain/types";
 import {
   inspectImport,
@@ -7,12 +7,24 @@ import {
 import { memberPage } from "../../services/member-page";
 import { cloudCall, CloudSnapshot, acceptSnapshot } from "../../services/cloud";
 import { runtime } from "../../config/runtime";
+import { actor } from "../../domain/actions";
+import { BUSINESS_CLEAR_CONFIRMATION, BusinessClearPreview } from "../../domain/business-clear";
+// Management remains usable after clearing every semester.
+function context() {
+  const state = readState(), user = actor(state);
+  return { state, user, manager: user.role !== "member", semester: state.semesters.find(s => s.id === state.activeSemesterId) };
+}
 memberPage({
   data: {
     tab: "members",
     admin: false,
     manager: false,
     resettingAll: false,
+    clearingBusiness: false,
+    clearProgress: "",
+    needsSemester: false,
+    needsAdminClass: false,
+    adminClasses: [] as { id: string; name: string }[],
     resetProgress: "",
     memberTab: "pending",
     pending: [] as (JoinApplication & { classLabel: string; selected: boolean })[],
@@ -73,7 +85,11 @@ memberPage({
     this.setData({
       manager,
       admin: user.role === "admin",
-      semesterName: semester.name,
+      semesterName: semester?.name || "尚未建立学期",
+      needsSemester: !semester,
+      needsAdminClass: user.role === "admin" && !user.classId,
+      adminClasses: state.classes,
+
       selected,
       pendingCount: state.applications.filter(a => a.status === "pending").length,
       pending: state.applications.filter(a => a.status === "pending" && (a.name + a.studentNo).includes(this.data.search))
@@ -92,7 +108,7 @@ memberPage({
                 : "部员",
         })),
       semesters: state.semesters,
-      semesterIndex: state.semesters.findIndex((s) => s.id === semester.id),
+      semesterIndex: state.semesters.findIndex((s) => s.id === semester?.id),
       logs: state.audit
         .slice(0, 80)
         .map((l) => ({
@@ -190,6 +206,7 @@ memberPage({
   },
   example() {
     const { semester } = context();
+    if (!semester) { wx.showToast({ title: "请先建立学期", icon: "none" }); return; }
     const grade = semester.grades[0];
     const payload = {
             classes: [
@@ -288,25 +305,48 @@ memberPage({
       this.refresh();
     }, "新学期已建立");
   },
-  async cleanupTrial() {
-    if (runtime.mode !== "trial" || !this.data.admin) return;
-    await runAsync(async () => {
-      const plan = await cloudCall<{ epoch: string; version: number; members: number; applications: number; records: number; files: number }>("cleanupPreview");
-      wx.showModal({ title: "清理多人试用数据",
-        content: `将永久删除 ${plan.members} 名试用成员、${plan.applications} 份申请、全部无课时间和排班、${plan.records} 份记录及 ${plan.files} 张照片。保留管理员和基础课表配置。此操作不可撤销。请输入：清空试用数据`,
-        editable: true, confirmText: "确认清理", confirmColor: "#c73535",
-        success: async r => {
-          if (!r.confirm) return;
-          await runAsync(async () => {
-            const next = await cloudCall<CloudSnapshot>("cleanup", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
-            acceptSnapshot(next); this.refresh();
-          }, "试用数据已清理");
-        },
-      });
+  async restoreAdminClass(e: UiEvent) {
+    const selected = this.data.adminClasses[Number(e.detail.value)];
+    if (!selected || !this.data.needsAdminClass) return;
+    wx.showModal({ title: "确认本人班级", content: `将本人班级设置为“${selected.name}”，用于避免听本人班级的课。请确认是真实班级。`,
+      success: async r => {
+        if (!r.confirm) return;
+        await runAsync(async () => { await command({ type: "restoreAdminClass", classId: selected.id }); this.refresh(); }, "本人班级已设置");
+      },
     });
   },
+  async clearBusiness() {
+    if (runtime.mode === "demo" || !this.data.admin || this.data.resettingAll || this.data.clearingBusiness) return;
+    this.setData({ clearingBusiness: true, clearProgress: "正在核对清空范围…" });
+    try {
+      const ok = await runAsync(async () => {
+        const plan = await cloudCall<BusinessClearPreview>("businessClearPreview");
+        const r = await wx.showModal({ title: plan.jobId ? "继续清空业务数据" : "清空业务数据（保留管理员）",
+          content: `当前为${plan.stage === "production" ? "正式" : "试用"}环境。不按年份筛选，将永久删除全部 ${plan.members} 名非管理员（含部长及已归档成员）、${plan.applications} 份申请、${plan.semesters} 个学期及年级、${plan.classes} 个班级、${plan.courses} 个课程时段、全部排班和无课时间、${plan.records} 份记录、旧操作记录及照片（已登记 ${plan.files} 张，另扫描未登记照片）。保留 ${plan.administrators} 名管理员的账号和微信绑定、系统连接配置；管理员班级需重新选择。不清平台备份、日志、手机或导出副本。不可撤销，请输入：${BUSINESS_CLEAR_CONFIRMATION}`,
+          editable: true, confirmText: "确认清空", confirmColor: "#c73535" });
+        if (!r.confirm) { this.setData({ clearProgress: "已取消，未执行清空。" }); return; }
+        if (r.content !== BUSINESS_CLEAR_CONFIRMATION) throw new Error("确认文字不符，未执行清空");
+        const start = await cloudCall<{ jobId: string }>("businessClearBegin", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
+        for (let i = 0; i < 100; i++) {
+          const next = await cloudCall<{ done: boolean; waitMs: number; snapshot?: CloudSnapshot }>("businessClearStep", { jobId: start.jobId });
+          if (next.done && next.snapshot) {
+            acceptSnapshot(next.snapshot);
+            const prefix = "xuedu.form." + runtime.env + "." + runtime.mode + ".";
+            for (const key of wx.getStorageInfoSync().keys) if (key.startsWith(prefix)) wx.removeStorageSync(key);
+            this.setData({ tab: "semester", selected: [], search: "", text: "", previewed: false, preview: [], errors: [], clearProgress: "清空完成，管理员已保留。请建立新学期并导入班级和课表。" });
+            this.refresh();
+            return;
+          }
+          this.setData({ clearProgress: next.waitMs ? "等待在途请求结束…" : "正在分批核查并清理照片…" });
+          if (next.waitMs) await new Promise(resolve => setTimeout(resolve, Math.min(1000, next.waitMs)));
+        }
+        throw new Error("本轮处理上限已到，请再次预览并继续清空；完成前写入保持冻结");
+      });
+      if (!ok) this.setData({ clearProgress: "操作未完成。如已开始清空，写入保持冻结，请重新预览并继续。" });
+    } finally { this.setData({ clearingBusiness: false }); }
+  },
   async resetAll() {
-    if (runtime.mode !== "trial" || !this.data.admin || this.data.resettingAll) return;
+    if (runtime.mode !== "trial" || !this.data.admin || this.data.resettingAll || this.data.clearingBusiness) return;
     await runAsync(async () => {
       const plan = await cloudCall<{ epoch: string; version: number; members: number; applications: number; semesters: number; classes: number; courses: number; records: number; files: number; resetId: string }>("resetAllPreview");
       wx.showModal({ title: plan.resetId ? "继续彻底重置" : "彻底重置试用环境",

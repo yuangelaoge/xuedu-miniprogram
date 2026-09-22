@@ -40,3 +40,10 @@ export function clearTrialPeople(state: AppState): AppState {
 export function emptyWorkspace(): AppState {
   return { schema: 1, activeSemesterId: "", actorId: "", semesters: [], classes: [], members: [], applications: [], courses: [], availability: [], plans: [], drafts: [], records: [], audit: [], generation: 0 };
 }
+
+// 换届清空：身份保留，旧班级不再作为当前业务配置或排班依据。
+export function clearBusiness(state: AppState): AppState {
+  return { ...emptyWorkspace(), members: state.members.filter(m => m.role === "admin").map(m => ({
+    ...m, classId: "",
+  })) };
+}

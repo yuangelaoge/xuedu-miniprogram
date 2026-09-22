@@ -3,9 +3,19 @@ import { isCloud, modeLabel, runtime } from "../config/runtime";
 import { syncCloud } from "./cloud";
 let redirecting = false;
 
-export function ensureMember(): boolean {
+export function ensureMember(route = ""): boolean {
   const state = readState();
-  if (state.members.some(m => m.id === state.actorId && m.active)) return true;
+  const user = state.members.find(m => m.id === state.actorId && m.active);
+  if (user) {
+    if (user.role === "admin" && !state.semesters.some(s => s.id === state.activeSemesterId) && route !== "pages/manage/manage") {
+      if (!redirecting) {
+        redirecting = true;
+        wx.reLaunch({ url: "/pages/manage/manage?tab=semester", complete: () => { redirecting = false; } });
+      }
+      return false;
+    }
+    return true;
+  }
   if (!redirecting) {
     redirecting = true;
     wx.reLaunch({ url: "/pages/join/join", complete: () => { redirecting = false; } });
@@ -19,21 +29,21 @@ export const memberPage: WechatMiniprogram.Page.Constructor = (options) => {
     ...options,
     data: { ...options.data, cloudMode: isCloud(), modeLabel: modeLabel(), trialMode: runtime.mode === "trial" },
     onLoad(query) {
-      if (!isCloud()) { if (ensureMember()) options.onLoad?.call(this, query); return; }
-      const load = syncCloud().then(() => { if (ensureMember()) options.onLoad?.call(this, query); }).catch(notifyError);
+      if (!isCloud()) { if (ensureMember(this.route)) options.onLoad?.call(this, query); return; }
+      const load = syncCloud().then(() => { if (ensureMember(this.route)) options.onLoad?.call(this, query); }).catch(notifyError);
       loads.set(this, load);
     },
     onShow() {
-      if (!isCloud()) { if (ensureMember()) options.onShow?.call(this); return; }
+      if (!isCloud()) { if (ensureMember(this.route)) options.onShow?.call(this); return; }
       void (async () => {
         await loads.get(this);
         await syncCloud();
-        if (ensureMember()) options.onShow?.call(this);
+        if (ensureMember(this.route)) options.onShow?.call(this);
       })().catch(notifyError);
     },
     onPullDownRefresh() {
       if (!isCloud()) { options.onShow?.call(this); wx.stopPullDownRefresh(); return; }
-      void syncCloud().then(() => { if (ensureMember()) options.onShow?.call(this); }).catch(notifyError).finally(() => wx.stopPullDownRefresh());
+      void syncCloud().then(() => { if (ensureMember(this.route)) options.onShow?.call(this); }).catch(notifyError).finally(() => wx.stopPullDownRefresh());
     },
   });
 };

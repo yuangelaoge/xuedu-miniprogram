@@ -37,3 +37,6 @@ export function visibleState(state: AppState, openid: string): AppState {
 export function clearTrialPeople(state: AppState): AppState {
   return { ...state, actorId: "", members: state.members.filter(m => m.role === "admin" && m.active), applications: [], availability: [], plans: [], drafts: [], records: [], audit: [], generation: 0 };
 }
+export function emptyWorkspace(): AppState {
+  return { schema: 1, activeSemesterId: "", actorId: "", semesters: [], classes: [], members: [], applications: [], courses: [], availability: [], plans: [], drafts: [], records: [], audit: [], generation: 0 };
+}

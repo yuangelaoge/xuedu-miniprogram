@@ -1,6 +1,6 @@
 {
   "name": "xuedu-miniprogram",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "description": "学风督察小程序，本地交互体验版",
   "scripts": {

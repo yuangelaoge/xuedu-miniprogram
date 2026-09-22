@@ -5,5 +5,5 @@
   <view wx:if="{{manager}}" class="menu-row" bindtap="manage"><view class="row"><view class="menu-icon">▤</view><view>管理工作台</view></view><view class="row"><text wx:if="{{pendingCount}}" class="pill amber">{{pendingCount}} 待审核</text><text class="chevron">›</text></view></view>
   <view class="menu-row" bindtap="rules"><view class="row"><view class="menu-icon">≡</view><view>听课说明</view></view><text class="chevron">›</text></view>
  </view>
- <view class="footer-note">{{semesterName}} · {{modeLabel}} v0.2.0<view wx:if="{{!cloudMode}}" class="demo-link" bindtap="openDemo">开发体验 ›</view></view>
+ <view class="footer-note">{{semesterName}} · {{modeLabel}} v1.0<view wx:if="{{!cloudMode}}" class="demo-link" bindtap="openDemo">开发体验 ›</view></view>
 </view>

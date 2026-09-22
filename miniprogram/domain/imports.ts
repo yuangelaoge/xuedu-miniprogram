@@ -131,8 +131,18 @@ export function commitImport(
 }
 export function addSemester(state: AppState, value: Semester): void {
   requireRole(state, ["admin"]);
-  if (!value.name.trim() || state.semesters.some((s) => s.id === value.id))
+  validateSemester(value);
+  if (state.semesters.some((s) => s.id === value.id))
     throw new Error("学期名称为空或 ID 重复");
+  state.semesters.push(value);
+  state.activeSemesterId = value.id;
+  audit(state, "新建学期", value.name);
+}
+export function validateSemester(value: Semester): void {
+  if (!value || typeof value.id !== "string" || !value.id || value.id.length > 100 ||
+    typeof value.name !== "string" || !value.name.trim() || value.name.length > 100 ||
+    typeof value.startDate !== "string" || !Array.isArray(value.grades) ||
+    typeof value.edition !== "string" || value.edition.length > 100) throw new Error("学期资料无效");
   const date = new Date(value.startDate + "T12:00:00+08:00");
   if (
     !/^\d{4}-\d{2}-\d{2}$/.test(value.startDate) ||
@@ -145,8 +155,8 @@ export function addSemester(state: AppState, value: Semester): void {
     !Number.isInteger(value.weeks) ||
     value.weeks < 1 ||
     value.weeks > 30 ||
-    !value.grades.length ||
-    value.grades.some((g) => !/^\d{2}$/.test(g))
+    !value.grades.length || value.grades.length > 10 ||
+    value.grades.some((g) => typeof g !== "string" || !/^\d{2}$/.test(g))
   )
     throw new Error("请设置 1–30 周及两位数字年级");
   if (
@@ -158,7 +168,4 @@ export function addSemester(state: AppState, value: Semester): void {
     value.periods > 16
   )
     throw new Error("上课日为 5–7 天，每天为 1–16 节");
-  state.semesters.push(value);
-  state.activeSemesterId = value.id;
-  audit(state, "新建学期", value.name);
 }

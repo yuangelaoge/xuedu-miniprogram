@@ -6,6 +6,7 @@ import { initialState } from "../server/policy";
 test("客户端：环境不匹配阻断、拉取去重、版本及清理轮次防回退，云端禁用本地改身份", async () => {
   const global = globalThis as any;
   const oldWx = global.wx;
+  const originalRuntime = { ...runtime };
   let calls = 0;
   const data = { stage: "trial" as const, epoch: "epoch-1", version: 0, identity: "self", state: initialState("trial") };
   runtime.mode = "trial"; runtime.env = "trial-env";
@@ -28,5 +29,5 @@ test("客户端：环境不匹配阻断、拉取去重、版本及清理轮次�
     assert.equal(currentSnapshot().epoch, "epoch-2", "旧轮次的迟到响应不能复活试用数据");
     assert.throws(() => acceptSnapshot({ ...data, stage: "production" }), /环境与版本不符/);
     assert.equal(currentSnapshot().stage, "trial");
-  } finally { runtime.mode = "demo"; runtime.env = ""; global.wx = oldWx; }
+  } finally { Object.assign(runtime, originalRuntime); global.wx = oldWx; }
 });

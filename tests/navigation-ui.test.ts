@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, existsSync } from "node:fs";
 import { createSeed } from "../miniprogram/domain/seed";
+import { runtime as appRuntime } from "../miniprogram/config/runtime";
 
 const source = (path: string) => readFileSync(new URL("../miniprogram/" + path, import.meta.url), "utf8");
 const config = JSON.parse(source("app.json"));
@@ -24,6 +25,8 @@ test("精简导航：四个底部入口，课程为二级页，重复入口已�
 });
 
 test("精简后页面跳转、事件绑定、默认记录视角与统一开发体验可用", async () => {
+  const originalMode = appRuntime.mode;
+  appRuntime.mode = "demo";
   const runtime = globalThis as any;
   const oldWx = runtime.wx, oldPage = runtime.Page;
   const storage = new Map<string, any>([["xuedu.demo.v1", createSeed()]]);
@@ -100,6 +103,7 @@ test("精简后页面跳转、事件绑定、默认记录视角与统一开发�
     demo.switchActor(event({}, String(demo.data.members.findIndex((m: any) => m.id === "m0"))));
     assert.equal(route, "/pages/index/index");
   } finally {
+    appRuntime.mode = originalMode;
     runtime.wx = oldWx;
     runtime.Page = oldPage;
   }

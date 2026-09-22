@@ -5,6 +5,20 @@
   <view class="notice" style="margin-top:30rpx">{{cloudMode ? modeLabel + '：微信身份自动关联，资料提交后由管理人员审核。试用数据不会带入正式版。' : '本地流程演示：尚未连接微信身份与云端审核，不能供其他手机扫码入组。'}}</view>
   <view wx:if="{{connecting}}" class="notice">正在连接云端…</view>
   <view wx:if="{{connectionError}}" class="notice warn" bindtap="refresh">{{connectionError}} · 点击重试</view>
+  <view wx:if="{{trialMode}}" class="notice warn">试用环境可能含示例班级和课表，真实使用前请管理员核对更新；没有你的班级时请勿随意选择。</view>
+  <view wx:if="{{bootstrapEmpty}}" class="card">
+    <view class="section-title">重新初始化空白工作区</view>
+    <view class="notice">仅原来允许的初始化微信可设置。不恢复旧课程、班级或成员；保存后填写本人资料重新成为首位管理员。</view>
+    <view class="field"><view class="field-label">学期名称</view><input class="input" value="{{setup.semesterName}}" data-key="semesterName" bindinput="setupInput"/></view>
+    <view class="field"><view class="field-label">第一周周一（YYYY-MM-DD）</view><input class="input" value="{{setup.startDate}}" data-key="startDate" bindinput="setupInput"/></view>
+    <view class="field"><view class="field-label">教学周数</view><input class="input" type="number" value="{{setup.weeks}}" data-key="weeks" bindinput="setupInput"/></view>
+    <view class="field"><view class="field-label">入学年级（例如 25）</view><input class="input" value="{{setup.grade}}" data-key="grade" bindinput="setupInput" maxlength="2"/></view>
+    <view class="field"><view class="field-label">专业</view><input class="input" value="{{setup.major}}" data-key="major" bindinput="setupInput"/></view>
+    <view class="field"><view class="field-label">本人完整班级名称</view><input class="input" value="{{setup.className}}" data-key="className" bindinput="setupInput"/></view>
+    <view class="field"><view class="field-label">每周上课天数（5–7）</view><input class="input" type="number" value="{{setup.days}}" data-key="days" bindinput="setupInput"/></view>
+    <view class="field"><view class="field-label">每天节数（1–16）</view><input class="input" type="number" value="{{setup.periods}}" data-key="periods" bindinput="setupInput"/></view>
+    <button class="primary" bindtap="setupWorkspace" disabled="{{busy}}">建立空白学期与班级</button>
+  </view>
   <view class="card">
     <view class="section-title">{{statusTitle}}</view>
     <view class="muted" style="margin-top:16rpx">{{statusText}}</view>

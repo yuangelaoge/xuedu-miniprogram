@@ -1,8 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createSeed } from "../miniprogram/domain/seed";
+import { runtime as appRuntime } from "../miniprogram/config/runtime";
 
 test("页面流程：申请→驳回→重申→批量通过→进入→删除→门禁；旧数据迁移", async () => {
+  const originalMode = appRuntime.mode;
+  appRuntime.mode = "demo";
   const runtime = globalThis as any;
   const originalWx = runtime.wx, originalPage = runtime.Page;
   const storage = new Map<string, any>();
@@ -89,5 +92,5 @@ test("页面流程：申请→驳回→重申→批量通过→进入→删除�
     // 已打开的业务页面再次显示时也检查资格，不只在 onLoad 检查。
     transact(s => { s.actorId = member.id; }); route = ""; coursePage.onShow();
     assert.equal(route, "/pages/join/join");
-  } finally { runtime.wx = originalWx; runtime.Page = originalPage; }
+  } finally { appRuntime.mode = originalMode; runtime.wx = originalWx; runtime.Page = originalPage; }
 });

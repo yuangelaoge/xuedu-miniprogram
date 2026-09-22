@@ -1,16 +1,18 @@
 import { readState, run, transact, command, runAsync, notifyError } from "../../services/store";
 import { demoIdentity, submitJoin, enterAsApprovedApplicant } from "../../services/join";
-import { isCloud, modeLabel } from "../../config/runtime";
-import { syncCloud, cloudCall } from "../../services/cloud";
+import { isCloud, modeLabel, runtime } from "../../config/runtime";
+import { syncCloud, cloudCall, CloudSnapshot, acceptSnapshot, currentSnapshot } from "../../services/cloud";
 import { latestApplication, membershipFor } from "../../domain/membership";
 import { UiEvent } from "../../domain/types";
 
 Page({
   data: {
-    cloudMode: isCloud(), modeLabel: modeLabel(), connecting: false, connectionError: "",
+    cloudMode: isCloud(), trialMode: runtime.mode === "trial", modeLabel: modeLabel(), connecting: false, connectionError: "",
     status: "new", reason: "", name: "", studentNo: "", classId: "",
     classIndex: -1, classes: [] as { id: string; label: string }[], busy: false,
     statusTitle: "申请加入学督", statusText: "首次填写资料，由管理员或组部长审核。",
+    bootstrapEmpty: false,
+    setup: { semesterName: "", startDate: "", weeks: "20", grade: "", major: "", className: "", days: "5", periods: "14" },
   },
   onLoad() { if (!isCloud()) transact(s => { s.actorId = ""; }); },
   onShow() { this.refresh(); },
@@ -24,7 +26,14 @@ Page({
   },
   async loadCloud() {
     this.setData({ connecting: true, connectionError: "" });
-    try { await syncCloud(); this.render(); }
+    try {
+      const snapshot = await syncCloud();
+      if (runtime.mode === "trial" && !snapshot.state.semesters.length && !snapshot.state.classes.length) {
+        const status = await cloudCall<{ bootstrapMatchesCurrentWeChat: boolean }>("deploymentStatus");
+        this.setData({ bootstrapEmpty: status.bootstrapMatchesCurrentWeChat });
+      } else this.setData({ bootstrapEmpty: false });
+      this.render();
+    }
     catch (e) { this.setData({ connectionError: e instanceof Error ? e.message : "连接失败" }); }
     finally { this.setData({ connecting: false }); }
   },
@@ -67,6 +76,24 @@ Page({
   async copyIdentity() {
     try { const data = await cloudCall<{ openid: string }>("identity"); wx.setClipboardData({ data: data.openid }); }
     catch (e) { notifyError(e); }
+  },
+  setupInput(e: UiEvent) {
+    const key = e.currentTarget.dataset.key;
+    if (["semesterName", "startDate", "weeks", "grade", "major", "className", "days", "periods"].includes(key)) this.setData({ ["setup." + key]: e.detail.value });
+  },
+  async setupWorkspace() {
+    if (!this.data.bootstrapEmpty || this.data.busy) return;
+    this.setData({ busy: true });
+    try {
+      await runAsync(async () => {
+        const f = this.data.setup;
+        const next = await cloudCall<CloudSnapshot>("bootstrapWorkspace", { epoch: currentSnapshot().epoch,
+          semester: { id: "new", name: f.semesterName, startDate: f.startDate, weeks: Number(f.weeks), grades: [f.grade], days: Number(f.days), periods: Number(f.periods), edition: "学风督察小组" },
+          schoolClass: { grade: f.grade, major: f.major, name: f.className },
+        });
+        acceptSnapshot(next); this.setData({ bootstrapEmpty: false }); this.render();
+      }, "已建立空白学期与班级，请填写本人资料");
+    } finally { this.setData({ busy: false }); }
   },
   openDemo() {
     if (isCloud()) return;

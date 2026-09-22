@@ -12,6 +12,8 @@ memberPage({
     tab: "members",
     admin: false,
     manager: false,
+    resettingAll: false,
+    resetProgress: "",
     memberTab: "pending",
     pending: [] as (JoinApplication & { classLabel: string; selected: boolean })[],
     selected: [] as string[],
@@ -299,6 +301,39 @@ memberPage({
             const next = await cloudCall<CloudSnapshot>("cleanup", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
             acceptSnapshot(next); this.refresh();
           }, "试用数据已清理");
+        },
+      });
+    });
+  },
+  async resetAll() {
+    if (runtime.mode !== "trial" || !this.data.admin || this.data.resettingAll) return;
+    await runAsync(async () => {
+      const plan = await cloudCall<{ epoch: string; version: number; members: number; applications: number; semesters: number; classes: number; courses: number; records: number; files: number; resetId: string }>("resetAllPreview");
+      wx.showModal({ title: plan.resetId ? "继续彻底重置" : "彻底重置试用环境",
+        content: `永久清空全部 ${plan.members} 名成员（含你和所有管理员）、${plan.applications} 份申请、${plan.semesters} 个学期、${plan.classes} 个班级、${plan.courses} 个课程时段、全部排班和无课时间、${plan.records} 份记录、操作记录及照片。已登记照片 ${plan.files} 张；还将扫描试用照片目录清理未登记照片。保留云环境、代码、密钥和你的重新初始化资格。不清除平台备份/日志、手机副本和导出文件。不可撤销，请输入：清空全部业务数据`,
+        editable: true, confirmText: "彻底重置", confirmColor: "#c73535",
+        success: async r => {
+          if (!r.confirm) return;
+          if (r.content !== "清空全部业务数据") { wx.showToast({ title: "确认文字不符，未执行", icon: "none" }); return; }
+          this.setData({ resettingAll: true, resetProgress: "正在冻结写入…" });
+          try {
+            await runAsync(async () => {
+              const start = await cloudCall<{ resetId: string }>("resetAllBegin", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
+              for (let i = 0; i < 100; i++) {
+                const next = await cloudCall<{ done: boolean; waitMs: number; snapshot?: CloudSnapshot }>("resetAllStep", { resetId: start.resetId });
+                if (next.done && next.snapshot) {
+                  acceptSnapshot(next.snapshot);
+                  const prefix = "xuedu.form." + runtime.env + ".trial.";
+                  for (const key of wx.getStorageInfoSync().keys) if (key.startsWith(prefix)) wx.removeStorageSync(key);
+                  wx.reLaunch({ url: "/pages/join/join" });
+                  return;
+                }
+                this.setData({ resetProgress: next.waitMs ? "等待正在上传的请求结束…" : "正在分批核查并清理照片…" });
+                if (next.waitMs) await new Promise(resolve => setTimeout(resolve, Math.min(1000, next.waitMs)));
+              }
+              throw new Error("本轮处理上限已到，写入仍冻结。请再次点击彻底重置继续，不会重复创建任务");
+            });
+          } finally { this.setData({ resettingAll: false, resetProgress: "如发生中断，请再次预览并继续；未完成前写入保持冻结。" }); }
         },
       });
     });

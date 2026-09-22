@@ -1,7 +1,11 @@
 {
   "name": "xuedu-production",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "private": true,
   "main": "index.js",
-  "dependencies": { "wx-server-sdk": "~3.0.1" }
+  "dependencies": {
+    "wx-server-sdk": "~3.0.1",
+    "@cloudbase/js-sdk": "3.10.0",
+    "@cloudbase/signature-nodejs": "2.0.0"
+  }
 }

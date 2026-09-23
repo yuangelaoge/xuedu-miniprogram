@@ -177,6 +177,7 @@ export function registerCloudPage(view: View): void {
         this.filterRows();
       } catch (e) { this.setData({ visibleRows:[],visibleTasks:[],pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",error: e instanceof Error ? e.message : "连接失败", record: null, photoUrls: [], versions: [], rows: [], tasks: [], homeTasks: [] }); }
       finally { this.setData({ busy: false }); }
+      if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats();
     },
     async more() { await this.load(true); },
     async moreSemesters() {

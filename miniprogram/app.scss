@@ -414,3 +414,18 @@ textarea.input {
 .v2-record-form .section { flex-wrap: wrap; gap: 12rpx; }
 .v2-record-form button[size=mini] { font-size: 23rpx; }
 .v2-form-photo { max-width: 180rpx; }
+
+/* 记录页以列表／统计为主；原生 button 在弹性容器中必须显式占格。 */
+.v2-page .v2-actions button { flex: 1 1 220rpx; min-width: 0; margin: 0; white-space: normal; }
+.v2-page .v2-actions button[size=mini] { flex: 0 1 auto; }
+.v2-semester-compact { display: flex; align-items: center; flex-wrap: wrap; gap: 12rpx; padding: 12rpx 20rpx; margin: 10rpx 0 0; }
+.v2-semester-compact .v2-label { flex: 0 0 auto; margin: 0; font-size: 24rpx; }
+.v2-semester-compact picker { flex: 1 1 260rpx; min-width: 0; }
+.v2-semester-compact .v2-picker { background: transparent; border: 0; min-height: 0; padding: 8rpx 0; text-align: right; }
+.v2-record-progress { margin-top: 14rpx; }
+.v2-record-export { margin-top: 24rpx; }
+.v2-record-export .muted { margin-top: 10rpx; }
+.v2-report-actions { display: flex; gap: 16rpx; margin-top: 18rpx; }
+.v2-page .v2-report-actions button { flex: 1 1 0; min-width: 0; margin: 0; padding: 20rpx 10rpx; }
+.v2-copy-report { display: block; text-align: center; margin-top: 22rpx; padding: 10rpx 0; }
+.v2-report-file { margin-top: 20rpx; }

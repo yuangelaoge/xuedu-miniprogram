@@ -4,7 +4,7 @@ import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
 import { bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey } from "./client";
 
-import { weekRange } from "../../domain/calendar";
+import { boundedWeek, weekRange } from "../../domain/calendar";
 
 interface AutoApprovalView { setting: AutoApproval | null; active: boolean; expired: boolean; version: number; serverNow: number; }
 const localTime = (value: string) => value ? new Date(Date.parse(value) + 8 * 3600000).toISOString().slice(0,16).replace("T", " ") + "（北京时间）" : "";
@@ -104,9 +104,12 @@ export function registerCloudPage(view: View): void {
         const selected = this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
         const selectedSemester = this.data.semesters.find(e => e.id === selected);
         const semesterId = selected || boot.workspace.activeSemesterId;
+        const displayedWeek = view === "home" && selectedSemester?.data.startDate
+          ? boundedWeek(selectedSemester.data as unknown as Semester)
+          : this.data.week;
         if (!semesterId) this.setData({tasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},taskCount:0,recordCount:0,coverage:0,weekTotal:0,weekSubmitted:0,weekProgress:0,availabilityReady:false});
         this.setData({ semesterId, semesterIndex: Math.max(0, this.data.semesters.findIndex(e => e.id === semesterId)), semesterName: s(selectedSemester?.data.name || (semesterId ? "所选历史学期" : "尚未启用学期")) });
-        this.setData({dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, this.data.week) : ""});
+        this.setData({week: displayedWeek, dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, displayedWeek) : ""});
         if (view === "manage" || view === "records" || view === "courses") {
           const kind = view === "manage" ? this.data.section : view === "courses" ? "courses" : "records";
           if (admin && view === "manage" && ["applications", "autoApproved"].includes(kind)) {
@@ -131,7 +134,7 @@ export function registerCloudPage(view: View): void {
           const response = await query(kind, ["courses", "records"].includes(kind) ? semesterId : "", kind === "records" ? { week: this.data.week } : {}, more ? this.data.cursor : "");
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
         } else if (["home", "schedule", "availability"].includes(view) && semesterId) {
-          const response = await query<WeekData>("week", semesterId, { week: this.data.week });
+          const response = await query<WeekData>("week", semesterId, { week: displayedWeek });
           const w = response.data;
           const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
           this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,

@@ -5,6 +5,8 @@ import {runtime} from "../miniprogram/config/runtime";
 import {registerCloudPage} from "../miniprogram/services/v2/page";
 import {createGatewayV2} from "../server/v2/gateway";
 import {MemoryRepository} from "../server/v2/memory";
+import {boundedWeek, weekRange} from "../miniprogram/domain/calendar";
+import {Semester} from "../miniprogram/domain/types";
 
 const event=(dataset:any={},value:any="")=>({currentTarget:{dataset},detail:{value}});
 test("云端页面完整流程：首次登记、独立建班、申请审核、排班、提交更正、版本历史与TXT/XLSX导出",async()=>{
@@ -33,7 +35,12 @@ test("云端页面完整流程：首次登记、独立建班、申请审核、�
   availability.toggleSlot(event({key:"1:3"}));assert.ok(availability.data.selectedSlots.includes("1:3"));availability.toggleSlot(event({key:"1:3"}));assert.ok(!availability.data.selectedSlots.includes("1:3"));
   who="owner";const schedule=await page("schedule");await schedule.generate();assert.ok(schedule.data.weekData.draft);await schedule.confirmPlan();assert.deepEqual(errors,[]);const task=(await repository.query("tasks",{})).items.find(t=>t.data.status==="confirmed")!;assert.ok(task);
   who="member";const submission=await page("submission",{taskId:task.id,semesterId});fill(submission,{expected:30,actual:29,late:0,early:0,sleep:0,phone:0,talk:0,other:0,absentNames:"无",leaveNames:"测试同学"});await submission.choosePhotos();assert.deepEqual(errors,[]);await save(submission);
-  const home=await page("home");assert.equal(home.data.homeTasks.length,1);assert.equal(home.data.homeTasks[0].done,true);assert.equal(home.data.homeTasks[0].course.name,"高等数学");
+  const home=await page("home");
+  const currentSemester=(await repository.get("semesters",semesterId))!.data as unknown as Semester;
+  const currentWeek=boundedWeek(currentSemester);
+  assert.equal(home.data.week,currentWeek,"首页按学期日期显示当前周，而不是固定第一周");
+  assert.equal(home.data.dates,weekRange(currentSemester,currentWeek));
+  assert.equal(home.data.homeTasks.length,currentWeek===1?1:0,"首页只显示当前周任务");
   const record=(await repository.query("records",{})).items[0];assert.ok(record);const detail=await page("record",{id:record.id,semesterId});assert.equal(detail.data.canEdit,true);detail.editRecord();fill(detail,{actual:28,reason:"核对签字表"});await save(detail);assert.equal((await repository.get("records",record.id))!.version,2);
   const editCall=calls.find(c=>c.payload?.type==="recordEdit");assert.equal(editCall.payload.taskId,undefined,"纠错不能提交归属字段");await detail.history();assert.equal(detail.data.versions.length,2);await detail.history();assert.equal(detail.data.versions.length,2,"末页历史不可重复追加");
   who="owner";const reports=await page("records");await reports.showStats();assert.equal(reports.data.statsCount,1);assert.equal(reports.data.stats[0].rate,"93.3%");await reports.exportReport(event({kind:"txt"}));await reports.exportReport(event({kind:"xlsx"}));assert.deepEqual(errors,[]);assert.equal(written.length,2);assert.match(written[0].data,/最近更正/);assert.ok(written[1].data.byteLength>1000);

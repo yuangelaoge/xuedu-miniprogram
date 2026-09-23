@@ -1,8 +1,8 @@
 # V2 单云端配置与本地交付状态
 
-**状态更新（2026-09-23）**：V2 已切换至既有 `xueduTrial`，003、004 已在线上执行；当前工作区已开放。最近有记录的客户端上传为 `a4fc34d`；本地随后完成的 `ae326f8` 前端修复尚未上传。本文件以下“V2 尚未部署”描述保留为切换前的实施档案。实际切换证据见 [V2 部署记录](DEPLOYMENT-2026-09-23-V2.md)，本地修复见 [前端兼容修复](UI-COMPATIBILITY-REPAIR.md)。
+**状态更新（2026-09-23）**：V2 已切换至既有 `xueduTrial`，003、004 已在线上执行；当前工作区已开放。最近有记录的客户端上传为 `a4fc34d`；本地随后完成的 `ae326f8` 与 `4f2fa21` 前端修复尚未上传。本文件以下“V2 尚未部署”描述保留为切换前的实施档案。实际切换证据见 [V2 部署记录](DEPLOYMENT-2026-09-23-V2.md)，本地修复见 [前端兼容修复](UI-COMPATIBILITY-REPAIR.md)和[记录表单修复](RECORD-FORM-REPAIR.md)。
 
-V2 尚未部署、上传或执行线上迁移。本文件前部是当前约定；后部 V1 文档只作历史记录。继续使用原 AppID、`xuedu-trial-d2gs2dpnla9206eb3`、`xueduTrial`、PostgreSQL 和私有 `xuedu-photos` 桶，不能因为名字含 trial 而新建所谓正式环境。
+以下配置说明写于 V2 尚未部署、上传或执行线上迁移的阶段；其操作边界仍可参考，发布状态以上方更新为准。继续使用原 AppID、`xuedu-trial-d2gs2dpnla9206eb3`、`xueduTrial`、PostgreSQL 和私有 `xuedu-photos` 桶，不能因为名字含 trial 而新建所谓正式环境。
 
 ## 入口与配置
 

@@ -8,4 +8,3 @@
  <view wx:if="{{admin}}" class="card"><view class="menu-row" bindtap="stepDown"><view>本人卸任管理员</view><text class="chevron">›</text></view></view>
  <view class="footer-note">{{semesterName}} · {{modeLabel}} v1.0</view>
 </view>
-

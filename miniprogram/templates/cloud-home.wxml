@@ -79,4 +79,3 @@
 
   <view class="home-footer">{{cloudMode ? modeLabel + ' · 下拉刷新同步最新数据' : '本地体验版 · 示例人物与课程均为虚构'}}<view wx:if="{{!cloudMode}}">数据仅保存在当前设备，不跨设备同步</view></view>
 </view>
-

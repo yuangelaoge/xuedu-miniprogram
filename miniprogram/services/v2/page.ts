@@ -163,8 +163,8 @@ export function registerCloudPage(view: View): void {
       if (!this.data.semesterCursor) return;
       try { const r = await query("semesters", "", {}, this.data.semesterCursor); this.setData({ semesters: this.data.semesters.concat(r.data.items), semesterCursor: r.cursor || "", semesterOptions: this.data.semesters.concat(r.data.items).map(e => ({label: s(e.data.name), value: e.id})) }); } catch (e) { displayError(e); }
     },
-    section(e: UiEvent) { this.setData({ section: e.currentTarget.dataset.id, selectedApplications: [], rows: [], cursor: "", formType: "" }); void this.load(); },
-    chooseSemester(e: UiEvent) { const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, formType: "", rows: [], week: 1 }); void this.load(); },
+    section(e: UiEvent) { if (this.data.busy) return; this.setData({ section: e.currentTarget.dataset.id, selectedApplications: [], rows: [], cursor: "", formType: "" }); void this.load(); },
+    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, formType: "", rows: [], week: 1 }); void this.load(); },
     weekChange(e: UiEvent) { const next = Number(e.detail.value); if (Number.isInteger(next) && next >= 1 && next <= 60) this.setData({ week: next }); },
     refreshWeek() { void this.load(); },
     recordTab(e: UiEvent) { this.setData({recordTab:e.currentTarget.dataset.id}); if (e.currentTarget.dataset.id === "stats" && this.data.semesterId) void this.showStats(); },

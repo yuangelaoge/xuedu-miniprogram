@@ -21,7 +21,7 @@ test("云端页面完整流程：首次登记、独立建班、申请审核、�
  try{
   const join=await page("join");assert.equal(join.data.canInitialize,true);await join.openForm("initialize");fill(join,{semesterName:"2026秋",startDate:"2026-09-07",className:"26自动化1班",grade:"26",major:"自动化",name:"管理员",studentNo:"001"});await save(join);
   const workspace=await repository.workspace(),semesterId=workspace.activeSemesterId;
-  const manage=await page("manage");await manage.openForm("classSave");fill(manage,{name:"26计科1班",grade:"26",major:"计算机"});await save(manage);const classes=(await repository.query("classes",{})).items;
+  const manage=await page("manage");manage.data.busy=true;manage.section(event({id:"applications"}));assert.equal(manage.data.section,"members","加载时不能把旧分类数据标成新分类");manage.data.busy=false;await manage.openForm("classSave");fill(manage,{name:"26计科1班",grade:"26",major:"计算机"});await save(manage);const classes=(await repository.query("classes",{})).items;
   const ownClass=classes.find(c=>c.data.major==="自动化")!,target=classes.find(c=>c.data.major==="计算机")!;
   assert.equal((await repository.query("courses",{})).items.length,0,"无课程也能独立建班");
   const semester=(await repository.get("semesters",semesterId))!;await manage.openForm("semesterParticipants",semester);assert.deepEqual(manage.data.fields[0].selected,[ownClass.id]);fill(manage,{classIds:[ownClass.id,target.id]});await save(manage);

@@ -1,9 +1,11 @@
-import { Entity, CLEAR_CONFIRMATION } from "../../domain/v2/protocol";
+import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protocol";
 import { AppState, METRIC_FIELDS, UiEvent } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
 import { bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey } from "./client";
 
+interface AutoApprovalView { setting: AutoApproval | null; active: boolean; expired: boolean; version: number; serverNow: number; }
+const localTime = (value: string) => value ? new Date(Date.parse(value) + 8 * 3600000).toISOString().slice(0,16).replace("T", " ") + "（北京时间）" : "";
 type View = "home" | "schedule" | "records" | "profile" | "manage" | "join" | "record" | "submission" | "availability" | "courses";
 interface Option { label: string; value: string; checked?: boolean; }
 interface Field { key: string; label: string; value: string; kind: string; options: Option[]; selected: string[]; }
@@ -11,12 +13,12 @@ interface Row extends Entity { selected?: boolean; label: string; detail: string
 interface WeekData { semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity; uncovered?: { label: string; reason: string }[]; }
 const titles: Record<View, string> = { home: "学风督察", schedule: "听课安排", records: "听课记录", profile: "我的", manage: "管理工作台", join: "申请加入", record: "听课记录详情", submission: "填写听课记录", availability: "无课时间", courses: "课程总表" };
 const s = (value: unknown) => value === undefined || value === null ? "" : String(value);
-const actionLabels: Record<string,string> = { initialize:"首次初始化", roleChange:"调整角色", memberStatus:"调整启停状态", memberRemove:"移除成员", memberRestore:"恢复成员", classSave:"维护班级", classDisable:"停用班级", semesterCreate:"建立学期草稿", semesterActivate:"启用学期", semesterParticipants:"配置参与班级", courseSave:"维护课程", courseDisable:"停用课程", exceptionSave:"停调补课", planGenerate:"生成排班草稿", planConfirm:"确认排班", taskAdjust:"调整任务草稿", recordSubmit:"提交记录", recordEdit:"更正记录", rebindConfirm:"确认微信换绑", applicationReview:"审核申请", clearBegin:"开始业务清空", import:"导入课表" };
+const actionLabels: Record<string,string> = { autoApprovalEnabled:"开启自动通过", autoApprovalDisabled:"关闭自动通过", autoApproveApplication:"自动通过入组申请", initialize:"首次初始化", roleChange:"调整角色", memberStatus:"调整启停状态", memberRemove:"移除成员", memberRestore:"恢复成员", classSave:"维护班级", classDisable:"停用班级", semesterCreate:"建立学期草稿", semesterActivate:"启用学期", semesterParticipants:"配置参与班级", courseSave:"维护课程", courseDisable:"停用课程", exceptionSave:"停调补课", planGenerate:"生成排班草稿", planConfirm:"确认排班", taskAdjust:"调整任务草稿", recordSubmit:"提交记录", recordEdit:"更正记录", rebindConfirm:"确认微信换绑", applicationReview:"审核申请", clearBegin:"开始业务清空", import:"导入课表" };
 const statusLabels: Record<string, string> = { pending: "待审核", approved: "已通过", rejected: "已驳回", draft: "草稿", active: "已启用", confirmed: "已确认", submitted: "已提交", pendingAdjustment: "待调整", cancelled: "已取消" };
 const row = (e: Entity): Row => {
   const course = e.data.course as Record<string, unknown> | undefined;
   return { ...e, label: s(e.data.name || e.data.memberName || e.data.classLabel || (actionLabels[s(e.data.action)] || e.data.action) || e.date || "业务资料"),
-    detail: [e.data.classLabel, course?.name, e.data.grade, e.data.major, e.data.teacher || course?.teacher, e.data.date || e.date, course ? `第${course.start}–${course.end}节 ${course.classroom || ""}` : "", e.data.reason, e.data.detail, e.data.correctedAt ? "更正于 " + s(e.data.correctedAt) : ""].filter(Boolean).join(" · "),
+    detail: [e.data.studentNo, e.data.classLabel, e.data.approvalMode === "automatic" ? "自动通过 · " + localTime(s(e.data.reviewedAt)) : "", course?.name, e.data.grade, e.data.major, e.data.teacher || course?.teacher, e.data.date || e.date, course ? `第${course.start}–${course.end}节 ${course.classroom || ""}` : "", e.data.reason, e.data.detail, e.data.correctedAt ? "更正于 " + s(e.data.correctedAt) : ""].filter(Boolean).join(" · "),
     status: s(e.data.status), statusLabel: statusLabels[s(e.data.status)] || s(e.data.status), active: e.data.active !== false, role: s(e.data.role), cancel: e.data.cancel === true, replaces: !!e.data.replacesTaskId, historyFields: e.data.metrics ? METRIC_FIELDS.map(f => ({label:f.label,value:(e.data.metrics as Record<string,number>)[f.key] === -1 ? "信息缺失" : s((e.data.metrics as Record<string,number>)[f.key])})) : [] };
 };
 const field = (key: string, label: string, value: unknown = "", kind = "text", options: Option[] = []): Field => ({ key, label, value: s(value), kind, options, selected: Array.isArray(value) ? value.map(String) : [] });
@@ -44,12 +46,14 @@ async function optionsFor(kind: string, semesterId = ""): Promise<Option[]> {
 function displayError(e: unknown): void { wx.showModal({ title: "未完成", content: e instanceof Error ? e.message : "操作失败，请刷新重试", showCancel: false }); }
 
 export function registerCloudPage(view: View): void {
+  let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   Page({
     data: {
       cloudMode: true, title: titles[view], view, busy: false, error: "", status: "", canInitialize: false, removed: false,
       admin: false, manager: false, memberName: "", memberId: "", role: "", maintenance: "",
+      autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
       selectedApplications: [] as string[], section: view === "manage" ? "members" : view === "records" ? "records" : "", rows: [] as Row[], cursor: "",
-      sections: [{ id: "members", label: "成员" }, { id: "applications", label: "入组申请" }, { id: "rebindings", label: "换绑申请" }, { id: "classes", label: "班级" }, { id: "semesters", label: "学期" }, { id: "courses", label: "课表" }, { id: "audit", label: "操作记录" }],
+      sections: [{ id: "members", label: "成员" }, { id: "applications", label: "入组申请" }, { id: "autoApproved", label: "自动通过人员" }, { id: "rebindings", label: "换绑申请" }, { id: "classes", label: "班级" }, { id: "semesters", label: "学期" }, { id: "courses", label: "课表" }, { id: "audit", label: "操作记录" }],
       semesterId: "", semesterName: "", activeSemesterId: "", semesters: [] as Entity[], semesterOptions: [] as Option[], semesterCursor: "", semesterIndex: 0,
       fixedSemester: "", targetId: "", week: 1, weekData: { tasks: [], occurrences: [] } as WeekData, tasks: [] as Row[],
       record: null as Entity | null, recordFields: [] as { label: string; value: string }[], canEdit: false, versions: [] as Row[], versionCursor: "", photoUrls: [] as string[],
@@ -58,6 +62,8 @@ export function registerCloudPage(view: View): void {
     },
     onLoad(q: Record<string, string>) { this.setData({ fixedSemester: q.semesterId || "", targetId: q.id || q.taskId || "", week: Number(q.week) || 1 }); },
     onShow() { void this.load(); },
+    onHide() { if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
+    onUnload() { if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
     onPullDownRefresh() { void this.load().finally(() => wx.stopPullDownRefresh()); },
     async load(more = false): Promise<void> {
       if (this.data.busy) return;
@@ -84,6 +90,16 @@ export function registerCloudPage(view: View): void {
         this.setData({ semesterId, semesterIndex: Math.max(0, this.data.semesters.findIndex(e => e.id === semesterId)), semesterName: s(selectedSemester?.data.name || (semesterId ? "所选历史学期" : "尚未启用学期")) });
         if (view === "manage" || view === "records" || view === "courses") {
           const kind = view === "manage" ? this.data.section : view === "courses" ? "courses" : "records";
+          if (admin && view === "manage" && ["applications", "autoApproved"].includes(kind)) {
+            const setting = await query<AutoApprovalView>("autoApproval");
+            const {data} = setting;
+            this.setData({autoApprovalActive:data.active,autoApprovalExpired:data.expired,autoApprovalVersion:data.version,autoApprovalDeadline:localTime(data.setting?.expiresAt || ""),autoApprovalUpdated:data.setting ? data.setting.updatedByName + " · " + localTime(data.setting.updatedAt) : "尚未开启"});
+            if (autoExpiryTimer) clearTimeout(autoExpiryTimer);
+            if (data.active && data.setting) {
+              const expire = () => { const remaining = Date.parse(data.setting!.expiresAt) - data.serverNow - (Date.now() - started); if (remaining <= 0) this.setData({autoApprovalActive:false,autoApprovalExpired:true}); else autoExpiryTimer = setTimeout(expire,Math.min(remaining,2147483647)); };
+              const started = Date.now(); expire();
+            }
+          }
           if (!manager && view === "manage") throw new Error("无管理权限");
           if (view === "manage" && !admin && ["classes", "semesters", "courses"].includes(kind)) throw new Error("此维护入口仅管理员可用");
           if (["courses", "records"].includes(kind) && !semesterId) { this.setData({ rows: [], cursor: "" }); return; }
@@ -141,6 +157,7 @@ export function registerCloudPage(view: View): void {
       try {
         const d = { ...entity?.data, ...(entity?.data.course as Record<string, unknown> || {}) }, id = entity?.id || "", options = () => optionsFor("classes");
         let fields: Field[] = [], extra: Record<string, unknown> = {};
+        if (type === "autoApprovalSet") fields = [field("deadlineDate", "截止日期（北京时间）", "", "date"), field("deadlineTime", "截止时刻（北京时间）", "", "time")];
         if (type === "classSave") fields = [field("name", "班级名称", d.name), field("grade", "入学年级（两位数字）", d.grade), field("major", "专业", d.major)];
         if (type === "semesterCreate") fields = [field("name", "学期名称"), field("startDate", "第一周周一", "", "date"), field("weeksCount", "教学周数", "20", "number"), field("days", "每周上课天数", "5", "number"), field("periods", "每天节数", "14", "number"), field("edition", "组织名称", "西南大学计信院学风督察小组")];
         if (type === "semesterParticipants") { const current = await query<{classIds: string[]}>("semester", id); fields = [field("classIds", "参与督察班级", current.data.classIds, "multi", await options())]; }
@@ -150,7 +167,7 @@ export function registerCloudPage(view: View): void {
         if (type === "initialize") fields = [field("semesterName", "学期名称"), field("startDate", "第一周周一", "", "date"), field("weeksCount", "教学周数", "20", "number"), field("grade", "本人入学年级（两位数字）"), field("major", "本人专业"), field("className", "本人班级名称"), field("name", "本人真实姓名"), field("studentNo", "本人学号")];
         if (type === "rebindRequest") fields = [field("studentNo", "原成员学号"), field("reason", "换绑原因（需管理员线下核实）", "", "textarea")];
         if (type === "import") fields = [field("text", "粘贴JSON课表（先解析预览）", "", "textarea")];
-        this.setData({ formType: type, formTitle: ({ classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
+        this.setData({ formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
       } catch (e) { displayError(e); }
     },
     input(e: UiEvent) {
@@ -162,10 +179,16 @@ export function registerCloudPage(view: View): void {
     cancelForm() { this.setData({ formType: "", photoIds: [], formPhotos: [] }); },
     async saveForm() {
       if (this.data.busy) return;
+      let admitted = false;
       this.setData({ busy: true });
       try {
         const type = this.data.formType, payload: Record<string, unknown> = { ...this.data.formExtra };
         for (const f of this.data.fields) payload[f.key] = f.kind === "multi" ? f.selected : f.kind === "select" ? f.options[Number(f.value)]?.value || "" : numberFields.has(f.key) ? Number(f.value === "信息缺失" ? -1 : f.value) : f.value;
+        if (type === "autoApprovalSet") {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(s(payload.deadlineDate)) || !/^\d{2}:\d{2}$/.test(s(payload.deadlineTime))) throw new Error("请完整设置截止日期和时间");
+          payload.enabled = true; payload.expiresAt = s(payload.deadlineDate) + "T" + s(payload.deadlineTime) + ":00+08:00";
+          delete payload.deadlineDate; delete payload.deadlineTime;
+        }
         if (this.data.formId) payload.id = this.data.formId;
         if (type === "taskAdjust") { payload.changes = [{ ...(payload.taskId ? { taskId: payload.taskId } : {}), ...(payload.cancel === "true" ? { cancel: true } : { memberId: payload.memberId, occurrenceId: payload.occurrenceId }) }]; delete payload.taskId; delete payload.memberId; delete payload.occurrenceId; delete payload.cancel; }
         if (type === "courseSave") payload.weeks = rangeList(s(payload.weeks));
@@ -186,13 +209,22 @@ export function registerCloudPage(view: View): void {
             semester: { name: payload.semesterName, startDate: payload.startDate, weeks: payload.weeksCount, days: 5, periods: 14, edition: "西南大学计信院学风督察小组" },
             schoolClass: { name: payload.className, grade: payload.grade, major: payload.major }, member: { name: payload.name, studentNo: payload.studentNo },
           } });
-        } else { const result = await command(type, payload, ["join", "classSave", "rebindRequest", "semesterCreate"].includes(type) ? "" : type === "semesterParticipants" ? this.data.formId : this.data.semesterId, this.data.formVersion); this.setData({ impacts: Array.isArray(result.data.impacts) ? (result.data.impacts as Entity[]).map(row) : [] }); }
+        } else { const result = await command(type, payload, ["join", "classSave", "rebindRequest", "semesterCreate", "autoApprovalSet"].includes(type) ? "" : type === "semesterParticipants" ? this.data.formId : this.data.semesterId, this.data.formVersion); admitted = type === "join" && result.data.automaticallyApproved === true; this.setData({ impacts: Array.isArray(result.data.impacts) ? (result.data.impacts as Entity[]).map(row) : [] }); }
         if (type === "recordSubmit") wx.removeStorageSync(draftKey(s(payload.taskId)));
         this.setData({ formType: "", record: null, rows: [], versions: [], versionCursor: "" });
         wx.showToast({ title: "已保存", icon: "success" });
       } catch (e) { displayError(e); }
       finally { this.setData({ busy: false }); }
       await this.load();
+      if (admitted && this.data.memberId) wx.switchTab({url:"/pages/index/index"});
+    },
+    async toggleAutoApproval(e: WechatMiniprogram.SwitchChange) {
+      if (!this.data.admin || this.data.busy) return;
+      if (e.detail.value) { this.setData({autoApprovalActive:false}); await this.openForm("autoApprovalSet"); return; }
+      this.setData({busy:true});
+      try { await command("autoApprovalSet",{enabled:false},"",this.data.autoApprovalVersion); }
+      catch(error) { displayError(error); }
+      finally { this.setData({busy:false}); await this.load(); }
     },
     selectApplication(e: UiEvent) {
       const id = e.currentTarget.dataset.id;

@@ -62,7 +62,13 @@
       <checkbox-group bindchange="slotsChange"><view class="v2-slot-grid"><label wx:for="{{slots}}" wx:key="key"><checkbox value="{{item.key}}" checked="{{item.checked}}"/>{{item.label}}</label></view></checkbox-group>
       <textarea placeholder="备注" value="{{availabilityNote}}" bindinput="availabilityNote"/><button type="primary" bindtap="saveAvailability">保存本周无课时间</button>
     </view>
-    <view wx:if="{{view === 'manage'}}" class="v2-actions"><button wx:for="{{sections}}" wx:key="id" wx:if="{{admin || (item.id !== 'classes' && item.id !== 'semesters' && item.id !== 'courses' && item.id !== 'rebindings')}}" size="mini" data-id="{{item.id}}" bindtap="section">{{item.label}}</button></view>
+    <view wx:if="{{view === 'manage'}}" class="v2-actions"><button wx:for="{{sections}}" wx:key="id" wx:if="{{admin || (item.id !== 'classes' && item.id !== 'semesters' && item.id !== 'courses' && item.id !== 'rebindings' && item.id !== 'autoApproved')}}" size="mini" data-id="{{item.id}}" bindtap="section">{{item.label}}</button></view>
+    <view wx:if="{{view === 'manage' && admin && (section === 'applications' || section === 'autoApproved')}}" class="v2-card">
+      <view class="v2-title">自动通过新申请</view><switch checked="{{autoApprovalActive}}" disabled="{{busy || formType === 'autoApprovalSet'}}" bindchange="toggleAutoApproval"/>
+      <view>{{autoApprovalActive ? '已开启' : autoApprovalExpired ? '已到期，自动关闭' : '已关闭'}}</view><view wx:if="{{autoApprovalDeadline}}">截止：{{autoApprovalDeadline}}</view>
+      <view>最近设置：{{autoApprovalUpdated}}</view><view class="v2-note">开启须设置截止时间。有效期内的新申请经服务端校验后成为普通成员；到时或提前关闭均恢复人工审核，不移除已通过成员。已有待审核申请仍需人工处理。</view>
+      <button wx:if="{{autoApprovalActive}}" data-type="autoApprovalSet" bindtap="newForm">修改截止时间</button><button wx:if="{{section !== 'autoApproved'}}" data-id="autoApproved" bindtap="section">查看自动通过人员</button>
+    </view>
     <view wx:if="{{view === 'manage' && section === 'applications'}}" class="v2-card"><view>已选 {{selectedApplications.length}} 人（仅当前已加载列表）</view><view class="v2-actions"><button size="mini" bindtap="selectAllApplications">全选／取消全选</button><button size="mini" data-action="approve" disabled="{{busy || !selectedApplications.length}}" bindtap="reviewApplications">批量通过</button><button size="mini" data-action="reject" disabled="{{busy || !selectedApplications.length}}" bindtap="reviewApplications">批量驳回</button></view></view>
     <view wx:if="{{admin && view === 'manage'}}" class="v2-actions">
       <button wx:if="{{section === 'classes'}}" data-type="classSave" bindtap="newForm">独立新增班级</button>
@@ -110,7 +116,7 @@
     <view wx:for="{{fields}}" wx:key="key" wx:for-item="field" class="v2-field">
       <view class="v2-label">{{field.label}}</view>
       <textarea wx:if="{{field.kind === 'textarea'}}" value="{{field.value}}" data-key="{{field.key}}" bindinput="input" maxlength="-1"/>
-      <picker wx:elif="{{field.kind === 'date'}}" mode="date" value="{{field.value}}" data-key="{{field.key}}" bindchange="input"><view class="v2-picker">{{field.value || '选择日期'}} ▾</view></picker>
+      <picker wx:elif="{{field.kind === 'date' || field.kind === 'time'}}" mode="{{field.kind}}" value="{{field.value}}" data-key="{{field.key}}" bindchange="input"><view class="v2-picker">{{field.value || (field.kind === 'time' ? '选择时间' : '选择日期')}} ▾</view></picker>
       <picker wx:elif="{{field.kind === 'select'}}" range="{{field.options}}" range-key="label" value="{{field.value}}" data-key="{{field.key}}" bindchange="input"><view class="v2-picker">{{field.options[field.value].label || '暂无可选项'}} ▾</view></picker>
       <checkbox-group wx:elif="{{field.kind === 'multi'}}" data-key="{{field.key}}" bindchange="multi"><label wx:for="{{field.options}}" wx:key="value" class="v2-choice"><checkbox value="{{item.value}}" checked="{{item.checked}}"/>{{item.label}}</label></checkbox-group>
       <input wx:else value="{{field.value}}" type="{{field.kind === 'number' ? 'number' : 'text'}}" data-key="{{field.key}}" bindinput="input" maxlength="500"/>

@@ -1,4 +1,5 @@
 import { Commit, Entity, PageResult, Query, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
+import { validateAutoJoin } from "./auto-approval";
 import { Repository } from "./repository";
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
@@ -27,7 +28,7 @@ export function validateCommit(c: Commit) {
 export class MemoryRepository implements Repository {
   private state: Workspace;
   private rows = new Map<Resource, Map<string, Entity>>();
-  constructor(workspace: Workspace = EMPTY_WORKSPACE, seed: Partial<Record<Resource, Entity[]>> = {}) {
+  constructor(workspace: Workspace = EMPTY_WORKSPACE, seed: Partial<Record<Resource, Entity[]>> = {}, private readonly now: () => number = Date.now) {
     this.state = clone(workspace);
     for (const resource of RESOURCES) this.rows.set(resource, new Map((seed[resource] || []).map(e => [e.id, clone(e)])));
   }
@@ -65,12 +66,18 @@ export class MemoryRepository implements Repository {
     if (c.maintenanceId && w.maintenance !== c.maintenanceId) fail("MAINTENANCE_CHANGED");
     const members = this.rows.get("members")!;
     if (c.initialize) { if (members.size || w.version !== 0) fail("ALREADY_INITIALIZED"); }
+    else if (c.autoJoin) { validateAutoJoin(c, w, this.now(), (r, id) => this.rows.get(r)!.get(id), [...this.rows.get("bindings")!.values()].some(b => b.identityKey === c.identityKey)); }
     else if (c.actorId) {
       const actor = members.get(c.actorId);
       const bound = [...this.rows.get("bindings")!.values()].some(b => b.epoch === w.epoch && b.identityKey === c.identityKey && b.memberId === c.actorId);
       if (!actor || actor.epoch !== w.epoch || actor.data.active !== true || !bound) fail("IDENTITY_CHANGED");
     } else {
       if (c.workspace || c.changes.some(ch => !["applications", "rebindings"].includes(ch.resource) || !ch.value || ch.value.identityKey !== c.identityKey || (this.rows.get(ch.resource)!.get(ch.id)?.identityKey || c.identityKey) !== c.identityKey)) fail("FORBIDDEN");
+    }
+    if (c.workspace && "autoApproval" in c.workspace) {
+      if (members.get(c.actorId)?.data.role !== "admin") fail("FORBIDDEN");
+      const setting = c.workspace.autoApproval;
+      if (setting && (typeof setting.enabled !== "boolean" || setting.updatedBy !== c.actorId || setting.enabled && !(Date.parse(setting.expiresAt) > this.now()))) fail("INVALID_CHANGE");
     }
     for (const read of c.reads) if ((this.rows.get(read.resource)?.get(read.id)?.version || 0) !== read.version) fail("VERSION_CONFLICT");
     const next = new Map<Resource, Map<string, Entity>>();
@@ -101,6 +108,7 @@ export class MemoryRepository implements Repository {
     if (updated.some(m => m.data.role === "admin" && !next.get("classes")!.has(String(m.data.classId || "")))) fail("INVALID_ADMIN_CLASS");
     if (c.initialize && ![...next.get("bindings")!.values()].some(b => b.memberId === c.actorId && b.identityKey === c.identityKey && next.get("members")!.get(c.actorId)?.data.role === "admin" && next.get("members")!.get(c.actorId)?.data.active === true)) fail("INVALID_BINDING");
     const permissionsChanged = c.changes.some(ch => ch.resource === "members" || ch.resource === "bindings");
+    if (c.autoJoin && !(Date.parse(w.autoApproval!.expiresAt) > this.now())) fail("AUTO_APPROVAL_EXPIRED");
     this.state = { ...w, ...c.workspace, version: w.version + 1, permissionsVersion: w.permissionsVersion + (permissionsChanged ? 1 : 0) };
     this.rows = next;
     this.rows.get("requests")!.set(requestKey, { id: requestKey, epoch: c.epoch, version: 1, identityKey: c.identityKey, parentId: c.requestId, data: { result: clone(c.result), permissionsVersion: this.state.permissionsVersion, actorId: c.actorId } });

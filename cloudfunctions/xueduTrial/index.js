@@ -23,6 +23,7 @@ function configuration() {
   return { maxExecutionMs, executionConfigured, key, environmentMatches, backendMatches };
 }
 const knownErrors = {
+  AUTO_APPROVAL_EXPIRED: "自动通过已到期，请重新提交转入人工审核",
   VERSION_CONFLICT: "数据已被修改，请刷新后重试", EPOCH_CHANGED: "业务数据已变化，请刷新",
   MAINTENANCE: "业务数据正在维护，请稍后再试", MAINTENANCE_CHANGED: "维护任务已变化，请刷新",
   IDENTITY_CHANGED: "成员身份已变化，请重新进入", LAST_ADMIN: "必须保留至少一名有效管理员",

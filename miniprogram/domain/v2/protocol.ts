@@ -8,10 +8,11 @@ export interface Entity<T = Record<string, unknown>> {
   recordId?: string; parentId?: string; identityKey?: string; studentNo?: string;
   date?: string; sortKey?: string;
 }
+export interface AutoApproval { enabled: boolean; expiresAt: string; updatedBy: string; updatedByName: string; updatedAt: string; }
 export interface Workspace {
   id: string; epoch: string; version: number; permissionsVersion: number;
   protocolVersion: 2; activeSemesterId: string; maintenance: string;
-  maxExecutionMs: number;
+  maxExecutionMs: number; autoApproval?: AutoApproval | null;
 }
 export type FilterKey = "status" | "id" | "epoch" | "semesterId" | "week" | "memberId" | "taskId" | "recordId" | "parentId" | "identityKey" | "studentNo" | "date" | "sortKey";
 export interface Query {
@@ -27,8 +28,8 @@ export interface Commit {
   epoch: string; workspaceVersion: number; permissionsVersion: number;
   identityKey: string; actorId: string; requestId: string;
   reads: ReadVersion[]; changes: Change[];
-  workspace?: Partial<Pick<Workspace, "activeSemesterId" | "maintenance" | "epoch" | "maxExecutionMs">>;
-  initialize?: boolean; maintenanceId?: string;
+  workspace?: Partial<Pick<Workspace, "activeSemesterId" | "maintenance" | "epoch" | "maxExecutionMs" | "autoApproval">>;
+  autoJoin?: boolean; initialize?: boolean; maintenanceId?: string;
   result: Record<string, unknown>;
 }
 export interface ApiRequest {

@@ -120,3 +120,22 @@ pgtest('real PostgreSQL: cutover validates legacy retention, stays frozen until 
  raw("UPDATE xuedu_private.workspace SET document=document||'{\"cleaning\":true}'::jsonb");
  assert.throws(()=>execFileSync('docker',['exec','-i',container!,'psql','-U','postgres','-v','ON_ERROR_STOP=1'],{input:readFileSync('server/migrations/003-v2-resources.sql'),stdio:['pipe','pipe','pipe']}),/Command failed/);
 });
+
+pgtest('real PostgreSQL: timed auto admission rechecks server policy, creates ordinary member atomically, blocks privilege escalation',async()=>{
+ const {createGatewayV2}=await import('../server/v2/gateway');
+ raw(`DO $$ DECLARE r text; BEGIN FOR r IN SELECT tablename FROM pg_tables WHERE schemaname='xuedu_v2' LOOP EXECUTE format('TRUNCATE TABLE xuedu_v2.%I',r); END LOOP; END $$; TRUNCATE xuedu_private.workspace;`);
+ await initialize();let seq=0;
+ const api=createGatewayV2({repository:repo,appid:'app',bootstrapOpenid:'wx-a',uuid:()=>`auto-sql-${++seq}`,maxExecutionMs:1000,photos:{async upload(){throw Error('unused');},async list(){return [];},async delete(){},async urls(){return [];}}});
+ const call=async(type:string,payload:Record<string,unknown>,who='wx-a')=>{const w=await repo.workspace();return api({protocolVersion:2,operation:'command',epoch:w.epoch,expectedVersion:w.version,requestId:`sql-auto-${++seq}`,payload:{type,...payload}},{OPENID:who,APPID:'app'});};
+ await call('autoApprovalSet',{enabled:true,expiresAt:new Date(Date.now()+600000).toISOString()});assert.equal((await repo.workspace()).autoApproval!.enabled,true);
+ const joined=await call('join',{name:'新成员',studentNo:'sql-auto-student',classId:'c',role:'admin'},'new-wx');
+ const member=(await repo.get('members',String(joined.data.memberId)))!;assert.equal(member.data.role,'member');assert.equal((await repo.query('bindings',{eq:{identityKey:'new-wx'}})).items[0].memberId,member.id);
+ const app=(await repo.query('applications',{eq:{identityKey:'new-wx'}})).items[0];assert.equal(app.data.approvalMode,'automatic');assert.equal(app.data.status,'approved');
+ const forbidden=await base({actorId:member.id,identityKey:'new-wx',workspace:{autoApproval:{enabled:false,expiresAt:'',updatedBy:member.id,updatedByName:'假管理员',updatedAt:new Date().toISOString()}}});await assert.rejects(repo.commit(forbidden),/FORBIDDEN/);
+ const commit=repo.commit.bind(repo);let intercepted:Commit|undefined;
+ repo.commit=async c=>{if(c.autoJoin){intercepted=structuredClone(c);raw(`UPDATE xuedu_v2.workspace SET auto_approval=jsonb_set(auto_approval,'{expiresAt}',to_jsonb(clock_timestamp()-interval '1 second'));`);}return commit(c);};
+ await assert.rejects(call('join',{name:'跨截止',studentNo:'expired-student',classId:'c'},'expired-wx'),/已到期/);repo.commit=commit;
+ assert.equal((await repo.query('members',{eq:{studentNo:'expired-student'}})).items.length,0);assert.equal((await repo.query('applications',{eq:{identityKey:'expired-wx'}})).items.length,0);
+ await call('autoApprovalSet',{enabled:true,expiresAt:new Date(Date.now()+600000).toISOString()});const w=await repo.workspace();const tampered={...intercepted!,requestId:'tampered-role',workspaceVersion:w.version,permissionsVersion:w.permissionsVersion};tampered.changes.find(c=>c.resource==='members')!.value!.data.role='admin';await assert.rejects(commit(tampered),/FORBIDDEN/);
+ await call('autoApprovalSet',{enabled:false});const pending=await call('join',{name:'待审核',studentNo:'pending-student',classId:'c'},'pending-wx');assert.equal(pending.data.automaticallyApproved,false);assert.equal((await repo.get('members',member.id))!.data.active,true);
+});

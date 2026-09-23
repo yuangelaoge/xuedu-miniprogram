@@ -111,13 +111,13 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (current.permissionsVersion !== workspace.permissionsVersion) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
       return { protocolVersion: 2, epoch: workspace.epoch, resourceVersions, data, ...(cursor === undefined ? {} : { cursor }) };
     };
-    const commit = async (result: Record<string, unknown> = {}, patch?: Partial<Workspace>, maintenanceId?: string, initialize = false) => {
+    const commit = async (result: Record<string, unknown> = {}, patch?: Partial<Workspace>, maintenanceId?: string, initialize = false, autoJoin = false) => {
       const requestId = text(input.requestId, "请求标识", 200);
       const changed = Array.from(changes.values()).filter(c => c.value && c.resource !== "bindings" && c.resource !== "photos" && c.resource !== "audit").map(c => clean({ ...c.value!, version: c.expectedVersion + 1 }));
       const outcome = await repo.commit({ epoch: workspace.epoch, workspaceVersion: workspace.version,
-        permissionsVersion: workspace.permissionsVersion, identityKey, actorId: actor?.id || (initialize ? String(result.adminId) : ""),
+        permissionsVersion: workspace.permissionsVersion, identityKey, actorId: actor?.id || (initialize ? String(result.adminId) : autoJoin ? String(result.memberId) : ""),
         requestId, reads: Array.from(reads.values()), changes: Array.from(changes.values()), workspace: patch,
-        maintenanceId, initialize, result: { changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
+        maintenanceId, initialize, autoJoin, result: { changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
       const expectedEpoch = patch?.epoch || workspace.epoch;
       workspace = await repo.workspace();
       if (workspace.epoch !== expectedEpoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT");
@@ -163,7 +163,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       const hasAdministrator = workspace.version > 0;
       const status = !hasAdministrator ? "needsAdministrator" : !workspace.activeSemesterId ? "preparing" : "ready";
       const application = (await page("applications", { eq: { identityKey }, limit: 1 })).items[0];
-      return response({ workspace, member: validActor ? clean(validActor) : null, status, canInitialize: !hasAdministrator && context.OPENID === deps.bootstrapOpenid,
+      return response({ workspace: { ...workspace, autoApproval: validActor?.data.role === "admin" ? workspace.autoApproval : undefined }, member: validActor ? clean(validActor) : null, status, canInitialize: !hasAdministrator && context.OPENID === deps.bootstrapOpenid,
         application: application ? clean(application) : null, removed: !!actor && !validActor, executionConfigured });
     }
     if (input.operation === "initialize") {
@@ -183,12 +183,17 @@ export function createGatewayV2(deps: DependenciesV2) {
     if (input.operation === "query") {
       epoch(); if (workspace.maintenance) fail("业务数据正在维护", "MAINTENANCE");
       const kind = text(p.kind, "查询类型");
-      const paginated: Record<string, Resource> = { semesters: "semesters", classes: "classes", courses: "courses", members: "members", applications: "applications", rebindings: "rebindings", audit: "audit", records: "records", recordVersions: "record_versions" };
+      if (kind === "autoApproval") {
+        admin(); const setting = workspace.autoApproval;
+        return response({ setting: setting || null, active: setting?.enabled === true && Date.parse(setting.expiresAt) > now, expired: setting?.enabled === true && Date.parse(setting.expiresAt) <= now, version: workspace.version, serverNow: now });
+      }
+      const paginated: Record<string, Resource> = { autoApproved: "applications", semesters: "semesters", classes: "classes", courses: "courses", members: "members", applications: "applications", rebindings: "rebindings", audit: "audit", records: "records", recordVersions: "record_versions" };
       if (kind in paginated) {
-        if (kind === "rebindings") admin();
+        if (kind === "rebindings" || kind === "autoApproved") admin();
         else if (["members", "applications", "audit"].includes(kind)) manager();
         else if (kind !== "classes") member(); // Unapproved applicants need class labels to apply.
         const query: Query = { after: input.cursor || "", limit: integer(input.limit ?? 50, "每页条数", 1, 100) };
+        if (kind === "autoApproved") query.eq = { sortKey: "automatic" };
         if (["courses", "records", "recordVersions"].includes(kind)) { await requireSemester(); query.eq = { semesterId: input.semesterId }; }
         if (kind === "records") {
           if (p.week !== undefined) query.eq!.week = integer(p.week, "周次", 1, 60);
@@ -359,7 +364,7 @@ export function createGatewayV2(deps: DependenciesV2) {
             held.data.status = "completed"; held.data.completedAt = at; held.data.leaseUntil = 0; held.epoch = newEpoch; put("maintenance", held);
             const entry = audit("clearComplete", job.id, { retainedAdministrators: retainedMembers.length, retainedClasses: retainedClassesIds.length }); entry.epoch = newEpoch; put("audit", entry);
             input.requestId = stepId;
-            return commit({ done: true, jobId, waitMs: 0 }, { epoch: newEpoch, maintenance: "", activeSemesterId: "" }, job.id);
+            return commit({ done: true, jobId, waitMs: 0 }, { epoch: newEpoch, maintenance: "", activeSemesterId: "", autoApproval: null }, job.id);
           }
         }
         held.data.leaseUntil = 0; held.data.leaseToken = ""; put("maintenance", held);
@@ -382,10 +387,20 @@ export function createGatewayV2(deps: DependenciesV2) {
       const studentNo = text(p.studentNo, "学号", 50);
       if ((await page("members", { eq: { studentNo }, limit: 1 })).items.length) fail("学号已登记，请使用微信换绑申请");
       const existing = (await page("applications", { eq: { identityKey }, limit: 1 })).items[0];
-      const data = { name: text(p.name, "姓名", 50), studentNo, classId, status: "pending", createdAt: at };
-      if (existing) { expected(existing); if (existing.data.status === "approved") fail("已审核申请不能重复提交"); existing.data = data; existing.studentNo = studentNo; put("applications", existing); }
-      else add("applications", data, { identityKey, studentNo });
-      return commit();
+      if (existing) { expected(existing); if (existing.data.status !== "rejected") fail("已有申请，请勿重复提交"); }
+      const data = { name: text(p.name, "姓名", 50), studentNo, classId, classLabel: klass.data.name, status: "pending", createdAt: at };
+      const application = existing ? put("applications", { ...existing, data, studentNo }) : add("applications", data, { identityKey, studentNo });
+      const setting = workspace.autoApproval;
+      if (setting?.enabled === true && Date.parse(setting.expiresAt) > now) {
+        const joined = add("members", { name: data.name, studentNo, classId, active: true, role: "member", joinedAt: at, approvalMode: "automatic" }, { studentNo });
+        add("bindings", {}, { memberId: joined.id, identityKey });
+        application.data = { ...data, status: "approved", approvalMode: "automatic", memberId: joined.id, reviewedAt: at, autoApprovalEnabledBy: setting.updatedBy, autoApprovalExpiresAt: setting.expiresAt };
+        application.sortKey = "automatic"; put("applications", application);
+        audit("autoApproveApplication", application.id, { memberId: joined.id, enabledBy: setting.updatedBy, deadline: setting.expiresAt });
+        try { return await commit({ memberId: joined.id, automaticallyApproved: true }, undefined, undefined, false, true); }
+        catch (error) { if (error instanceof Error && error.message === "AUTO_APPROVAL_EXPIRED") fail("自动通过已到期，请重新提交转入人工审核", "AUTO_APPROVAL_EXPIRED"); throw error; }
+      }
+      return commit({ automaticallyApproved: false });
     }
     if (type === "rebindRequest") {
       if (actor) fail("当前微信已有成员绑定，不能认领其他成员");
@@ -398,6 +413,20 @@ export function createGatewayV2(deps: DependenciesV2) {
       return commit();
     }
     member();
+    if (type === "autoApprovalSet") {
+      admin(); if (input.expectedVersion !== workspace.version) fail("设置已变化，请刷新后重试", "VERSION_CONFLICT");
+      if (typeof p.enabled !== "boolean") fail("开关状态无效");
+      let expiresAt = workspace.autoApproval?.expiresAt || "";
+      if (p.enabled) {
+        const inputDate = text(p.expiresAt, "截止时间", 40);
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{3})?)?(?:Z|[+-]\d{2}:\d{2})$/.test(inputDate) || !Number.isFinite(Date.parse(inputDate)) || Date.parse(inputDate) <= now) fail("请设置晚于当前时间的截止时间");
+        date(inputDate.slice(0, 10));
+        expiresAt = new Date(inputDate).toISOString();
+      }
+      const setting = { enabled: p.enabled, expiresAt, updatedBy: member().id, updatedByName: String(member().data.name), updatedAt: at };
+      audit(p.enabled ? "autoApprovalEnabled" : "autoApprovalDisabled", "workspace", { before: workspace.autoApproval || null, after: setting, actorName: member().data.name });
+      return commit({}, { autoApproval: setting });
+    }
     if (type === "applicationReview") {
       manager(); const application = (await get("applications", text(p.id, "申请标识")))!; expected(application);
       if (application.data.status !== "pending") fail("申请已经处理");

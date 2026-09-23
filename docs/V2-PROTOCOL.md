@@ -43,7 +43,7 @@ interface Response<T> {
 
 | 资源 | 内容/主要关系 |
 | --- | --- |
-| workspace | 配置、activeSemesterId、epoch、version、permissionsVersion、maintenance、maxExecutionMs |
+| workspace | autoApproval（有界限时入组设置）、配置、activeSemesterId、epoch、version、permissionsVersion、maintenance、maxExecutionMs |
 | members / bindings | 成员与独立微信身份绑定；学号和身份/成员绑定唯一 |
 | applications / rebindings | 入组申请与管理员核实的微信换绑申请 |
 | classes / semesters / semester_classes | 稳定班级、学期、参与班级独立关联 |
@@ -85,6 +85,8 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 | courses | 必须 | 已审核成员；该学期分页课程 |
 | members | 无 | 管理员/部长；分页成员，微信标识不返回 |
 | applications | 无 | 管理员/部长；分页入组申请 |
+| autoApproval | 无 | 仅管理员；setting、active、expired、version、serverNow；截止时刻按服务端计算 |
+| autoApproved | 无 | 仅管理员；分页自动通过申请，包含班级快照、通过时间；不返回微信标识 |
 | rebindings | 无 | 仅管理员；分页换绑申请 |
 | audit | 无 | 管理员/部长；分页操作记录 |
 | records | 必须，week可选 | 成员仅自己，管理人员全组；该学期分页 |
@@ -96,6 +98,8 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 | report | 必须，week，reportVersion可选 | 管理人员；目标周记录、学期、reportVersion、以及供现有导出器用的仅该周state |
 | reportCheck | 必须，version | 管理人员；导出结束前核对版本，返回valid或冲突 |
 
+autoApproval 的 setting 保存 enabled、expiresAt、updatedBy、updatedByName、updatedAt。到期不需要后台任务修改该行，active 始终按服务器时间计算，客户端不可只读 enabled 判断。非管理员 bootstrap 不返回该配置。自动入组 SQL 还用数据库时钟检查截止，并校验成员、绑定、申请与审计四项的关系；到期或冲突全事务回滚。详见 [限时入组说明](AUTO-APPROVAL.md)。
+
 report以记录中的班级/课程快照构造历史统计，不按当前名称反推。report读前后检查工作区版本；生成文件后仍应调用reportCheck再交付，以发现生成过程中修改。该版本保护可因其他业务操作触发保守重做，不拼接两个版本的数据。
 
 ## 写命令 `operation: command`
@@ -104,7 +108,8 @@ payload必须含type。下表其他字段也在payload，epoch/requestId/semeste
 
 | type | payload关键字段 | expectedVersion对应对象 / 权限 |
 | --- | --- | --- |
-| join | name,studentNo,classId | 首次0；重新提交本人申请版本；无有效成员身份 |
+| join | name,studentNo,classId | 首次0；仅被驳回可按本人申请版本重提；限时设置有效则原子建立普通成员，否则待审核；返回 automaticallyApproved |
+| autoApprovalSet | enabled；开启须 expiresAt（带时区，严格未来） | workspace.version；仅管理员，保存操作者/时间和前后设置审计 |
 | applicationReview | id,approved；驳回需reason | 申请；管理员/部长，通过仅建member |
 | roleChange | id,role=`member/leader/admin`,reason,confirmed | 目标成员；管理员，可对自己卸任，保留最后有效管理员 |
 | memberStatus | id,active,reason,confirmed | 目标成员；管理员，最后有效管理员不可停用 |

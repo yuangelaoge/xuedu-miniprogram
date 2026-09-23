@@ -2,7 +2,7 @@ import { Commit, Entity, PageResult, Query, Resource, Workspace } from "../../mi
 import { PgRpc } from "../postgres";
 import { Repository } from "./repository";
 
-const publicErrors = new Set(["VERSION_CONFLICT", "EPOCH_CHANGED", "MAINTENANCE", "MAINTENANCE_CHANGED", "IDENTITY_CHANGED", "LAST_ADMIN", "ALREADY_INITIALIZED", "UNIQUE_CONFLICT", "FORBIDDEN", "INVALID_QUERY", "INVALID_COMMIT", "INVALID_CHANGE", "INVALID_ENTITY", "INVALID_EPOCH", "INVALID_BINDING", "INVALID_ADMIN_CLASS", "UPDATE_REQUIRED", "LEGACY_MAINTENANCE_PENDING", "CUTOVER_REQUIRED"]);
+const publicErrors = new Set(["AUTO_APPROVAL_EXPIRED","VERSION_CONFLICT", "EPOCH_CHANGED", "MAINTENANCE", "MAINTENANCE_CHANGED", "IDENTITY_CHANGED", "LAST_ADMIN", "ALREADY_INITIALIZED", "UNIQUE_CONFLICT", "FORBIDDEN", "INVALID_QUERY", "INVALID_COMMIT", "INVALID_CHANGE", "INVALID_ENTITY", "INVALID_EPOCH", "INVALID_BINDING", "INVALID_ADMIN_CLASS", "UPDATE_REQUIRED", "LEGACY_MAINTENANCE_PENDING", "CUTOVER_REQUIRED"]);
 export class PostgresRepository implements Repository {
   constructor(private readonly db: PgRpc) {}
   private async rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {

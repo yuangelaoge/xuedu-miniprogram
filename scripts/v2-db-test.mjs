@@ -18,6 +18,7 @@ try {
     GRANT USAGE ON SCHEMA auth TO PUBLIC; GRANT EXECUTE ON FUNCTION auth.role() TO PUBLIC;`;
   execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: sql, stdio: ['pipe','ignore','inherit'] });
   execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/003-v2-resources.sql')), stdio:['pipe','ignore','inherit'] });
+  execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/004-auto-approval.sql')), stdio:['pipe','ignore','inherit'] });
   const result = spawnSync(process.execPath, ['--import','tsx','--test','tests/v2-database-postgres.test.ts'], { cwd:root, env:{...process.env,XUEDU_LOCAL_PG_CONTAINER:container},stdio:'inherit' });
   process.exitCode = result.status === 0 ? 0 : 1;
 } catch (e) { console.error('Local PostgreSQL test failed:', e.message); process.exitCode=1; }

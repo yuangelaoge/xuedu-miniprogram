@@ -66,7 +66,8 @@
       <button wx:if="{{autoApprovalActive}}" data-type="autoApprovalSet" bindtap="newForm">修改截止时间</button><button wx:if="{{section !== 'autoApproved'}}" data-id="autoApproved" bindtap="section">查看自动通过人员</button>
     </view>
     <view wx:if="{{view === 'manage' && section === 'applications'}}" class="tabs"><view class="tab {{applicationFilter === 'pending' ? 'active' : ''}}" data-id="pending" bindtap="applicationFilter">待审核</view><view class="tab {{applicationFilter === 'all' ? 'active' : ''}}" data-id="all" bindtap="applicationFilter">全部申请</view></view>
-    <view wx:if="{{view === 'manage' || view === 'courses'}}" class="search"><view class="search-symbol"></view><input placeholder="搜索已加载的姓名、学号、班级或课程" value="{{searchText}}" bindinput="search"/></view>
+    <view wx:if="{{view === 'manage' || view === 'courses'}}" class="search"><view class="search-symbol"></view><input placeholder="{{view === 'courses' || section === 'courses' ? '搜索已加载的课程、班级或教师' : '搜索已加载的姓名、学号、班级或课程'}}" value="{{searchText}}" bindinput="search"/></view>
+    <block wx:if="{{view === 'courses' || view === 'manage' && section === 'courses'}}"><view class="muted small">已加载 {{rows.length}} 个课程时段 · 当前筛选 {{visibleRows.length}} 个</view><view class="filters"><view class="chip {{courseGrade === '全部' ? 'active' : ''}}" data-grade="全部" bindtap="filterCourseGrade">全部年级</view><view wx:for="{{courseGrades}}" wx:key="*this" class="chip {{courseGrade === item ? 'active' : ''}}" data-grade="{{item}}" bindtap="filterCourseGrade">{{item}}级</view></view><view wx:if="{{courseClassesIncomplete}}" class="muted small">部分课程班级资料未加载，班级搜索和年级筛选尚不完整。</view><button wx:if="{{courseClassCursor}}" disabled="{{busy}}" bindtap="moreCourseClasses">再加载50条班级资料</button></block>
     <view wx:if="{{view === 'manage' && section === 'applications'}}" class="v2-card"><view>已选 {{selectedApplications.length}} 人（仅当前筛选结果）</view><view class="v2-actions"><button size="mini" bindtap="selectAllApplications">选择当前结果／取消全选</button><button size="mini" data-action="approve" disabled="{{busy || !selectedApplications.length}}" bindtap="reviewApplications">批量通过</button><button size="mini" data-action="reject" disabled="{{busy || !selectedApplications.length}}" bindtap="reviewApplications">批量驳回</button></view></view>
     <view wx:if="{{admin && view === 'manage'}}" class="v2-actions">
       <button wx:if="{{section === 'classes'}}" data-type="classSave" bindtap="newForm">独立新增班级</button>
@@ -86,6 +87,7 @@
         <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view>
         <view wx:if="{{section === 'members'}}">{{item.role === 'admin' ? '管理员' : item.role === 'leader' ? '组部长' : '成员'}} · {{item.active ? '有效' : '已停用'}}</view>
         <view wx:if="{{item.status}}">{{item.statusLabel}}</view>
+        <button wx:if="{{view === 'courses' || view === 'manage' && section === 'courses'}}" data-id="{{item.id}}" bindtap="courseDetails">课程详情与有效周次</button>
         <button wx:if="{{view === 'records'}}" data-id="{{item.id}}" bindtap="open">查看记录与照片</button>
         <view wx:if="{{view === 'manage'}}" class="v2-actions">
           <block wx:if="{{section === 'members'}}">
@@ -116,7 +118,8 @@
   </block>
   <view wx:if="{{formType}}" class="v2-card v2-form">
     <view class="v2-title">{{formTitle}}</view>
-    <view wx:for="{{fields}}" wx:key="key" wx:for-item="field" class="v2-field">
+    <block wx:if="{{formType === 'recordSubmit' || formType === 'recordEdit'}}"><include src="cloud-record-form.wxml" /></block>
+    <view wx:for="{{fields}}" wx:key="key" wx:for-item="field" wx:if="{{formType !== 'recordSubmit' && formType !== 'recordEdit'}}" class="v2-field">
       <view class="v2-label">{{field.label}}</view>
       <textarea wx:if="{{field.kind === 'textarea'}}" value="{{field.value}}" data-key="{{field.key}}" bindinput="input" maxlength="-1"/>
       <picker wx:elif="{{field.kind === 'date' || field.kind === 'time'}}" mode="{{field.kind}}" value="{{field.value}}" data-key="{{field.key}}" bindchange="input"><view class="v2-picker">{{field.value || (field.kind === 'time' ? '选择时间' : '选择日期')}} ▾</view></picker>
@@ -125,7 +128,7 @@
       <input wx:else value="{{field.value}}" type="{{field.kind === 'number' ? 'number' : 'text'}}" data-key="{{field.key}}" bindinput="input" maxlength="500"/>
     </view>
     <block wx:if="{{formType === 'import'}}"><view class="actions"><button disabled="{{busy}}" bindtap="chooseImportFile">选择JSON／TXT文件</button><button disabled="{{busy}}" bindtap="previewImport">解析预览</button></view><view wx:if="{{importReady}}"><view class="section-title">{{importCount}} 条课程 · {{importClassCount}} 个新班级</view><view wx:for="{{importPreview}}" wx:key="*this" class="v2-row">{{item}}</view><view class="muted small">仅展示前20条格式预览。确认后由服务端完整校验班级引用、重复ID和课表约束，失败不写入。</view></view></block>
-    <block wx:if="{{formType === 'recordSubmit' || formType === 'recordEdit'}}"><view class="v2-label">清晰签字表照片（1–3张，历史版本照片继续保留）</view><view class="v2-photos"><view wx:for="{{formPhotos}}" wx:key="*this"><image src="{{item}}" mode="aspectFill"/><button size="mini" data-index="{{index}}" bindtap="removePhoto">移除</button></view></view><button disabled="{{busy}}" bindtap="choosePhotos">添加照片</button><button wx:if="{{formType === 'recordSubmit'}}" bindtap="saveDraft">保存本机文字草稿</button></block>
-    <view class="v2-actions"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
+
+    <view class="v2-actions"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
   </view>
 </view>

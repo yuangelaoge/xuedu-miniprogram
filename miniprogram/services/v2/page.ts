@@ -11,7 +11,7 @@ const localTime = (value: string) => value ? new Date(Date.parse(value) + 8 * 36
 type View = "home" | "schedule" | "records" | "profile" | "manage" | "join" | "record" | "submission" | "availability" | "courses";
 interface Option { label: string; value: string; checked?: boolean; }
 interface Field { key: string; label: string; value: string; kind: string; options: Option[]; selected: string[]; }
-interface Row extends Entity { selected?: boolean; label: string; detail: string; status: string; active: boolean; role: string; statusLabel: string; cancel: boolean; replaces: boolean; historyFields: {label:string;value:string}[]; }
+interface Row extends Entity { courseGrades?: string[]; courseClassLabel?: string; selected?: boolean; label: string; detail: string; status: string; active: boolean; role: string; statusLabel: string; cancel: boolean; replaces: boolean; historyFields: {label:string;value:string}[]; }
 interface WeekData { records?: Entity[]; semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity; uncovered?: { label: string; reason: string }[]; }
 const titles: Record<View, string> = { home: "学风督察", schedule: "听课安排", records: "听课记录", profile: "我的", manage: "管理工作台", join: "申请加入", record: "听课记录详情", submission: "填写听课记录", availability: "无课时间", courses: "课程总表" };
 const s = (value: unknown) => value === undefined || value === null ? "" : String(value);
@@ -56,6 +56,8 @@ export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   Page({
     data: {
+      metricFields: [] as Field[], nameFields: [] as Field[], feedbackFields: [] as Field[], recordContext: null as Row | null, uploadingPhoto: "",
+      courseClasses: [] as Entity[], courseClassCursor: "", courseGrade: "全部", courseGrades: [] as string[], courseClassesIncomplete: false,
       importPreview: [] as string[], importCount: 0, importClassCount: 0, importReady: false,
       pendingCount: 0, pendingMore: false, pendingLabel: "", searchText: "", applicationFilter: "pending", visibleRows: [] as Row[], visibleTasks: [] as Row[],
       dirty: false, weekInitialized: false, maxWeek: 60, filename: "", filePath: "", fileOwner: "",
@@ -86,12 +88,12 @@ export function registerCloudPage(view: View): void {
       try {
         const boot = await bootstrap(), member = boot.member;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
-        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
+        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
         this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
-          this.setData({ pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], fields: [], formType: "" });
+          this.setData({ pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],fields: [], formType: "" });
           if (boot.status !== "needsAdministrator") {
             this.setData({ rows: boot.application ? [row(boot.application)] : [], cursor: "" });
           }
@@ -143,6 +145,9 @@ export function registerCloudPage(view: View): void {
             this.setData({weekTotal:total,weekSubmitted:submitted,weekProgress:total ? Math.min(100,Math.round(submitted / total * 100)) : 0,skipped:w.plan?.data.status === "skipped"});
           }
           const response = await query(kind, ["courses", "records"].includes(kind) ? semesterId : "", kind === "records" ? { week: this.data.week } : {}, more ? this.data.cursor : "");
+          if(kind === "courses" && (!more || !this.data.courseClasses.length)) {
+            const classes = await query("classes");this.setData({courseClasses:classes.data.items,courseClassCursor:classes.cursor || ""});
+          }
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
         } else if (["home", "schedule", "availability"].includes(view) && semesterId) {
           const response = await query<WeekData>("week", semesterId, { week: displayedWeek });
@@ -180,13 +185,36 @@ export function registerCloudPage(view: View): void {
     },
     filterRows() {
       const needle = this.data.searchText.trim().toLowerCase();
+      const courseView = view === "courses" || view === "manage" && this.data.section === "courses";
+      let rows = this.data.rows;
+      if(courseView) {
+        let incomplete = false;
+        rows = rows.map(r => {
+          const c=(r.data.course || {}) as Record<string,unknown>, ids=Array.isArray(c.classIds) ? c.classIds.map(String) : [];
+          const classes=ids.map(id=>this.data.courseClasses.find(k=>k.id === id));
+          if(classes.some(k=>!k))incomplete=true;
+          const courseClassLabel=classes.map(k=>k ? s(k.data.name) : "班级资料未加载").join(" / ");
+          return {...row(r),courseClassLabel,courseGrades:[...new Set(classes.filter((k):k is Entity=>!!k).map(k=>s(k.data.grade)))],detail:[courseClassLabel,s(c.teacher),s(c.nature),`周${"一二三四五六日"[Number(c.weekday)-1] || "?"} · 第${c.start}–${c.end}节`,s(c.classroom)].filter(Boolean).join(" · ")};
+        });
+        this.setData({rows,courseGrades:[...new Set(rows.flatMap(r=>r.courseGrades || []))].sort(),courseClassesIncomplete:incomplete});
+      }
       const matches = (r: Row) => !needle || [r.label,r.detail,r.data.name,r.data.memberName,r.data.studentNo,(r.data.course as Record<string,unknown>)?.name].map(s).join(" ").toLowerCase().includes(needle);
-      this.setData({visibleRows:this.data.rows.filter(r => matches(r) && (view !== "records" || this.data.recordTab !== "mine" || r.memberId === this.data.memberId) && (view !== "manage" || this.data.section !== "applications" || this.data.applicationFilter !== "pending" || r.status === "pending")),visibleTasks:this.data.tasks.filter(r => ["confirmed","submitted","pendingAdjustment"].includes(r.status) && matches(r))});
+      this.setData({visibleRows:rows.filter(r => matches(r) && (!courseView || this.data.courseGrade === "全部" || (r.courseGrades || []).includes(this.data.courseGrade)) && (view !== "records" || this.data.recordTab !== "mine" || r.memberId === this.data.memberId) && (view !== "manage" || this.data.section !== "applications" || this.data.applicationFilter !== "pending" || r.status === "pending")),visibleTasks:this.data.tasks.filter(r => ["confirmed","submitted","pendingAdjustment"].includes(r.status) && matches(r))});
+    },
+    filterCourseGrade(e: UiEvent) { if(this.data.busy)return; this.setData({courseGrade:e.currentTarget.dataset.grade});this.filterRows(); },
+    async moreCourseClasses() {
+      if(this.data.busy || !this.data.courseClassCursor)return;this.setData({busy:true});
+      try {const response=await query("classes","",{},this.data.courseClassCursor);this.setData({courseClasses:this.data.courseClasses.concat(response.data.items),courseClassCursor:response.cursor || ""});this.filterRows();}catch(e){displayError(e);}finally{this.setData({busy:false});}
+    },
+    courseDetails(e: UiEvent) {
+      const r=this.data.rows.find(r=>r.id === e.currentTarget.dataset.id);if(!r)return;
+      const c=(r.data.course || {}) as Record<string,unknown>;
+      wx.showModal({title:s(c.name),content:`${r.detail}\n有效周次：${Array.isArray(c.weeks) ? c.weeks.join("、") : "未提供"}\n课表人数：${c.expected === undefined ? "未提供" : c.expected}\n${r.active ? "课程有效；具体日期以停调课及正式任务为准" : "课程已停用"}`,showCancel:false});
     },
     search(e: UiEvent) { this.setData({searchText:e.detail.value,selectedApplications:[],rows:this.data.rows.map(r=>({...r,selected:false}))}); this.filterRows(); },
     applicationFilter(e: UiEvent) { if(this.data.busy)return; this.setData({applicationFilter:e.currentTarget.dataset.id,selectedApplications:[],rows:this.data.rows.map(r=>({...r,selected:false}))});this.filterRows(); },
-    section(e: UiEvent) { if (this.data.busy) return; this.setData({ section: e.currentTarget.dataset.id, selectedApplications: [], rows: [], visibleRows:[], searchText:"",cursor: "", formType: "" }); void this.load(); },
-    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, formType: "", rows: [], visibleRows:[], filePath:"",filename:"",week: 1,weekInitialized:chosen.id !== this.data.activeSemesterId }); void this.load(); },
+    section(e: UiEvent) { if (this.data.busy) return; this.setData({ section: e.currentTarget.dataset.id, courseGrade:"全部",courseClasses:[],courseClassCursor:"",selectedApplications: [], rows: [], visibleRows:[], searchText:"",cursor: "", formType: "" }); void this.load(); },
+    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, courseGrade:"全部",courseClasses:[],courseClassCursor:"",formType: "", rows: [], visibleRows:[], filePath:"",filename:"",week: 1,weekInitialized:chosen.id !== this.data.activeSemesterId }); void this.load(); },
     weekChange(e: UiEvent) { const next = Number(e.detail.value); if (Number.isInteger(next) && next >= 1 && next <= 60) this.setData({ week: next }); },
     refreshWeek() { void this.load(); },
     recordTab(e: UiEvent) { if(this.data.busy)return; this.setData({recordTab:e.currentTarget.dataset.id}); this.filterRows(); if (e.currentTarget.dataset.id === "stats" && this.data.semesterId) void this.showStats(); },
@@ -252,6 +280,7 @@ export function registerCloudPage(view: View): void {
       const key = e.currentTarget.dataset.key;
       const fields = this.data.fields.map(f => f.key === key ? { ...f, value: e.detail.value } : f);
       this.setData({ fields, ...(key === "text" ? {importReady:false,importPreview:[]} : {}) });
+      this.renderRecordFields();
     },
     multi(e: WechatMiniprogram.CheckboxGroupChange) { const key = s(e.currentTarget.dataset.key); this.setData({ fields: this.data.fields.map(f => f.key === key ? { ...f, selected: e.detail.value } : f) }); },
     async chooseImportFile() {
@@ -276,7 +305,7 @@ export function registerCloudPage(view: View): void {
         this.setData({importReady:true,importCount:parsed.courses.length,importClassCount:parsed.classes?.length || 0,importPreview:parsed.courses.slice(0,20).map((c:Record<string,unknown>,i:number)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`)});
       }catch(e){this.setData({importReady:false,importPreview:[]});displayError(e);}
     },
-    cancelForm() { this.setData({ formType: "", photoIds: [], formPhotos: [] }); },
+    cancelForm() { if(this.data.busy)return; this.setData({ formType: "", photoIds: [], formPhotos: [],uploadingPhoto:"",recordContext:null }); },
     async saveForm() {
       if (this.data.busy) return;
       let admitted = false;
@@ -416,33 +445,71 @@ export function registerCloudPage(view: View): void {
     async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false}); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
     openRecordForm(target: Entity, editing = false) {
       const d = target.data, metrics = d.metrics as Record<string, number> | undefined;
+      this.setData({recordContext:row(target),uploadingPhoto:""});
       this.setData({ formType: editing ? "recordEdit" : "recordSubmit", formTitle: editing ? "更正听课记录" : "填写听课记录", formId: editing ? target.id : "", formVersion: target.version,
-        fields: [...METRIC_FIELDS.map(f => field(f.key, f.label + "（未知填信息缺失）", metrics?.[f.key] === -1 ? "信息缺失" : metrics?.[f.key] === undefined ? "" : metrics[f.key])), ...[["absentNames", "旷课名单（没有填无）"], ["leaveNames", "请假名单（没有填无）"], ["evaluation", "班风评价"], ["feedback", "异常情况及反馈"], ["suggestion", "教师建议"], ["otherDescription", "其他情况说明"]].map(([key, label]) => field(key, label, d[key], "textarea")), ...(editing ? [field("reason", "本次更正原因（必填）", "", "textarea")] : [])],
+        fields: [...METRIC_FIELDS.map(f => field(f.key, f.label, metrics?.[f.key] === -1 ? "信息缺失" : metrics?.[f.key] === undefined ? "" : metrics[f.key])), ...[["absentNames", "旷课名单（没有填无）"], ["leaveNames", "请假名单（没有填无）"], ["evaluation", "班风评价"], ["feedback", "异常情况及反馈"], ["suggestion", "教师建议"], ["otherDescription", "其他情况说明"]].map(([key, label]) => field(key, label, d[key], "textarea")), ...(editing ? [field("reason", "本次更正原因（必填）", "", "textarea")] : [])],
         formExtra: { taskId: editing ? target.taskId || d.taskId : target.id }, photoIds: editing && Array.isArray(d.photos) ? d.photos.map(String) : [], formPhotos: editing ? this.data.photoUrls : [] });
       if (!editing) {
         const draft = wx.getStorageSync(draftKey(target.id)) as { fields?: Field[] };
-        if (draft?.fields) this.setData({ fields: draft.fields });
+        if (Array.isArray(draft?.fields)) this.setData({ fields: this.data.fields.map(f=>{
+          const saved=draft.fields!.find(v=>v?.key === f.key);return saved && typeof saved.value === "string" ? {...f,value:saved.value} : f;
+        }) });
       }
+      this.renderRecordFields();
+    },
+    renderRecordFields() {
+      if(!["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      const metricKeys=new Set<string>(METRIC_FIELDS.map(f=>f.key));
+      this.setData({metricFields:this.data.fields.filter(f=>metricKeys.has(f.key)),nameFields:this.data.fields.filter(f=>["absentNames","leaveNames"].includes(f.key)),feedbackFields:this.data.fields.filter(f=>["otherDescription","evaluation","feedback","suggestion","reason"].includes(f.key))});
+    },
+    markMissing(e: UiEvent) {
+      if(this.data.busy || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      const key=e.currentTarget.dataset.key;if(!METRIC_FIELDS.some(f=>f.key === key))return;
+      this.setData({fields:this.data.fields.map(f=>f.key === key ? {...f,value:"信息缺失"} : f)});this.renderRecordFields();
+    },
+    zeroRemaining() {
+      if(this.data.busy || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      const keys=new Set<string>(METRIC_FIELDS.map(f=>f.key).filter(k=>k!=="expected" && k!=="actual"));
+      this.setData({fields:this.data.fields.map(f=>keys.has(f.key) && !f.value.trim() ? {...f,value:"0"} : f)});this.renderRecordFields();
+    },
+    noNames(e: UiEvent) {
+      if(this.data.busy || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      const key=e.currentTarget.dataset.key;if(!["absentNames","leaveNames"].includes(key))return;
+      this.setData({fields:this.data.fields.map(f=>f.key === key ? {...f,value:"无"} : f)});this.renderRecordFields();
     },
     editRecord() { if (this.data.record && this.data.canEdit) this.openRecordForm(this.data.record, true); },
     saveDraft() { wx.setStorageSync(draftKey(s(this.data.formExtra.taskId)), { fields: this.data.fields }); wx.showToast({ title: "草稿已保存在本机", icon: "success" }); },
     async choosePhotos() {
+      if (this.data.busy) return;
       try {
-        if (this.data.busy) return;
         this.setData({ busy: true });
         if (this.data.photoIds.length >= 3) throw new Error("每份记录最多3张照片");
         const chosen = await wx.chooseMedia({ count: 3 - this.data.photoIds.length, mediaType: ["image"], sizeType: ["compressed"] });
         for (const image of chosen.tempFiles) {
+          this.setData({uploadingPhoto:image.tempFilePath});
           let path = image.tempFilePath, base64 = s(wx.getFileSystemManager().readFileSync(path, "base64"));
           if (base64.length > 680000) { const compressed = await wx.compressImage({ src: path, quality: 65 }); path = compressed.tempFilePath; base64 = s(wx.getFileSystemManager().readFileSync(path, "base64")); }
           if (base64.length > 680000) throw new Error("请裁剪照片至约500KB以内，并保证签字清晰");
           const response = await call<{ fileID: string }>("photo", { requestId: requestId(), semesterId: this.data.semesterId, payload: { taskId: this.data.formExtra.taskId, recordId: this.data.formType === "recordEdit" ? this.data.formId : undefined, base64 } });
-          this.setData({ photoIds: this.data.photoIds.concat(response.data.fileID), formPhotos: this.data.formPhotos.concat(path) });
+          this.setData({ photoIds: this.data.photoIds.concat(response.data.fileID), formPhotos: this.data.formPhotos.concat(path),uploadingPhoto:"" });
         }
-      } catch (e) { displayError(e); } finally { this.setData({ busy: false }); }
+      } catch (e) { if(!(e && typeof e === "object" && "errMsg" in e && /cancel/.test(String(e.errMsg))))displayError(e); } finally { this.setData({ busy: false,uploadingPhoto:"" }); }
     },
-    removePhoto(e: UiEvent) { const i = Number(e.currentTarget.dataset.index); this.setData({ photoIds: this.data.photoIds.filter((_, n) => n !== i), formPhotos: this.data.formPhotos.filter((_, n) => n !== i) }); },
-    previewPhoto(e: UiEvent) { wx.previewImage({ urls: this.data.photoUrls, current: e.currentTarget.dataset.url }); },
+    removePhoto(e: UiEvent) { if(this.data.busy)return; const i = Number(e.currentTarget.dataset.index); this.setData({ photoIds: this.data.photoIds.filter((_, n) => n !== i), formPhotos: this.data.formPhotos.filter((_, n) => n !== i) }); },
+    previewUploadingPhoto() { if(this.data.uploadingPhoto)wx.previewImage({urls:[this.data.uploadingPhoto],current:this.data.uploadingPhoto}); },
+    async previewFormPhoto(e: UiEvent) {
+      if(this.data.busy)return;const index=Number(e.currentTarget.dataset.index);if(!this.data.photoIds[index])return;
+      this.setData({busy:true});
+      try {const response=await call<{urls:string[]}>("photoUrls",{semesterId:this.data.semesterId,payload:{ids:this.data.photoIds}});
+        if(response.data.urls.length !== this.data.photoIds.length)throw new Error("照片链接不完整，请重试");
+        this.setData({formPhotos:response.data.urls});wx.previewImage({urls:response.data.urls,current:response.data.urls[index]});
+      }catch(e){displayError(e);}finally{this.setData({busy:false});}
+    },
+    async previewPhoto(e: UiEvent) {
+      if(this.data.busy || !this.data.record)return;const index=Math.max(0,this.data.photoUrls.indexOf(e.currentTarget.dataset.url));
+      this.setData({busy:true});
+      try {const r=await call<{urls:string[]}>("photoUrls",{semesterId:this.data.semesterId,payload:{recordId:this.data.record.id}});this.setData({photoUrls:r.data.urls});if(r.data.urls.length)wx.previewImage({urls:r.data.urls,current:r.data.urls[index] || r.data.urls[0]});}catch(e){displayError(e);}finally{this.setData({busy:false});}
+    },
     async history() { try { if (!this.data.record) return; if (this.data.versions.length && !this.data.versionCursor) return; const r = await query("recordVersions", this.data.semesterId, { id: this.data.record.id }, this.data.versionCursor); this.setData({ versions: this.data.versions.concat(r.data.items.map(row)), versionCursor: r.cursor || "" }); } catch (e) { displayError(e); } },
     async versionPhotos(e: UiEvent) { try { const r = await call<{ urls: string[] }>("photoUrls", { semesterId: this.data.semesterId, payload: { recordId: this.data.targetId, versionId: e.currentTarget.dataset.id } }); wx.previewImage({ urls: r.data.urls }); } catch (e) { displayError(e); } },
     async showStats() {

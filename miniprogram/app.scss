@@ -405,3 +405,12 @@ textarea.input {
 .v2-picker, .v2-field input, .v2-page textarea { border-color: #eaf0f7; border-radius: 14rpx; padding: 22rpx 24rpx; }
 .v2-page .title { margin-bottom: 12rpx; }
 .v2-page .v2-form { border-top: 6rpx solid #2468e8; }
+
+/* V2 提交和更正共用分组，避免更正页缺少 submission 专属样式。 */
+.v2-record-context { background: #f5f8ff; border-radius: 18rpx; padding: 22rpx; }
+.v2-metric-grid { display: flex; flex-wrap: wrap; justify-content: space-between; margin-top: 20rpx; }
+.v2-metric-field { width: 48%; box-sizing: border-box; padding: 20rpx; border: 1rpx solid #eaf0f7; border-radius: 18rpx; margin-bottom: 18rpx; }
+.v2-metric-input { font-size: 38rpx; height: 70rpx; color: #295caa; }
+.v2-record-form .section { flex-wrap: wrap; gap: 12rpx; }
+.v2-record-form button[size=mini] { font-size: 23rpx; }
+.v2-form-photo { max-width: 180rpx; }

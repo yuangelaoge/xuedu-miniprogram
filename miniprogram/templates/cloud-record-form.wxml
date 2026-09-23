@@ -1,0 +1,23 @@
+<view class="v2-record-form">
+  <view wx:if="{{recordContext}}" class="v2-record-context">
+    <view class="row between"><text class="pill">{{recordContext.data.classLabel}}</text><text class="muted small">第 {{recordContext.week}} 周</text></view>
+    <view class="course-title">{{recordContext.data.course.name}}</view>
+    <view class="course-meta">{{recordContext.data.date || recordContext.date}} · 第 {{recordContext.data.course.start}}–{{recordContext.data.course.end}} 节 · {{recordContext.data.course.classroom}}</view>
+    <view class="course-meta">听课成员：{{recordContext.data.memberName || memberName}}</view>
+  </view>
+  <view class="section row between"><text class="section-title">01 考勤与课堂状态</text><button size="mini" disabled="{{busy}}" bindtap="zeroRemaining">其余情况均为0</button></view>
+  <view class="muted small">未填写不能提交；未知请点“标记缺失”。快捷补零只填写空白异常项，不修改应到、实到和已填内容。</view>
+  <view class="v2-metric-grid"><view wx:for="{{metricFields}}" wx:key="key" class="v2-metric-field">
+    <view class="field-label">{{item.label}}</view><input class="v2-metric-input" type="number" disabled="{{busy}}" value="{{item.value === '信息缺失' ? '' : item.value}}" placeholder="{{item.value === '信息缺失' ? '信息缺失' : '未填写'}}" data-key="{{item.key}}" bindinput="input" maxlength="5"/>
+    <button size="mini" disabled="{{busy}}" data-key="{{item.key}}" bindtap="markMissing">{{item.value === '信息缺失' ? '已标记缺失' : '标记缺失'}}</button>
+  </view></view>
+  <view class="section-title section">02 请假与旷课名单</view>
+  <view wx:for="{{nameFields}}" wx:key="key" class="v2-field"><view class="row between"><view class="field-label">{{item.label}}</view><button size="mini" disabled="{{busy}}" data-key="{{item.key}}" bindtap="noNames">{{item.key === 'absentNames' ? '无人旷课' : '无人请假'}}</button></view><textarea disabled="{{busy}}" value="{{item.value}}" data-key="{{item.key}}" bindinput="input" placeholder="填写姓名；无人填无，不清楚填信息缺失；合班请注明班级" maxlength="1000"/></view>
+  <view class="section-title section">03 观察与反馈{{formType === 'recordEdit' ? '及更正原因' : ''}}</view>
+  <view wx:for="{{feedbackFields}}" wx:key="key" class="v2-field"><view class="v2-label">{{item.label}}</view><textarea disabled="{{busy}}" value="{{item.value}}" data-key="{{item.key}}" bindinput="input" maxlength="1000"/></view>
+  <view class="section row between"><text class="section-title">04 签字照片</text><text class="pill amber">1–3张 · 必传</text></view>
+  <view class="muted small">点击照片放大核对老师签字。移除只调整本次提交，历史版本照片继续保留。</view>
+  <view class="v2-photos"><view wx:for="{{formPhotos}}" wx:key="*this" class="v2-form-photo"><image src="{{item}}" mode="aspectFill" data-index="{{index}}" bindtap="previewFormPhoto"/><view class="muted small">已上传／已保存</view><button size="mini" disabled="{{busy}}" data-index="{{index}}" bindtap="removePhoto">移除</button></view><view wx:if="{{uploadingPhoto}}" class="v2-form-photo"><image src="{{uploadingPhoto}}" mode="aspectFill" bindtap="previewUploadingPhoto"/><view class="muted small">已选择，正在上传…</view></view></view>
+  <button disabled="{{busy || photoIds.length >= 3}}" bindtap="choosePhotos">拍照／从相册添加</button>
+  <button wx:if="{{formType === 'recordSubmit'}}" disabled="{{busy}}" bindtap="saveDraft">保存本机文字草稿</button><view wx:if="{{formType === 'recordSubmit'}}" class="muted small">草稿仅保存文字；关闭页面后需重新添加照片。</view>
+</view>

@@ -1,5 +1,5 @@
-<view class="v2-page">
-  <view class="v2-heading">{{title}}</view>
+<view class="v2-page {{view === 'home' ? 'v2-home' : view === 'profile' ? 'v2-profile' : ''}}">
+  <block wx:if="{{view !== 'home' && view !== 'profile'}}"><view class="eyebrow">{{eyebrow}}</view><view class="title">{{view === 'records' ? '每一份记录，都算数' : view === 'availability' ? '把空闲留给好学风' : title}}</view></block>
   <view wx:if="{{error}}" class="v2-error">{{error}}<button size="mini" bindtap="refreshWeek">重新加载</button></view>
   <view wx:if="{{busy}}" class="v2-note">正在处理，请稍候…</view>
   <view wx:if="{{maintenance}}" class="v2-card">
@@ -21,27 +21,19 @@
     </block>
   </view>
   <block wx:elif="{{!maintenance}}">
-    <view wx:if="{{!activeSemesterId}}" class="v2-card">
-      <view class="v2-title">尚未启用学期</view>
-      <view>{{admin ? '管理员与绑定班级已保留。请建立学期草稿、选择参与班级并启用学期。班级可以独立建立。' : '请等待管理员完成新学期准备。'}}</view>
-      <button wx:if="{{admin}}" data-target="manage" bindtap="navigate">进入管理工作台</button>
-    </view>
-    <view wx:if="{{view === 'profile'}}" class="v2-card">
-      <view class="v2-title">{{memberName}}</view><view>{{role === 'admin' ? '管理员' : role === 'leader' ? '组部长' : '普通成员'}}</view>
-      <button wx:if="{{manager}}" data-target="manage" bindtap="navigate">管理工作台</button>
-      <button wx:if="{{admin}}" bindtap="stepDown">本人卸任管理员</button>
-      <view class="v2-note">云端数据按微信身份授权。本机查看学期与草稿不影响其他成员。</view>
-    </view>
-    <view wx:if="{{view !== 'profile' && view !== 'join' && view !== 'record' && view !== 'submission'}}" class="v2-card">
+    <view wx:if="{{!activeSemesterId && view !== 'home' && view !== 'profile'}}" class="notice">尚未启用学期。{{admin ? '请先建立学期并配置真实课表。' : '请等待管理员完成新学期准备。'}}<view wx:if="{{admin && view !== 'manage'}}" class="link" data-target="manage" bindtap="navigate">进入管理工作台 ›</view></view>
+    <block wx:if="{{view === 'home'}}"><include src="cloud-home.wxml" /></block>
+    <block wx:if="{{view === 'profile'}}"><include src="cloud-profile.wxml" /></block>
+    <view wx:if="{{semesters.length && view !== 'home' && view !== 'profile' && view !== 'join' && view !== 'record' && view !== 'submission'}}" class="v2-card">
       <view class="v2-label">{{view === 'home' || view === 'availability' ? '组织当前学期' : '查看学期（仅影响本机）'}}</view>
       <picker wx:if="{{view !== 'home' && view !== 'availability'}}" range="{{semesterOptions}}" range-key="label" value="{{semesterIndex}}" bindchange="chooseSemester"><view class="v2-picker">{{semesterName}} ▾</view></picker>
       <view wx:else>{{semesterName}}</view>
       <button wx:if="{{semesterCursor}}" size="mini" bindtap="moreSemesters">加载更早学期</button>
-      <view wx:if="{{semesterId && (view === 'home' || view === 'schedule' || view === 'records' || view === 'availability')}}" class="v2-actions"><text>第</text><input class="v2-week" type="number" value="{{week}}" bindinput="weekChange"/><text>周</text><button size="mini" bindtap="refreshWeek">查看</button></view>
     </view>
-    <view wx:if="{{view === 'home'}}" class="v2-actions"><button data-target="availability" bindtap="navigate">填写无课时间</button><button data-target="courses" bindtap="navigate">课程总表</button><button wx:if="{{manager}}" data-target="manage" bindtap="navigate">管理工作台</button></view>
-    <block wx:if="{{view === 'home' || view === 'schedule'}}">
-      <view wx:if="{{manager && semesterId}}" class="v2-actions"><button disabled="{{busy}}" bindtap="generate">生成排班草稿</button><button bindtap="adjust">补排任务</button><button wx:if="{{admin}}" bindtap="skipWeek">跳过本周</button></view>
+    <view wx:if="{{view === 'schedule' || view === 'records' || view === 'availability'}}" class="week-switch"><view class="week-arrow" data-delta="-1" bindtap="moveWeek">‹</view><view class="week-center"><view class="week-title">{{semesterId ? '第 ' + week + ' 周' : '尚未启用学期'}}</view><view class="week-dates">{{dates}}</view></view><view class="week-arrow" data-delta="1" bindtap="moveWeek">›</view></view>
+    <view wx:if="{{view === 'schedule'}}" class="row" style="justify-content:flex-end;margin-top:22rpx"><text class="link" data-target="courses" bindtap="navigate">课程总表 ›</text></view>
+    <block wx:if="{{view === 'schedule'}}">
+      <view wx:if="{{manager && semesterId}}" class="card"><view class="section-title">排班工作台</view><view class="subtitle small">非本班 · 每人至多一次 · 人工确认后生效</view><view class="v2-actions"><button disabled="{{busy}}" bindtap="generate">生成排班草稿</button><button bindtap="adjust">补排任务</button><button wx:if="{{admin}}" bindtap="skipWeek">跳过本周</button></view></view>
       <view wx:if="{{weekData.draft}}" class="v2-card">
         <view class="v2-title">待人工确认的调整草稿</view><view>{{weekData.draft.data.reason}}</view>
         <view wx:for="{{tasks}}" wx:key="id" wx:if="{{item.status === 'draft' && item.parentId === weekData.draft.id}}" class="v2-row"><view>{{item.label}}</view><view>{{item.detail}}</view><view>{{item.cancel ? '取消原任务' : '拟安排'}}{{item.replaces ? '（替换原任务）' : ''}}</view></view>
@@ -50,19 +42,22 @@
       </view>
       <view wx:if="{{weekData.plan.data.status === 'skipped'}}" class="v2-note">本周已跳过：{{weekData.plan.data.reason}}</view><view class="v2-title">本周任务</view>
       <view wx:for="{{tasks}}" wx:key="id" wx:if="{{item.status === 'confirmed' || item.status === 'submitted' || item.status === 'pendingAdjustment'}}" class="v2-card">
-        <view class="v2-title">{{item.label}}</view><view>{{item.detail}}</view><view>{{item.status === 'pendingAdjustment' ? '待调整：原课表已失效，暂不能提交' : item.status === 'submitted' ? '已提交' : '已确认'}}</view>
+        <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view><view>{{item.status === 'pendingAdjustment' ? '待调整：原课表已失效，暂不能提交' : item.status === 'submitted' ? '已提交' : '已确认'}}</view>
         <button wx:if="{{item.status === 'confirmed' && item.memberId === memberId}}" data-id="{{item.id}}" bindtap="open">填写听课记录</button>
         <button wx:if="{{manager && item.status !== 'submitted'}}" data-id="{{item.id}}" bindtap="adjust">转派／取消</button>
       </view>
-      <view wx:if="{{!tasks.length}}" class="v2-note">本周暂无任务。未排班不计为出勤率为零。</view>
+      <view wx:if="{{!tasks.length}}" class="empty"><view class="empty-icon">▦</view><view class="empty-title">本周安排尚未发布</view><view class="muted">{{semesterId ? "填写无课时间，等待管理人员确认。" : "启用学期后，在这里查看每周安排。"}}</view></view>
     </block>
     <view wx:if="{{view === 'availability' && semesterId}}" class="v2-card">
       <view class="v2-title">勾选完整可听课时间</view>
       <label wx:if="{{role !== 'member'}}"><switch checked="{{optedIn}}" bindchange="optIn"/>本周我也听课</label>
-      <checkbox-group bindchange="slotsChange"><view class="v2-slot-grid"><label wx:for="{{slots}}" wx:key="key"><checkbox value="{{item.key}}" checked="{{item.checked}}"/>{{item.label}}</label></view></checkbox-group>
+      <view class="muted small">点击星期可整列切换 · 已选 {{selectedSlots.length}} 节</view>
+      <view class="grid-row"><view class="grid-label"></view><view wx:for="{{availabilityDays}}" wx:key="n" class="day-head" data-day="{{item.n}}" bindtap="toggleDay">{{item.name}}</view></view>
+      <view wx:for="{{availabilityRows}}" wx:for-item="row" wx:key="n" class="grid-row"><view class="grid-label">{{row.n}}</view><view wx:for="{{row.cells}}" wx:key="key" class="time-cell {{item.selected ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="toggleSlot">{{item.selected ? '✓' : ''}}</view></view>
+      <view class="row gap grid-legend"><view class="legend-square"></view><text>可听课</text><view class="legend-square off"></view><text>不可安排</text></view>
       <textarea placeholder="备注" value="{{availabilityNote}}" bindinput="availabilityNote"/><button type="primary" bindtap="saveAvailability">保存本周无课时间</button>
     </view>
-    <view wx:if="{{view === 'manage'}}" class="v2-actions"><button wx:for="{{sections}}" wx:key="id" wx:if="{{admin || (item.id !== 'classes' && item.id !== 'semesters' && item.id !== 'courses' && item.id !== 'rebindings' && item.id !== 'autoApproved')}}" size="mini" data-id="{{item.id}}" bindtap="section">{{item.label}}</button></view>
+    <view wx:if="{{view === 'manage'}}" class="filters"><view wx:for="{{sections}}" wx:key="id" wx:if="{{admin || (item.id !== 'classes' && item.id !== 'semesters' && item.id !== 'courses' && item.id !== 'rebindings' && item.id !== 'autoApproved')}}" class="chip {{section === item.id ? 'active' : ''}}" data-id="{{item.id}}" bindtap="section">{{item.label}}</view></view>
     <view wx:if="{{view === 'manage' && admin && (section === 'applications' || section === 'autoApproved')}}" class="v2-card">
       <view class="v2-title">自动通过新申请</view><switch checked="{{autoApprovalActive}}" disabled="{{busy || formType === 'autoApprovalSet'}}" bindchange="toggleAutoApproval"/>
       <view>{{autoApprovalActive ? '已开启' : autoApprovalExpired ? '已到期，自动关闭' : '已关闭'}}</view><view wx:if="{{autoApprovalDeadline}}">截止：{{autoApprovalDeadline}}</view>
@@ -75,12 +70,16 @@
       <button wx:if="{{section === 'semesters'}}" data-type="semesterCreate" bindtap="newForm">新建学期草稿</button>
       <block wx:if="{{section === 'courses' && semesterId}}"><button data-type="courseSave" bindtap="newForm">新增课程</button><button data-type="import" bindtap="newForm">JSON课表导入</button></block>
     </view>
+    <block wx:if="{{view === 'records'}}">
+      <view class="card"><view class="row between"><view class="section-title">本周提交进度</view><view><text class="number" style="font-size:36rpx">{{weekSubmitted}}</text><text class="muted"> / {{weekTotal}}</text></view></view><view class="progress"><view class="progress-fill" style="width:{{weekProgress}}%"></view></view><view class="muted small" style="margin-top:16rpx">已提交记录 / 正式安排任务</view></view>
+      <view class="tabs"><view class="tab {{recordTab === 'all' ? 'active' : ''}}" data-id="all" bindtap="recordTab">听课汇总</view><view class="tab {{recordTab === 'mine' ? 'active' : ''}}" data-id="mine" bindtap="recordTab">个人听课</view><view wx:if="{{manager}}" class="tab {{recordTab === 'stats' ? 'active' : ''}}" data-id="stats" bindtap="recordTab">周统计</view></view>
+    </block>
     <view wx:if="{{manager && view === 'records' && semesterId}}" class="v2-actions"><button bindtap="showStats">查看本周统计</button><button data-kind="txt" bindtap="exportReport">导出名单 TXT</button><button data-kind="xlsx" bindtap="exportReport">导出汇总 Excel</button></view>
-    <view wx:if="{{statsLoaded}}" class="v2-card"><view class="v2-title">本周最新记录统计</view><view>已提交 {{statsCount}} 份记录；出勤率按有效应到、实到人次加权。</view><view wx:for="{{stats}}" wx:key="grade" class="v2-row">{{item.grade}}级：观测 {{item.count}} 次，有效 {{item.valid}} 次，出勤率 {{item.rate}}</view><view class="v2-note">统计仅代表实际听课观测；更正后重新查看或导出即可使用最新数据。</view></view>
+    <view wx:if="{{statsLoaded && recordTab === 'stats'}}" class="v2-card"><view class="v2-title">本周最新记录统计</view><view>已提交 {{statsCount}} 份记录；出勤率按有效应到、实到人次加权。</view><view wx:for="{{stats}}" wx:key="grade" class="v2-row">{{item.grade}}级：观测 {{item.count}} 次，有效 {{item.valid}} 次，出勤率 {{item.rate}}</view><view class="v2-note">统计仅代表实际听课观测；更正后重新查看或导出即可使用最新数据。</view></view>
     <view wx:if="{{impacts.length}}" class="v2-card"><view class="v2-title">以下任务已标记待调整</view><view>已生成调整草稿，请前往“听课安排”选择相应学期与周次核对并确认。确认前原任务不能提交，已完成任务保持不变。</view><view wx:for="{{impacts}}" wx:key="id" class="v2-row">第 {{item.week}} 周 · {{item.label}} · {{item.detail}}</view></view>
-    <block wx:if="{{view === 'manage' || view === 'records' || view === 'courses'}}">
-      <view wx:for="{{rows}}" wx:key="id" class="v2-card">
-        <view class="v2-title">{{item.label}}</view><view>{{item.detail}}</view>
+    <block wx:if="{{view === 'manage' || (view === 'records' && recordTab !== 'stats') || view === 'courses'}}">
+      <view wx:for="{{rows}}" wx:key="id" wx:if="{{view !== 'records' || recordTab !== 'mine' || item.memberId === memberId}}" class="v2-card">
+        <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view>
         <view wx:if="{{section === 'members'}}">{{item.role === 'admin' ? '管理员' : item.role === 'leader' ? '组部长' : '成员'}} · {{item.active ? '有效' : '已停用'}}</view>
         <view wx:if="{{item.status}}">{{item.statusLabel}}</view>
         <button wx:if="{{view === 'records'}}" data-id="{{item.id}}" bindtap="open">查看记录与照片</button>
@@ -96,7 +95,7 @@
           <block wx:if="{{section === 'semesters' && admin}}"><button size="mini" data-id="{{item.id}}" data-action="participants" bindtap="rowAction">选择参与班级</button><button wx:if="{{item.id !== activeSemesterId}}" size="mini" data-id="{{item.id}}" data-action="activate" bindtap="rowAction">启用为当前学期</button><text wx:else>组织当前学期</text></block>
         </view>
       </view>
-      <view wx:if="{{!rows.length && !busy}}" class="v2-note">{{view === 'courses' || section === 'courses' ? '暂无课程，管理员可先建立班级，再配置参与班级和课程。' : '暂无资料'}}</view>
+      <view wx:if="{{!rows.length && !busy}}" class="empty"><view class="empty-icon">▤</view><view class="empty-title">{{view === 'records' ? '记录正在路上' : '暂无资料'}}</view><view class="muted">{{view === 'courses' || section === 'courses' ? '配置真实课表后，在这里查看课程。' : view === 'records' ? '成员提交后，会自动出现在本周汇总。' : '新增或提交后，会显示在这里。'}}</view></view>
       <button wx:if="{{cursor}}" bindtap="more">再加载50条</button>
     </block>
     <view wx:if="{{view === 'record' && record}}" class="v2-card">

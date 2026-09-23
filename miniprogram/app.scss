@@ -390,3 +390,18 @@ textarea.input {
 .v2-photos image { width: 170rpx; height: 170rpx; border-radius: 8rpx; }
 .v2-slot-grid { display: flex; flex-wrap: wrap; margin: 20rpx 0; }
 .v2-slot-grid label { width: 50%; font-size: 24rpx; padding: 10rpx 0; }
+
+/* Cloud pages retain the original page/card hierarchy. */
+.v2-page { padding: 30rpx 32rpx 52rpx; color: #202c43; }
+.v2-page.v2-home, .v2-page.v2-profile { padding: 0; }
+.v2-card { border-color: #eaf0f7; border-radius: 26rpx; margin: 22rpx 0 0; }
+.v2-title { font-size: 31rpx; font-weight: 650; }
+.v2-note { color: #8894a7; font-size: 24rpx; }
+.v2-page button { background: #eaf1ff; color: #2468e8; border-radius: 18rpx; }
+.v2-page button[type=primary] { color: white; }
+.v2-page button[type=warn] { background: #fff0e8; color: #c86a40; }
+.v2-page .task-button { background: #285de0; color: white; }
+.v2-page .task-button-done { background: #edf3ff; color: #285de0; }
+.v2-picker, .v2-field input, .v2-page textarea { border-color: #eaf0f7; border-radius: 14rpx; padding: 22rpx 24rpx; }
+.v2-page .title { margin-bottom: 12rpx; }
+.v2-page .v2-form { border-top: 6rpx solid #2468e8; }

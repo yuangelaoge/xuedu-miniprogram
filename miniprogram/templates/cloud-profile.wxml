@@ -1,0 +1,11 @@
+<view class="page"><view class="eyebrow">MY WORKSPACE</view><view class="title">我的</view>
+ <view class="card profile-card"><view class="row"><view class="avatar large">{{initial}}</view><view class="grow"><view class="profile-name">{{memberName}}</view><view class="muted">{{className}}</view></view><text class="pill">{{roleLabel}}</text></view><view class="divider"></view><view class="row between"><text class="muted">学号</text><text class="small">{{studentNo}}</text></view></view>
+ <view class="card">
+  <view class="menu-row" data-target="availability" bindtap="navigate"><view class="row"><view class="menu-icon">▦</view><view>{{admin ? '我也听课 / 无课时间' : '我的无课时间'}}</view></view><text class="chevron">›</text></view>
+  <view wx:if="{{manager}}" class="menu-row" data-target="manage" bindtap="navigate"><view class="row"><view class="menu-icon">▤</view><view>管理工作台</view></view><view class="row"><text wx:if="{{pendingCount}}" class="pill amber">{{pendingCount}} 待审核</text><text class="chevron">›</text></view></view>
+  <view class="menu-row" bindtap="rules"><view class="row"><view class="menu-icon">≡</view><view>听课说明</view></view><text class="chevron">›</text></view>
+ </view>
+ <view wx:if="{{admin}}" class="card"><view class="menu-row" bindtap="stepDown"><view>本人卸任管理员</view><text class="chevron">›</text></view></view>
+ <view class="footer-note">{{semesterName}} · {{modeLabel}} v1.0</view>
+</view>
+

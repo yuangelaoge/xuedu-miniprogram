@@ -1,8 +1,10 @@
 import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protocol";
-import { AppState, METRIC_FIELDS, UiEvent } from "../../domain/types";
+import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
 import { bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey } from "./client";
+
+import { weekRange } from "../../domain/calendar";
 
 interface AutoApprovalView { setting: AutoApproval | null; active: boolean; expired: boolean; version: number; serverNow: number; }
 const localTime = (value: string) => value ? new Date(Date.parse(value) + 8 * 3600000).toISOString().slice(0,16).replace("T", " ") + "（北京时间）" : "";
@@ -10,7 +12,7 @@ type View = "home" | "schedule" | "records" | "profile" | "manage" | "join" | "r
 interface Option { label: string; value: string; checked?: boolean; }
 interface Field { key: string; label: string; value: string; kind: string; options: Option[]; selected: string[]; }
 interface Row extends Entity { selected?: boolean; label: string; detail: string; status: string; active: boolean; role: string; statusLabel: string; cancel: boolean; replaces: boolean; historyFields: {label:string;value:string}[]; }
-interface WeekData { semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity; uncovered?: { label: string; reason: string }[]; }
+interface WeekData { records?: Entity[]; semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity; uncovered?: { label: string; reason: string }[]; }
 const titles: Record<View, string> = { home: "学风督察", schedule: "听课安排", records: "听课记录", profile: "我的", manage: "管理工作台", join: "申请加入", record: "听课记录详情", submission: "填写听课记录", availability: "无课时间", courses: "课程总表" };
 const s = (value: unknown) => value === undefined || value === null ? "" : String(value);
 const actionLabels: Record<string,string> = { autoApprovalEnabled:"开启自动通过", autoApprovalDisabled:"关闭自动通过", autoApproveApplication:"自动通过入组申请", initialize:"首次初始化", roleChange:"调整角色", memberStatus:"调整启停状态", memberRemove:"移除成员", memberRestore:"恢复成员", classSave:"维护班级", classDisable:"停用班级", semesterCreate:"建立学期草稿", semesterActivate:"启用学期", semesterParticipants:"配置参与班级", courseSave:"维护课程", courseDisable:"停用课程", exceptionSave:"停调补课", planGenerate:"生成排班草稿", planConfirm:"确认排班", taskAdjust:"调整任务草稿", recordSubmit:"提交记录", recordEdit:"更正记录", rebindConfirm:"确认微信换绑", applicationReview:"审核申请", clearBegin:"开始业务清空", import:"导入课表" };
@@ -43,12 +45,22 @@ async function optionsFor(kind: string, semesterId = ""): Promise<Option[]> {
   } while (cursor);
   return result;
 }
+function availabilityGrid(slots: {key:string}[], selected: string[]) {
+  const days = [...new Set(slots.map(slot => Number(slot.key.split(":")[0])))];
+  const periods = [...new Set(slots.map(slot => Number(slot.key.split(":")[1])))];
+  return { availabilityDays: days.map(n => ({n, name: "周" + "一二三四五六日"[n-1]})), availabilityRows: periods.map(n => ({n, cells: days.map(d => ({key: d + ":" + n, selected: selected.includes(d + ":" + n)}))})) };
+}
 function displayError(e: unknown): void { wx.showModal({ title: "未完成", content: e instanceof Error ? e.message : "操作失败，请刷新重试", showCancel: false }); }
 
 export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   Page({
     data: {
+      modeLabel: "云端试用", roleLabel: "", initial: "", className: "", studentNo: "", dates: "", availabilityReady: false,
+      homeTasks: [] as (Row & {classLabel:string;course:Record<string,unknown>;timeLabel:string;done:boolean;recordId:string})[], taskCount: 0, recordCount: 0, coverage: 0, skipped: false,
+      availabilityDays: [] as {n:number;name:string}[], availabilityRows: [] as {n:number;cells:{key:string;selected:boolean}[]}[],
+      recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
+      eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
       cloudMode: true, title: titles[view], view, busy: false, error: "", status: "", canInitialize: false, removed: false,
       admin: false, manager: false, memberName: "", memberId: "", role: "", maintenance: "",
       autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
@@ -71,14 +83,19 @@ export function registerCloudPage(view: View): void {
       try {
         const boot = await bootstrap(), member = boot.member;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
-        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({record:null,versions:[],photoUrls:[],rows:[],tasks:[],formType:"",fields:[]});
+        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({record:null,versions:[],photoUrls:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
+        this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
-          this.setData({ rows: [], tasks: [], semesters: [], record: null, versions: [], photoUrls: [], fields: [], formType: "" });
+          this.setData({ rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], fields: [], formType: "" });
           if (boot.status !== "needsAdministrator") {
             this.setData({ rows: boot.application ? [row(boot.application)] : [], cursor: "" });
           }
           return;
+        }
+        if (view === "profile") {
+          const classes = await optionsFor("classes");
+          this.setData({className: classes.find(c => c.value === member.data.classId)?.label || "班级未设置"});
         }
         if (!this.data.semesters.length || !more) {
           const response = await query("semesters");
@@ -87,7 +104,9 @@ export function registerCloudPage(view: View): void {
         const selected = this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
         const selectedSemester = this.data.semesters.find(e => e.id === selected);
         const semesterId = selected || boot.workspace.activeSemesterId;
+        if (!semesterId) this.setData({tasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},taskCount:0,recordCount:0,coverage:0,weekTotal:0,weekSubmitted:0,weekProgress:0,availabilityReady:false});
         this.setData({ semesterId, semesterIndex: Math.max(0, this.data.semesters.findIndex(e => e.id === semesterId)), semesterName: s(selectedSemester?.data.name || (semesterId ? "所选历史学期" : "尚未启用学期")) });
+        this.setData({dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, this.data.week) : ""});
         if (view === "manage" || view === "records" || view === "courses") {
           const kind = view === "manage" ? this.data.section : view === "courses" ? "courses" : "records";
           if (admin && view === "manage" && ["applications", "autoApproved"].includes(kind)) {
@@ -103,18 +122,28 @@ export function registerCloudPage(view: View): void {
           if (!manager && view === "manage") throw new Error("无管理权限");
           if (view === "manage" && !admin && ["classes", "semesters", "courses"].includes(kind)) throw new Error("此维护入口仅管理员可用");
           if (["courses", "records"].includes(kind) && !semesterId) { this.setData({ rows: [], cursor: "" }); return; }
+          if (view === "records" && semesterId) {
+            const w = (await query<WeekData>("week", semesterId, {week:this.data.week})).data;
+            const total = w.tasks.filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status))).length;
+            const submitted = (w.records || []).length;
+            this.setData({weekTotal:total,weekSubmitted:submitted,weekProgress:total ? Math.round(submitted / total * 100) : 0});
+          }
           const response = await query(kind, ["courses", "records"].includes(kind) ? semesterId : "", kind === "records" ? { week: this.data.week } : {}, more ? this.data.cursor : "");
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
         } else if (["home", "schedule", "availability"].includes(view) && semesterId) {
           const response = await query<WeekData>("week", semesterId, { week: this.data.week });
           const w = response.data;
-          this.setData({ weekData: w, tasks: (w.tasks || []).map(row) });
+          const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
+          this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,
+            taskCount: visibleTasks.length, recordCount: (w.records || []).length, coverage: new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",
+            homeTasks: visibleTasks.filter(t => t.memberId === member.id).map(t => ({...row(t), classLabel:s(t.data.classLabel), course:(t.data.course || {}) as Record<string,unknown>, timeLabel:s(t.data.date || t.date) + " · 第" + s((t.data.course as Record<string,unknown>)?.start) + "–" + s((t.data.course as Record<string,unknown>)?.end) + "节", done:t.data.status === "submitted", recordId:(w.records || []).find(r => r.taskId === t.id)?.id || ""})) });
           if (view === "availability") {
             const days = Number(w.semester?.data.days || selectedSemester?.data.days || 5), periods = Number(w.semester?.data.periods || selectedSemester?.data.periods || 14);
             const own = w.availability;
             const selectedSlots = Array.isArray(own?.data.slots) ? own.data.slots.map(String) : [];
             this.setData({ selectedSlots, optedIn: own?.data.optedIn === true, availabilityNote: s(own?.data.note), slots: Array.from({ length: days * periods }, (_, i) => { const d = Math.floor(i / periods) + 1, p = i % periods + 1, key = d + ":" + p; return { key, label: "周" + "一二三四五六日"[d - 1] + "第" + p + "节", checked: selectedSlots.includes(key) }; }) });
           }
+          if (view === "availability") this.setData(availabilityGrid(this.data.slots, this.data.selectedSlots));
         } else if (view === "record" && this.data.targetId) {
           const response = await query<{ record: Entity; canEdit: boolean }>("record", semesterId, { id: this.data.targetId });
           const record = response.data.record;
@@ -126,7 +155,7 @@ export function registerCloudPage(view: View): void {
           const response = await query<{ task: Entity }>("task", semesterId, { id: this.data.targetId });
           this.openRecordForm(response.data.task);
         }
-      } catch (e) { this.setData({ error: e instanceof Error ? e.message : "连接失败", record: null, photoUrls: [], versions: [], rows: [], tasks: [] }); }
+      } catch (e) { this.setData({ error: e instanceof Error ? e.message : "连接失败", record: null, photoUrls: [], versions: [], rows: [], tasks: [], homeTasks: [] }); }
       finally { this.setData({ busy: false }); }
     },
     async more() { await this.load(true); },
@@ -138,11 +167,32 @@ export function registerCloudPage(view: View): void {
     chooseSemester(e: UiEvent) { const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, formType: "", rows: [], week: 1 }); void this.load(); },
     weekChange(e: UiEvent) { const next = Number(e.detail.value); if (Number.isInteger(next) && next >= 1 && next <= 60) this.setData({ week: next }); },
     refreshWeek() { void this.load(); },
+    recordTab(e: UiEvent) { this.setData({recordTab:e.currentTarget.dataset.id}); if (e.currentTarget.dataset.id === "stats" && this.data.semesterId) void this.showStats(); },
+    moveWeek(e: UiEvent) {
+      if (!this.data.semesterId || this.data.busy) return;
+      const semester = this.data.semesters.find(s => s.id === this.data.semesterId);
+      const next = Math.min(Number(semester?.data.weeks || 60), Math.max(1, this.data.week + Number(e.currentTarget.dataset.delta)));
+      this.setData({week:next, rows:[], cursor:""}); void this.load();
+    },
+    toggleSlot(e: UiEvent) {
+      const key = e.currentTarget.dataset.key;
+      const selected = this.data.selectedSlots.includes(key) ? this.data.selectedSlots.filter(s => s !== key) : this.data.selectedSlots.concat(key);
+      this.setData({selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
+    },
+    toggleDay(e: UiEvent) {
+      const keys = this.data.slots.filter(s => s.key.startsWith(e.currentTarget.dataset.day + ":")).map(s => s.key);
+      const all = keys.every(k => this.data.selectedSlots.includes(k));
+      const selected = this.data.selectedSlots.filter(k => !keys.includes(k)).concat(all ? [] : keys);
+      this.setData({selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
+    },
+    rules() { wx.showModal({title:"听课与提交说明",content:"1. 不能听自己班，每周最多一次。\n2. 无课时间按周保存，以正式安排为准。\n3. 按实际情况填写人数，缺失信息单独标记。\n4. 上传清晰、带有老师签字的听课表。",showCancel:false}); },
     navigate(e: UiEvent) {
       const target = e.currentTarget.dataset.target;
+      if (["schedule", "reports", "profile", "index"].includes(target)) { wx.switchTab({url:"/pages/" + target + "/" + target}); return; }
       if (["manage", "courses", "availability", "join"].includes(target)) wx.navigateTo({ url: "/pages/" + target + "/" + target });
     },
     open(e: UiEvent) {
+      if (e.currentTarget.dataset.target === "record") { wx.navigateTo({url:"/pages/record/record?id=" + e.currentTarget.dataset.id + "&semesterId=" + this.data.semesterId}); return; }
       const id = e.currentTarget.dataset.id;
       if (view === "records") wx.navigateTo({ url: "/pages/record/record?id=" + encodeURIComponent(id) + "&semesterId=" + encodeURIComponent(this.data.semesterId) });
       else if (["home", "schedule"].includes(view)) wx.navigateTo({ url: "/pages/submission/submission?taskId=" + encodeURIComponent(id) + "&semesterId=" + encodeURIComponent(this.data.semesterId) });

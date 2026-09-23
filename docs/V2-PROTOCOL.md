@@ -1,5 +1,7 @@
 # V2 云端协议与接口
 
+**状态更新（2026-09-23）**：协议 2 已随 V2 云函数部署；下文“本地实现、尚未部署”表述反映原编写阶段。实际部署及验证范围见 [V2 部署记录](DEPLOYMENT-2026-09-23-V2.md)。
+
 对应 `miniprogram/domain/v2/protocol.ts`、`server/v2/gateway.ts`、`server/v2/repository.ts` 和 `cloudfunctions/xueduTrial/index.js`。本文件描述本地实现；没有据此部署或执行线上调用。函数名继续为 `xueduTrial`，业务模式为 cloud；demo不调用这些接口。
 
 ## 封装、身份与版本

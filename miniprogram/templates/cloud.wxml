@@ -1,7 +1,11 @@
 <view class="v2-page {{view === 'home' ? 'v2-home' : view === 'profile' ? 'v2-profile' : ''}}">
+  <block wx:if="{{loadingInitial}}"><include src="cloud-skeleton.wxml" /></block>
+  <view wx:elif="{{!hasLoaded && error}}" class="v2-load-error" bindtap="refreshWeek" role="button">加载失败，点击重试</view>
+  <block wx:else>
   <block wx:if="{{view !== 'home' && view !== 'profile'}}"><view class="eyebrow">{{eyebrow}}</view><view class="title">{{view === 'records' ? '每一份记录，都算数' : view === 'availability' ? '把空闲留给好学风' : title}}</view></block>
-  <view wx:if="{{error}}" class="v2-error">{{error}}<button size="mini" bindtap="refreshWeek">重新加载</button></view>
-  <view wx:if="{{busy}}" class="v2-note">正在处理，请稍候…</view>
+  <view wx:if="{{error}}" class="v2-load-error" bindtap="refreshWeek" role="button">加载失败，点击重试</view>
+  <view wx:if="{{refreshing}}" class="v2-refresh-note">更新中…</view>
+  <view wx:if="{{busy && !refreshing}}" class="v2-note">正在处理，请稍候…</view>
   <view wx:if="{{maintenance}}" class="v2-card">
     <view class="v2-title">业务数据维护中</view><view>写入已冻结，管理员可在清空入口继续处理同一任务。</view>
     <button wx:if="{{admin}}" type="warn" disabled="{{busy}}" bindtap="clearBusiness">继续业务清空</button>
@@ -131,4 +135,5 @@
 
     <view class="v2-actions"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
   </view>
+  </block>
 </view>

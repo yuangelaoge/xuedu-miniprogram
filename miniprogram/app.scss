@@ -394,6 +394,22 @@ textarea.input {
 /* Cloud pages retain the original page/card hierarchy. */
 .v2-page { padding: 30rpx 32rpx 52rpx; color: #202c43; }
 .v2-page.v2-home, .v2-page.v2-profile { padding: 0; }
+.v2-skeleton { padding: 28rpx 4rpx 52rpx; }
+.v2-home .v2-skeleton, .v2-profile .v2-skeleton { padding: 32rpx 36rpx 52rpx; }
+.v2-skeleton-line { height: 24rpx; width: 58%; border-radius: 8rpx; background: #e6eaf0; margin-bottom: 20rpx; }
+.v2-skeleton-heading { width: 42%; height: 44rpx; margin: 12rpx 0 30rpx; }
+.v2-skeleton-section { width: 36%; height: 30rpx; margin: 36rpx 0 18rpx; }
+.v2-skeleton-short { width: 30%; }
+.v2-skeleton-medium { width: 54%; }
+.v2-skeleton-wide { width: 82%; }
+.v2-skeleton-large { width: 40%; height: 64rpx; }
+.v2-skeleton-card { background: #fff; border: 1rpx solid #edf0f4; border-radius: 24rpx; padding: 32rpx; margin-top: 22rpx; min-height: 176rpx; }
+.v2-skeleton-card .v2-skeleton-line:last-child { margin-bottom: 0; }
+.v2-skeleton-hero { min-height: 260rpx; }
+.v2-skeleton-compact { min-height: 100rpx; }
+.v2-skeleton-divider { height: 1rpx; background: #edf0f4; margin: 26rpx 0; }
+.v2-load-error { margin: 28rpx 32rpx; padding: 28rpx; border-radius: 18rpx; background: #fff; color: #b34242; text-align: center; }
+.v2-refresh-note { color: #8894a7; font-size: 22rpx; text-align: center; padding: 12rpx 0; }
 .v2-card { border-color: #eaf0f7; border-radius: 26rpx; margin: 22rpx 0 0; }
 .v2-title { font-size: 31rpx; font-weight: 650; }
 .v2-note { color: #8894a7; font-size: 24rpx; }

@@ -1,0 +1,22 @@
+<view class="v2-skeleton" aria-label="内容加载中">
+  <block wx:if="{{view === 'home'}}">
+    <view class="v2-skeleton-line v2-skeleton-heading"></view>
+    <view class="v2-skeleton-card v2-skeleton-hero"><view class="v2-skeleton-line v2-skeleton-short"></view><view class="v2-skeleton-line v2-skeleton-large"></view><view class="v2-skeleton-line v2-skeleton-medium"></view></view>
+    <view class="v2-skeleton-card v2-skeleton-compact"><view class="v2-skeleton-line v2-skeleton-medium"></view></view>
+    <view class="v2-skeleton-line v2-skeleton-section"></view>
+    <view class="v2-skeleton-card"><view class="v2-skeleton-line v2-skeleton-medium"></view><view class="v2-skeleton-line v2-skeleton-wide"></view><view class="v2-skeleton-line v2-skeleton-short"></view></view>
+  </block>
+  <block wx:elif="{{view === 'profile'}}">
+    <view class="v2-skeleton-line v2-skeleton-heading"></view>
+    <view class="v2-skeleton-card"><view class="v2-skeleton-line v2-skeleton-medium"></view><view class="v2-skeleton-line v2-skeleton-short"></view><view class="v2-skeleton-divider"></view><view class="v2-skeleton-line v2-skeleton-wide"></view></view>
+    <view class="v2-skeleton-card"><view class="v2-skeleton-line v2-skeleton-wide"></view><view class="v2-skeleton-divider"></view><view class="v2-skeleton-line v2-skeleton-medium"></view><view class="v2-skeleton-divider"></view><view class="v2-skeleton-line v2-skeleton-short"></view></view>
+  </block>
+  <block wx:else>
+    <view class="v2-skeleton-line v2-skeleton-short"></view><view class="v2-skeleton-line v2-skeleton-heading"></view>
+    <view class="v2-skeleton-card v2-skeleton-compact"><view class="v2-skeleton-line v2-skeleton-medium"></view></view>
+    <view class="v2-skeleton-card v2-skeleton-compact"><view class="v2-skeleton-line v2-skeleton-short"></view><view class="v2-skeleton-line v2-skeleton-medium"></view></view>
+    <view class="v2-skeleton-line v2-skeleton-section"></view>
+    <view class="v2-skeleton-card"><view class="v2-skeleton-line v2-skeleton-medium"></view><view class="v2-skeleton-line v2-skeleton-wide"></view><view class="v2-skeleton-line v2-skeleton-short"></view></view>
+    <view class="v2-skeleton-card"><view class="v2-skeleton-line v2-skeleton-medium"></view><view class="v2-skeleton-line v2-skeleton-wide"></view></view>
+  </block>
+</view>

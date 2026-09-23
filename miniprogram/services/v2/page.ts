@@ -66,7 +66,7 @@ export function registerCloudPage(view: View): void {
       availabilityDays: [] as {n:number;name:string}[], availabilityRows: [] as {n:number;cells:{key:string;selected:boolean}[]}[],
       recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
       eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
-      cloudMode: true, title: titles[view], view, busy: false, error: "", status: "", canInitialize: false, removed: false,
+      cloudMode: true, title: titles[view], view, busy: false, refreshing: false, loadingInitial: ["home", "schedule", "records", "profile"].includes(view), hasLoaded: false, error: "", status: "", canInitialize: false, removed: false,
       admin: false, manager: false, memberName: "", memberId: "", role: "", maintenance: "",
       autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
       selectedApplications: [] as string[], section: view === "manage" ? "members" : view === "records" ? "records" : "", rows: [] as Row[], cursor: "",
@@ -84,16 +84,16 @@ export function registerCloudPage(view: View): void {
     onPullDownRefresh() { void this.load().finally(() => wx.stopPullDownRefresh()); },
     async load(more = false): Promise<void> {
       if (this.data.busy) return;
-      this.setData({ busy: true, error: "", statsLoaded: false });
+      this.setData({ busy: true, refreshing: this.data.hasLoaded && !more, loadingInitial: !this.data.hasLoaded && ["home", "schedule", "records", "profile"].includes(view), error: "", statsLoaded: this.data.hasLoaded && this.data.statsLoaded });
       try {
         const boot = await bootstrap(), member = boot.member;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
-        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
+        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
         this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
-          this.setData({ pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],fields: [], formType: "" });
+          this.setData({ stats:[],statsLoaded:false,dirty:false,pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],fields: [], formType: "" });
           if (boot.status !== "needsAdministrator") {
             this.setData({ rows: boot.application ? [row(boot.application)] : [], cursor: "" });
           }
@@ -122,7 +122,7 @@ export function registerCloudPage(view: View): void {
           ? Math.min(maxWeek, calendarWeek + (["schedule","availability"].includes(view) ? 1 : 0)) : Math.min(maxWeek, Math.max(1,this.data.week));
         if (!semesterId) this.setData({tasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},taskCount:0,recordCount:0,coverage:0,weekTotal:0,weekSubmitted:0,weekProgress:0,availabilityReady:false});
         this.setData({ semesterId, semesterIndex: Math.max(0, this.data.semesters.findIndex(e => e.id === semesterId)), semesterName: s(selectedSemester?.data.name || (semesterId ? "所选历史学期" : "尚未启用学期")) });
-        this.setData({week: displayedWeek, maxWeek, weekInitialized: !!semesterId, dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, displayedWeek) : ""});
+        this.setData({week: displayedWeek, maxWeek, weekInitialized: !!semesterId, dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, displayedWeek) : "", statsLoaded: this.data.week === displayedWeek && this.data.statsLoaded});
         if (view === "manage" || view === "records" || view === "courses") {
           const kind = view === "manage" ? this.data.section : view === "courses" ? "courses" : "records";
           if (admin && view === "manage" && ["applications", "autoApproved"].includes(kind)) {
@@ -160,7 +160,7 @@ export function registerCloudPage(view: View): void {
             const days = Number(w.semester?.data.days || selectedSemester?.data.days || 5), periods = Number(w.semester?.data.periods || selectedSemester?.data.periods || 14);
             const own = w.availability;
             const selectedSlots = Array.isArray(own?.data.slots) ? own.data.slots.map(String) : [];
-            this.setData({ dirty:false, selectedSlots, optedIn: own?.data.optedIn === true, availabilityNote: s(own?.data.note), slots: Array.from({ length: days * periods }, (_, i) => { const d = Math.floor(i / periods) + 1, p = i % periods + 1, key = d + ":" + p; return { key, label: "周" + "一二三四五六日"[d - 1] + "第" + p + "节", checked: selectedSlots.includes(key) }; }) });
+            if (!this.data.dirty) this.setData({ selectedSlots, optedIn: own?.data.optedIn === true, availabilityNote: s(own?.data.note), slots: Array.from({ length: days * periods }, (_, i) => { const d = Math.floor(i / periods) + 1, p = i % periods + 1, key = d + ":" + p; return { key, label: "周" + "一二三四五六日"[d - 1] + "第" + p + "节", checked: selectedSlots.includes(key) }; }) });
           }
           if (view === "availability") this.setData(availabilityGrid(this.data.slots, this.data.selectedSlots));
         } else if (view === "record" && this.data.targetId) {
@@ -175,9 +175,13 @@ export function registerCloudPage(view: View): void {
           this.openRecordForm(response.data.task);
         }
         this.filterRows();
-      } catch (e) { this.setData({ visibleRows:[],visibleTasks:[],pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",error: e instanceof Error ? e.message : "连接失败", record: null, photoUrls: [], versions: [], rows: [], tasks: [], homeTasks: [] }); }
-      finally { this.setData({ busy: false }); }
-      if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats();
+      } catch (e) {
+        const message = e instanceof Error ? e.message : "连接失败";
+        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
+        this.setData({ error: message });
+      }
+      finally { this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error }); }
+      if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats(true);
     },
     async more() { await this.load(true); },
     async moreSemesters() {
@@ -215,7 +219,7 @@ export function registerCloudPage(view: View): void {
     search(e: UiEvent) { this.setData({searchText:e.detail.value,selectedApplications:[],rows:this.data.rows.map(r=>({...r,selected:false}))}); this.filterRows(); },
     applicationFilter(e: UiEvent) { if(this.data.busy)return; this.setData({applicationFilter:e.currentTarget.dataset.id,selectedApplications:[],rows:this.data.rows.map(r=>({...r,selected:false}))});this.filterRows(); },
     section(e: UiEvent) { if (this.data.busy) return; this.setData({ section: e.currentTarget.dataset.id, courseGrade:"全部",courseClasses:[],courseClassCursor:"",selectedApplications: [], rows: [], visibleRows:[], searchText:"",cursor: "", formType: "" }); void this.load(); },
-    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, courseGrade:"全部",courseClasses:[],courseClassCursor:"",formType: "", rows: [], visibleRows:[], filePath:"",filename:"",week: 1,weekInitialized:chosen.id !== this.data.activeSemesterId }); void this.load(); },
+    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, courseGrade:"全部",courseClasses:[],courseClassCursor:"",formType: "", rows: [], visibleRows:[], filePath:"",filename:"",statsLoaded:false,week: 1,weekInitialized:chosen.id !== this.data.activeSemesterId }); void this.load(); },
     weekChange(e: UiEvent) { const next = Number(e.detail.value); if (Number.isInteger(next) && next >= 1 && next <= 60) this.setData({ week: next }); },
     refreshWeek() { void this.load(); },
     recordTab(e: UiEvent) { if(this.data.busy)return; this.setData({recordTab:e.currentTarget.dataset.id}); this.filterRows(); if (e.currentTarget.dataset.id === "stats" && this.data.semesterId) void this.showStats(); },
@@ -224,7 +228,7 @@ export function registerCloudPage(view: View): void {
       const next = Math.min(this.data.maxWeek, Math.max(1, this.data.week + Number(e.currentTarget.dataset.delta)));
       if(next === this.data.week)return;
       if(this.data.dirty && !(await wx.showModal({title:"尚未保存",content:"切换周次会放弃本页未保存的无课时间修改。"})).confirm)return;
-      this.setData({week:next, rows:[],visibleRows:[],visibleTasks:[],filePath:"",filename:"",cursor:"",formType:"",dirty:false}); await this.load();
+      this.setData({week:next, rows:[],visibleRows:[],visibleTasks:[],filePath:"",filename:"",cursor:"",formType:"",statsLoaded:false,dirty:false}); await this.load();
     },
     toggleSlot(e: UiEvent) {
       if(this.data.busy)return;
@@ -443,7 +447,7 @@ export function registerCloudPage(view: View): void {
         this.setData({selectedSlots:selected,availabilityNote:s(previous.data.note),dirty:true,...availabilityGrid(this.data.slots,selected)});
       }catch(e){displayError(e);}finally{this.setData({busy:false});}
     },
-    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false}); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
+    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false,dirty:false}); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
     openRecordForm(target: Entity, editing = false) {
       const d = target.data, metrics = d.metrics as Record<string, number> | undefined;
       this.setData({recordContext:row(target),uploadingPhoto:""});
@@ -513,9 +517,9 @@ export function registerCloudPage(view: View): void {
     },
     async history() { try { if (!this.data.record) return; if (this.data.versions.length && !this.data.versionCursor) return; const r = await query("recordVersions", this.data.semesterId, { id: this.data.record.id }, this.data.versionCursor); this.setData({ versions: this.data.versions.concat(r.data.items.map(row)), versionCursor: r.cursor || "" }); } catch (e) { displayError(e); } },
     async versionPhotos(e: UiEvent) { try { const r = await call<{ urls: string[] }>("photoUrls", { semesterId: this.data.semesterId, payload: { recordId: this.data.targetId, versionId: e.currentTarget.dataset.id } }); wx.previewImage({ urls: r.data.urls }); } catch (e) { displayError(e); } },
-    async showStats() {
+    async showStats(preserve = false) {
       if(this.data.busy || !this.data.manager)return;
-      this.setData({busy:true,statsLoaded:false,recordTab:"stats"});
+      this.setData({busy:true,statsLoaded:preserve && this.data.statsLoaded,recordTab:"stats"});
       try {
         const r = await query<{state: AppState; version:number}>("report", this.data.semesterId, {week:this.data.week});
         await query("reportCheck", this.data.semesterId, {week:this.data.week,version:r.data.version});

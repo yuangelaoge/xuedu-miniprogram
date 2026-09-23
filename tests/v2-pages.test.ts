@@ -17,7 +17,7 @@ test("云端页面完整流程：首次登记、独立建班、申请审核、�
  const storage=new Map(),errors:string[]=[],written:any[]=[],calls:any[]=[];
  g.Page=(o:any)=>registered=o;
  g.wx={env:{USER_DATA_PATH:"/test"},getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:unknown)=>storage.set(k,v),removeStorageSync:(k:string)=>storage.delete(k),showToast(){},async showModal(o:any){if(o.showCancel===false){errors.push(o.content);return {confirm:false};}return {confirm:true,content:"已经本人核对"};},async chooseMedia(){return {tempFiles:[{tempFilePath:"/photo"}]};},getFileSystemManager(){return {readFileSync(){return "aGVsbG8=";},writeFile(o:any){written.push(o);o.success?.();}};},openDocument(){},previewImage(){},cloud:{init(){},async callFunction({data}:any){calls.push(data);try{return {result:{ok:true,data:await gateway(data,{OPENID:who,APPID:"app"})}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
- const page=async(view:any,q:any={})=>{registerCloudPage(view);const p={...registered,data:structuredClone(registered.data),setData(v:any){Object.assign(this.data,v);}};p.onLoad(q);await p.load();assert.equal(p.data.error,"");return p;};
+ const page=async(view:any,q:any={})=>{registerCloudPage(view);const p={...registered,data:structuredClone(registered.data),setData(v:any){Object.assign(this.data,v);}};p.onLoad({...(view === "home" ? {} : {week:"1"}),...q});await p.load();assert.equal(p.data.error,"");return p;};
  const fill=(p:any,values:any)=>{p.data.fields=p.data.fields.map((f:any)=>({...f,...(Array.isArray(values[f.key])?{selected:values[f.key]}:values[f.key]===undefined?{}:{value:String(values[f.key])})}));};
  const save=async(p:any)=>{await p.saveForm();assert.deepEqual(errors,[]);assert.equal(p.data.error,"");};
  try{

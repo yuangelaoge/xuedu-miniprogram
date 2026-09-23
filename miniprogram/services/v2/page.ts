@@ -56,6 +56,9 @@ export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   Page({
     data: {
+      importPreview: [] as string[], importCount: 0, importClassCount: 0, importReady: false,
+      pendingCount: 0, pendingMore: false, pendingLabel: "", searchText: "", applicationFilter: "pending", visibleRows: [] as Row[], visibleTasks: [] as Row[],
+      dirty: false, weekInitialized: false, maxWeek: 60, filename: "", filePath: "", fileOwner: "",
       modeLabel: "云端试用", roleLabel: "", initial: "", className: "", studentNo: "", dates: "", availabilityReady: false,
       homeTasks: [] as (Row & {classLabel:string;course:Record<string,unknown>;timeLabel:string;done:boolean;recordId:string})[], taskCount: 0, recordCount: 0, coverage: 0, skipped: false,
       availabilityDays: [] as {n:number;name:string}[], availabilityRows: [] as {n:number;cells:{key:string;selected:boolean}[]}[],
@@ -72,7 +75,7 @@ export function registerCloudPage(view: View): void {
       formType: "", formTitle: "", formId: "", formVersion: 0, fields: [] as Field[], formExtra: {} as Record<string, unknown>, photoIds: [] as string[], formPhotos: [] as string[],
       impacts: [] as Row[], stats: [] as {grade:string;count:number;valid:number;rate:string}[], statsCount: 0, statsLoaded: false, clearProgress: "", slots: [] as { key: string; label: string; checked: boolean }[], selectedSlots: [] as string[], optedIn: false, availabilityNote: "",
     },
-    onLoad(q: Record<string, string>) { this.setData({ fixedSemester: q.semesterId || "", targetId: q.id || q.taskId || "", week: Number(q.week) || 1 }); },
+    onLoad(q: Record<string, string>) { this.setData({section: view === "manage" && q.section === "applications" ? "applications" : this.data.section, fixedSemester: q.semesterId || "", targetId: q.id || q.taskId || "", week: Number(q.week) || 1, weekInitialized: Number(q.week) > 0 }); },
     onShow() { void this.load(); },
     onHide() { if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
     onUnload() { if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
@@ -83,11 +86,12 @@ export function registerCloudPage(view: View): void {
       try {
         const boot = await bootstrap(), member = boot.member;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
-        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({record:null,versions:[],photoUrls:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
+        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
+        if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
         this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
-          this.setData({ rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], fields: [], formType: "" });
+          this.setData({ pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], fields: [], formType: "" });
           if (boot.status !== "needsAdministrator") {
             this.setData({ rows: boot.application ? [row(boot.application)] : [], cursor: "" });
           }
@@ -95,21 +99,28 @@ export function registerCloudPage(view: View): void {
         }
         if (view === "profile") {
           const classes = await optionsFor("classes");
-          this.setData({className: classes.find(c => c.value === member.data.classId)?.label || "班级未设置"});
+          this.setData({className: classes.find(c => c.value === member.data.classId)?.label || "班级未设置",pendingCount:0,pendingMore:false,pendingLabel:""});
+          if (manager) {
+            const applications = await query("applications");
+            const count = applications.data.items.filter(a => a.data.status === "pending").length, more = !!applications.cursor;
+            this.setData({pendingCount:count,pendingMore:more,pendingLabel:count ? `${count}${more ? "+" : ""} 待审核` : more ? "查看申请" : ""});
+          }
         }
         if (!this.data.semesters.length || !more) {
           const response = await query("semesters");
           this.setData({ semesters: response.data.items, semesterCursor: response.cursor || "", semesterOptions: response.data.items.map(e => ({label: s(e.data.name), value: e.id})) });
         }
         const selected = this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
-        const selectedSemester = this.data.semesters.find(e => e.id === selected);
+        let selectedSemester = this.data.semesters.find(e => e.id === selected);
+        if (selected && !selectedSemester) selectedSemester = (await query<{semester:Entity}>("semester", selected)).data.semester;
         const semesterId = selected || boot.workspace.activeSemesterId;
-        const displayedWeek = view === "home" && selectedSemester?.data.startDate
-          ? boundedWeek(selectedSemester.data as unknown as Semester)
-          : this.data.week;
+        const maxWeek = Number(selectedSemester?.data.weeks || 60);
+        const calendarWeek = selectedSemester?.data.startDate ? boundedWeek(selectedSemester.data as unknown as Semester) : 1;
+        const displayedWeek = view === "home" ? calendarWeek : !this.data.weekInitialized && ["schedule","availability","records"].includes(view)
+          ? Math.min(maxWeek, calendarWeek + (["schedule","availability"].includes(view) ? 1 : 0)) : Math.min(maxWeek, Math.max(1,this.data.week));
         if (!semesterId) this.setData({tasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},taskCount:0,recordCount:0,coverage:0,weekTotal:0,weekSubmitted:0,weekProgress:0,availabilityReady:false});
         this.setData({ semesterId, semesterIndex: Math.max(0, this.data.semesters.findIndex(e => e.id === semesterId)), semesterName: s(selectedSemester?.data.name || (semesterId ? "所选历史学期" : "尚未启用学期")) });
-        this.setData({week: displayedWeek, dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, displayedWeek) : ""});
+        this.setData({week: displayedWeek, maxWeek, weekInitialized: !!semesterId, dates: selectedSemester?.data.startDate ? weekRange(selectedSemester.data as unknown as Semester, displayedWeek) : ""});
         if (view === "manage" || view === "records" || view === "courses") {
           const kind = view === "manage" ? this.data.section : view === "courses" ? "courses" : "records";
           if (admin && view === "manage" && ["applications", "autoApproved"].includes(kind)) {
@@ -129,7 +140,7 @@ export function registerCloudPage(view: View): void {
             const w = (await query<WeekData>("week", semesterId, {week:this.data.week})).data;
             const total = w.tasks.filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status))).length;
             const submitted = (w.records || []).length;
-            this.setData({weekTotal:total,weekSubmitted:submitted,weekProgress:total ? Math.round(submitted / total * 100) : 0});
+            this.setData({weekTotal:total,weekSubmitted:submitted,weekProgress:total ? Math.min(100,Math.round(submitted / total * 100)) : 0,skipped:w.plan?.data.status === "skipped"});
           }
           const response = await query(kind, ["courses", "records"].includes(kind) ? semesterId : "", kind === "records" ? { week: this.data.week } : {}, more ? this.data.cursor : "");
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
@@ -144,7 +155,7 @@ export function registerCloudPage(view: View): void {
             const days = Number(w.semester?.data.days || selectedSemester?.data.days || 5), periods = Number(w.semester?.data.periods || selectedSemester?.data.periods || 14);
             const own = w.availability;
             const selectedSlots = Array.isArray(own?.data.slots) ? own.data.slots.map(String) : [];
-            this.setData({ selectedSlots, optedIn: own?.data.optedIn === true, availabilityNote: s(own?.data.note), slots: Array.from({ length: days * periods }, (_, i) => { const d = Math.floor(i / periods) + 1, p = i % periods + 1, key = d + ":" + p; return { key, label: "周" + "一二三四五六日"[d - 1] + "第" + p + "节", checked: selectedSlots.includes(key) }; }) });
+            this.setData({ dirty:false, selectedSlots, optedIn: own?.data.optedIn === true, availabilityNote: s(own?.data.note), slots: Array.from({ length: days * periods }, (_, i) => { const d = Math.floor(i / periods) + 1, p = i % periods + 1, key = d + ":" + p; return { key, label: "周" + "一二三四五六日"[d - 1] + "第" + p + "节", checked: selectedSlots.includes(key) }; }) });
           }
           if (view === "availability") this.setData(availabilityGrid(this.data.slots, this.data.selectedSlots));
         } else if (view === "record" && this.data.targetId) {
@@ -158,7 +169,8 @@ export function registerCloudPage(view: View): void {
           const response = await query<{ task: Entity }>("task", semesterId, { id: this.data.targetId });
           this.openRecordForm(response.data.task);
         }
-      } catch (e) { this.setData({ error: e instanceof Error ? e.message : "连接失败", record: null, photoUrls: [], versions: [], rows: [], tasks: [], homeTasks: [] }); }
+        this.filterRows();
+      } catch (e) { this.setData({ visibleRows:[],visibleTasks:[],pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",error: e instanceof Error ? e.message : "连接失败", record: null, photoUrls: [], versions: [], rows: [], tasks: [], homeTasks: [] }); }
       finally { this.setData({ busy: false }); }
     },
     async more() { await this.load(true); },
@@ -166,33 +178,46 @@ export function registerCloudPage(view: View): void {
       if (!this.data.semesterCursor) return;
       try { const r = await query("semesters", "", {}, this.data.semesterCursor); this.setData({ semesters: this.data.semesters.concat(r.data.items), semesterCursor: r.cursor || "", semesterOptions: this.data.semesters.concat(r.data.items).map(e => ({label: s(e.data.name), value: e.id})) }); } catch (e) { displayError(e); }
     },
-    section(e: UiEvent) { if (this.data.busy) return; this.setData({ section: e.currentTarget.dataset.id, selectedApplications: [], rows: [], cursor: "", formType: "" }); void this.load(); },
-    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, formType: "", rows: [], week: 1 }); void this.load(); },
+    filterRows() {
+      const needle = this.data.searchText.trim().toLowerCase();
+      const matches = (r: Row) => !needle || [r.label,r.detail,r.data.name,r.data.memberName,r.data.studentNo,(r.data.course as Record<string,unknown>)?.name].map(s).join(" ").toLowerCase().includes(needle);
+      this.setData({visibleRows:this.data.rows.filter(r => matches(r) && (view !== "records" || this.data.recordTab !== "mine" || r.memberId === this.data.memberId) && (view !== "manage" || this.data.section !== "applications" || this.data.applicationFilter !== "pending" || r.status === "pending")),visibleTasks:this.data.tasks.filter(r => ["confirmed","submitted","pendingAdjustment"].includes(r.status) && matches(r))});
+    },
+    search(e: UiEvent) { this.setData({searchText:e.detail.value,selectedApplications:[],rows:this.data.rows.map(r=>({...r,selected:false}))}); this.filterRows(); },
+    applicationFilter(e: UiEvent) { if(this.data.busy)return; this.setData({applicationFilter:e.currentTarget.dataset.id,selectedApplications:[],rows:this.data.rows.map(r=>({...r,selected:false}))});this.filterRows(); },
+    section(e: UiEvent) { if (this.data.busy) return; this.setData({ section: e.currentTarget.dataset.id, selectedApplications: [], rows: [], visibleRows:[], searchText:"",cursor: "", formType: "" }); void this.load(); },
+    chooseSemester(e: UiEvent) { if (this.data.busy) return; const chosen = this.data.semesters[Number(e.detail.value)]; if (!chosen) return; selectSemester(chosen.id); this.setData({ fixedSemester: "", semesterId: chosen.id, formType: "", rows: [], visibleRows:[], filePath:"",filename:"",week: 1,weekInitialized:chosen.id !== this.data.activeSemesterId }); void this.load(); },
     weekChange(e: UiEvent) { const next = Number(e.detail.value); if (Number.isInteger(next) && next >= 1 && next <= 60) this.setData({ week: next }); },
     refreshWeek() { void this.load(); },
-    recordTab(e: UiEvent) { this.setData({recordTab:e.currentTarget.dataset.id}); if (e.currentTarget.dataset.id === "stats" && this.data.semesterId) void this.showStats(); },
-    moveWeek(e: UiEvent) {
+    recordTab(e: UiEvent) { if(this.data.busy)return; this.setData({recordTab:e.currentTarget.dataset.id}); this.filterRows(); if (e.currentTarget.dataset.id === "stats" && this.data.semesterId) void this.showStats(); },
+    async moveWeek(e: UiEvent) {
       if (!this.data.semesterId || this.data.busy) return;
-      const semester = this.data.semesters.find(s => s.id === this.data.semesterId);
-      const next = Math.min(Number(semester?.data.weeks || 60), Math.max(1, this.data.week + Number(e.currentTarget.dataset.delta)));
-      this.setData({week:next, rows:[], cursor:""}); void this.load();
+      const next = Math.min(this.data.maxWeek, Math.max(1, this.data.week + Number(e.currentTarget.dataset.delta)));
+      if(next === this.data.week)return;
+      if(this.data.dirty && !(await wx.showModal({title:"尚未保存",content:"切换周次会放弃本页未保存的无课时间修改。"})).confirm)return;
+      this.setData({week:next, rows:[],visibleRows:[],visibleTasks:[],filePath:"",filename:"",cursor:"",formType:"",dirty:false}); await this.load();
     },
     toggleSlot(e: UiEvent) {
+      if(this.data.busy)return;
       const key = e.currentTarget.dataset.key;
       const selected = this.data.selectedSlots.includes(key) ? this.data.selectedSlots.filter(s => s !== key) : this.data.selectedSlots.concat(key);
-      this.setData({selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
+      this.setData({dirty:true,selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
     },
     toggleDay(e: UiEvent) {
+      if(this.data.busy)return;
       const keys = this.data.slots.filter(s => s.key.startsWith(e.currentTarget.dataset.day + ":")).map(s => s.key);
       const all = keys.every(k => this.data.selectedSlots.includes(k));
       const selected = this.data.selectedSlots.filter(k => !keys.includes(k)).concat(all ? [] : keys);
-      this.setData({selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
+      this.setData({dirty:true,selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
     },
     rules() { wx.showModal({title:"听课与提交说明",content:"1. 不能听自己班，每周最多一次。\n2. 无课时间按周保存，以正式安排为准。\n3. 按实际情况填写人数，缺失信息单独标记。\n4. 上传清晰、带有老师签字的听课表。",showCancel:false}); },
     navigate(e: UiEvent) {
       const target = e.currentTarget.dataset.target;
       if (["schedule", "reports", "profile", "index"].includes(target)) { wx.switchTab({url:"/pages/" + target + "/" + target}); return; }
-      if (["manage", "courses", "availability", "join"].includes(target)) wx.navigateTo({ url: "/pages/" + target + "/" + target });
+      if (["manage", "courses", "availability", "join"].includes(target)) {
+        const params = target === "manage" && e.currentTarget.dataset.section ? "?section=" + encodeURIComponent(e.currentTarget.dataset.section) : target === "availability" && view === "schedule" ? "?week=" + this.data.week + "&semesterId=" + encodeURIComponent(this.data.semesterId) : target === "courses" ? "?semesterId=" + encodeURIComponent(this.data.semesterId) : "";
+        wx.navigateTo({ url: "/pages/" + target + "/" + target + params });
+      }
     },
     open(e: UiEvent) {
       if (e.currentTarget.dataset.target === "record") { wx.navigateTo({url:"/pages/record/record?id=" + e.currentTarget.dataset.id + "&semesterId=" + this.data.semesterId}); return; }
@@ -220,15 +245,37 @@ export function registerCloudPage(view: View): void {
         if (type === "initialize") fields = [field("semesterName", "学期名称"), field("startDate", "第一周周一", "", "date"), field("weeksCount", "教学周数", "20", "number"), field("grade", "本人入学年级（两位数字）"), field("major", "本人专业"), field("className", "本人班级名称"), field("name", "本人真实姓名"), field("studentNo", "本人学号")];
         if (type === "rebindRequest") fields = [field("studentNo", "原成员学号"), field("reason", "换绑原因（需管理员线下核实）", "", "textarea")];
         if (type === "import") fields = [field("text", "粘贴JSON课表（先解析预览）", "", "textarea")];
-        this.setData({ formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
+        this.setData({ importPreview:[],importReady:false,formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
       } catch (e) { displayError(e); }
     },
     input(e: UiEvent) {
       const key = e.currentTarget.dataset.key;
       const fields = this.data.fields.map(f => f.key === key ? { ...f, value: e.detail.value } : f);
-      this.setData({ fields });
+      this.setData({ fields, ...(key === "text" ? {importReady:false,importPreview:[]} : {}) });
     },
     multi(e: WechatMiniprogram.CheckboxGroupChange) { const key = s(e.currentTarget.dataset.key); this.setData({ fields: this.data.fields.map(f => f.key === key ? { ...f, selected: e.detail.value } : f) }); },
+    async chooseImportFile() {
+      if(this.data.busy || !this.data.admin || this.data.formType !== "import")return;
+      this.setData({busy:true});
+      try {
+        const result=await wx.chooseMessageFile({count:1,type:"file",extension:["json","txt"]}),file=result.tempFiles[0];
+        if(!file)return;if(file.size>1024*1024)throw new Error("请选择小于1MB的JSON或TXT文件");
+        const content=await new Promise<string>((resolve,reject)=>wx.getFileSystemManager().readFile({filePath:file.path,encoding:"utf8",success:r=>resolve(String(r.data).replace(/^\uFEFF/,"")),fail:()=>reject(new Error("文件读取失败"))}));
+        if(content.length>300000)throw new Error("导入内容过大，请分批导入");
+        this.setData({fields:this.data.fields.map(f=>f.key === "text" ? {...f,value:content} : f),importReady:false,importPreview:[]});
+      }catch(e){if(!(e && typeof e === "object" && "errMsg" in e && /cancel/.test(String(e.errMsg))))displayError(e);}finally{this.setData({busy:false});}
+    },
+    previewImport() {
+      try {
+        const content=this.data.fields.find(f=>f.key === "text")?.value || "";
+        if(content.length>300000)throw new Error("导入内容过大，请分批导入");
+        const parsed=JSON.parse(content);
+        if(!parsed || !Array.isArray(parsed.courses) || !parsed.courses.length)throw new Error("JSON缺少有效的courses课程列表");
+        if(parsed.members !== undefined)throw new Error("成员通过申请加入，不支持导入成员");
+        if(parsed.classes !== undefined && !Array.isArray(parsed.classes))throw new Error("classes必须是班级列表");
+        this.setData({importReady:true,importCount:parsed.courses.length,importClassCount:parsed.classes?.length || 0,importPreview:parsed.courses.slice(0,20).map((c:Record<string,unknown>,i:number)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`)});
+      }catch(e){this.setData({importReady:false,importPreview:[]});displayError(e);}
+    },
     cancelForm() { this.setData({ formType: "", photoIds: [], formPhotos: [] }); },
     async saveForm() {
       if (this.data.busy) return;
@@ -247,6 +294,7 @@ export function registerCloudPage(view: View): void {
         if (type === "courseSave") payload.weeks = rangeList(s(payload.weeks));
         if (type === "semesterCreate") { payload.weeks = payload.weeksCount; delete payload.weeksCount; }
         if (type === "import") {
+          if(!this.data.importReady)throw new Error("请先解析预览，再确认导入");
           const parsed = JSON.parse(s(payload.text)) as { courses?: unknown[]; classes?: unknown[] };
           if (!Array.isArray(parsed.courses)) throw new Error("JSON缺少courses课程列表");
           const confirmation = await wx.showModal({ title: "确认导入", content: `预览：${parsed.courses.length} 条课程、${parsed.classes?.length || 0} 个班级。云端将完整校验后再保存。` });
@@ -282,14 +330,14 @@ export function registerCloudPage(view: View): void {
     selectApplication(e: UiEvent) {
       const id = e.currentTarget.dataset.id;
       const selected = this.data.selectedApplications.includes(id) ? this.data.selectedApplications.filter(x=>x!==id) : this.data.selectedApplications.concat(id);
-      this.setData({selectedApplications:selected, rows:this.data.rows.map(r=>({...r,selected:selected.includes(r.id)}))});
+      this.setData({selectedApplications:selected, rows:this.data.rows.map(r=>({...r,selected:selected.includes(r.id)}))}); this.filterRows();
     },
-    selectAllApplications() { const selected = this.data.selectedApplications.length ? [] : this.data.rows.filter(r=>r.status === "pending").map(r=>r.id); this.setData({selectedApplications:selected,rows:this.data.rows.map(r=>({...r,selected:selected.includes(r.id)}))}); },
+    selectAllApplications() { const selected = this.data.selectedApplications.length ? [] : this.data.visibleRows.filter(r=>r.status === "pending").map(r=>r.id); this.setData({selectedApplications:selected,rows:this.data.rows.map(r=>({...r,selected:selected.includes(r.id)}))}); this.filterRows(); },
     async reviewApplications(e: UiEvent) {
       if (this.data.busy) return;
       let completed = 0;
       try {
-        const targets = this.data.rows.filter(r => r.status === "pending" && this.data.selectedApplications.includes(r.id));
+        const targets = this.data.visibleRows.filter(r => r.status === "pending" && this.data.selectedApplications.includes(r.id));
         if (!targets.length) throw new Error("请先选择待审核申请");
         const approved = e.currentTarget.dataset.action === "approve";
         const confirmation = await wx.showModal({title: approved ? "批量通过申请" : "批量驳回申请",content:`本次处理已加载列表中选定的 ${targets.length} 人，请填写审核说明。`,editable:true});
@@ -351,9 +399,21 @@ export function registerCloudPage(view: View): void {
       } catch (e) { displayError(e); }
     },
     slotsChange(e: WechatMiniprogram.CheckboxGroupChange) { this.setData({ selectedSlots: e.detail.value }); },
-    optIn(e: WechatMiniprogram.SwitchChange) { this.setData({ optedIn: e.detail.value }); },
-    availabilityNote(e: UiEvent) { this.setData({ availabilityNote: e.detail.value }); },
-    async saveAvailability() { try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } },
+    optIn(e: WechatMiniprogram.SwitchChange) { if(this.data.busy)return; this.setData({ dirty:true,optedIn: e.detail.value }); },
+    availabilityNote(e: UiEvent) { if(this.data.busy)return; this.setData({ dirty:true,availabilityNote: e.detail.value }); },
+    async copyAvailability() {
+      if(this.data.busy || this.data.week <= 1)return;
+      this.setData({busy:true});
+      try {
+        const previous = (await query<WeekData>("week",this.data.semesterId,{week:this.data.week-1})).data.availability;
+        if(!previous)throw new Error("上一周没有可复制的无课时间");
+        if(!(await wx.showModal({title:"复制上一周时间",content:"将替换当前勾选时段和备注，报名状态不复制。请核对后保存。"})).confirm)return;
+        const available = new Set(this.data.slots.map(slot=>slot.key));
+        const selected = (previous.data.slots as string[] || []).filter(key=>available.has(key));
+        this.setData({selectedSlots:selected,availabilityNote:s(previous.data.note),dirty:true,...availabilityGrid(this.data.slots,selected)});
+      }catch(e){displayError(e);}finally{this.setData({busy:false});}
+    },
+    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false}); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
     openRecordForm(target: Entity, editing = false) {
       const d = target.data, metrics = d.metrics as Record<string, number> | undefined;
       this.setData({ formType: editing ? "recordEdit" : "recordSubmit", formTitle: editing ? "更正听课记录" : "填写听课记录", formId: editing ? target.id : "", formVersion: target.version,
@@ -386,19 +446,32 @@ export function registerCloudPage(view: View): void {
     async history() { try { if (!this.data.record) return; if (this.data.versions.length && !this.data.versionCursor) return; const r = await query("recordVersions", this.data.semesterId, { id: this.data.record.id }, this.data.versionCursor); this.setData({ versions: this.data.versions.concat(r.data.items.map(row)), versionCursor: r.cursor || "" }); } catch (e) { displayError(e); } },
     async versionPhotos(e: UiEvent) { try { const r = await call<{ urls: string[] }>("photoUrls", { semesterId: this.data.semesterId, payload: { recordId: this.data.targetId, versionId: e.currentTarget.dataset.id } }); wx.previewImage({ urls: r.data.urls }); } catch (e) { displayError(e); } },
     async showStats() {
+      if(this.data.busy || !this.data.manager)return;
+      this.setData({busy:true,statsLoaded:false,recordTab:"stats"});
       try {
         const r = await query<{state: AppState; version:number}>("report", this.data.semesterId, {week:this.data.week});
         await query("reportCheck", this.data.semesterId, {week:this.data.week,version:r.data.version});
         this.setData({stats: gradeStats(r.data.state,this.data.week).map(g => ({...g,rate:g.rate === null ? "信息缺失" : (g.rate * 100).toFixed(1) + "%"})),statsCount:r.data.state.records.length,statsLoaded:true});
-      } catch(e) {displayError(e);}
+      } catch(e) {displayError(e);}finally{this.setData({busy:false});}
     },
+    async copyReport() { await this.exportReport({currentTarget:{dataset:{kind:"copy"}},detail:{value:""}} as UiEvent); },
+    openReport() { if(this.data.filePath && this.data.fileOwner === currentBoot().workspace.epoch + ":" + this.data.memberId)openExport(this.data.filePath); },
     async exportReport(e: UiEvent) {
+      if(this.data.busy || !this.data.manager || !this.data.semesterId)return;
+      this.setData({busy:true,filePath:"",filename:""});
+      const semesterId=this.data.semesterId,week=this.data.week;
       try {
-        const r = await query<{ state: AppState; version: number }>("report", this.data.semesterId, { week: this.data.week });
-        const xlsx = e.currentTarget.dataset.kind === "xlsx", content = xlsx ? exportXlsx(r.data.state, this.data.week) : exportTxt(r.data.state, this.data.week);
-        await query("reportCheck", this.data.semesterId, { week: this.data.week, version: r.data.version });
-        saveExport("听课汇总-第" + this.data.week + "周-" + Date.now() + (xlsx ? ".xlsx" : ".txt"), content, openExport);
-      } catch (e) { displayError(e); }
+        const r = await query<{ state: AppState; version: number }>("report", semesterId, { week });
+        const kind=e.currentTarget.dataset.kind,xlsx=kind === "xlsx",content=xlsx ? exportXlsx(r.data.state,week) : exportTxt(r.data.state,week);
+        await query("reportCheck", semesterId, {week,version:r.data.version});
+        if(kind === "copy") { await wx.setClipboardData({data:content as string}); return; }
+        const filename=semesterId + "-第" + week + "周-" + Date.now() + (xlsx ? "-听课汇总.xlsx" : "-请假旷课名单.txt");
+        const path=await new Promise<string>(resolve=>saveExport(filename,xlsx ? content : "\ufeff" + content,resolve,()=>resolve("")));
+        if(!path)return;
+        await query("reportCheck",semesterId,{week,version:r.data.version});
+        this.setData({filename,filePath:path,fileOwner:currentBoot().workspace.epoch + ":" + this.data.memberId});
+        wx.showToast({title:"文件已保存",icon:"success"});
+      } catch (e) { displayError(e); }finally{this.setData({busy:false});}
     },
     async clearBusiness() {
       if (!this.data.admin || this.data.busy) return;

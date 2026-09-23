@@ -46,7 +46,7 @@ async function fixture(work: (f: any) => Promise<void>) {
   g.wx = { getStorageSync: (k: string) => storage.get(k), setStorageSync: (k: string, v: any) => storage.set(k, v), removeStorageSync: (k: string) => storage.delete(k),
     showToast() {}, async showModal(value: any) { modalCalls.push(value); if (value.showCancel === false) { errors.push(value.content); return { confirm: false }; } return { confirm: true, content: '合成核对原因' }; },
     cloud: { init() {}, async callFunction({ data }: any) { calls.push(data); try { return { result: { ok: true, data: await gateway(data, { OPENID: who, APPID: 'app' }) } }; } catch (error) { return { result: { ok: false, error: (error as Error).message } }; } } } };
-  const page = async (view: string, q = {}) => { registerCloudPage(view as any); const p = { ...registered, data: structuredClone(registered.data), setData(values: any) { Object.assign(this.data, values); } }; p.onLoad(q); await p.load(); return p; };
+  const page = async (view: string, q = {}) => { registerCloudPage(view as any); const p = { ...registered, data: structuredClone(registered.data), setData(values: any) { Object.assign(this.data, values); } }; p.onLoad({...(view === "home" ? {} : {week:"1"}),...q}); await p.load(); return p; };
   const fill = (p: any, values: Record<string, unknown>) => { p.data.fields = p.data.fields.map((field: any) => values[field.key] === undefined ? field : { ...field, value: String(values[field.key]) }); };
   try { await work({ repository, page, fill, errors, calls, modalCalls, who: (value: string) => { who = value; }, event }); }
   finally { g.wx = oldWx; g.Page = oldPage; Object.assign(runtime, previousRuntime); }

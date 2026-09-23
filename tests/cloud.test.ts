@@ -232,3 +232,132 @@ test("彻底重置后仅原微信可建立真实空白学期与班级并重新�
   await assert.rejects(f.call("owner", event), /不是空白/);
   await assert.rejects(fixture("production").call("owner", { operation: "resetAllPreview" }), /仅限试用/);
 });
+
+test("换届清空不按年份：保留所有管理员身份，清空全部年度业务和照片，旧请求失效", async () => {
+  const f = fixture();
+  f.state().state = createSeed();
+  const admin = f.state().state.members.find(m => m.role === "admin")!;
+  admin.identityKey = "owner";
+  f.state().state.members.push({ ...admin, id: "second-admin", identityKey: "other-admin", studentNo: "20259999", active: false });
+  const admins = structuredClone(f.state().state.members.filter(m => m.role === "admin"));
+  f.photos.add("registered"); f.photos.add("orphan-from-old-year");
+  f.state().files.push({ id: "registered", task: "task", owner: "owner" });
+  const plan = await f.call("owner", { operation: "businessClearPreview" }) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  assert.equal(plan.administrators, 2); assert.ok(plan.members > 0);
+  assert.equal(f.deleted.length, 0); assert.equal(f.state().cleaning, undefined);
+  await assert.rejects(f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空试用数据" }), /确认文字/);
+  await assert.rejects(f.call("owner", { operation: "businessClearBegin", ...plan, version: -1, confirmation: "清空业务数据，保留管理员" }), /数据已变化/);
+  const start = await f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }) as { jobId: string };
+  assert.ok((await f.call("owner", { operation: "businessClearStep", ...start }) as { waitMs: number }).waitMs > 0);
+  await assert.rejects(f.command("owner", { type: "generate", week: 1 }), /正在清理/);
+  await assert.rejects(f.call("owner", { operation: "cleanup", ...plan, confirmation: "清空试用数据" }), /不能切换/);
+  await assert.rejects(f.call("owner", { operation: "resetAllBegin", epoch: f.state().epoch, version: f.state().version, confirmation: "清空全部业务数据" }), /先完成/);
+  f.advance();
+  await f.call("owner", { operation: "businessClearStep", ...start });
+  const done = await f.call("owner", { operation: "businessClearStep", ...start }) as { done: boolean; snapshot: { state: import("../miniprogram/domain/types").AppState } };
+  assert.equal(done.done, true);
+  assert.equal(done.snapshot.state.actorId, admin.id);
+  assert.deepEqual(f.state().state.members, admins.map(m => ({ ...m, classId: "" })));
+  for (const key of ["semesters", "classes", "courses", "records", "applications", "availability", "plans", "drafts"] as const) assert.equal(f.state().state[key].length, 0, key);
+  assert.equal(f.state().state.audit.length, 1);
+  assert.equal(f.state().state.audit[0].action, "清空业务数据");
+  assert.equal(f.state().state.activeSemesterId, "");
+  assert.equal(f.photos.size, 0); assert.equal(f.state().files.length, 0); assert.equal(f.state().receipts.length, 0);
+  assert.notEqual(f.state().epoch, plan.epoch);
+  const version = f.state().version;
+  assert.equal((await f.call("owner", { operation: "businessClearStep", ...start }) as { done: boolean }).done, true);
+  assert.equal(f.state().version, version, "响应丢失后的重试不再次清空");
+  await assert.rejects(f.command("owner", { type: "generate", week: 1 }, { epoch: plan.epoch }), /已重置/);
+  await assert.rejects(f.call("other-admin", { operation: "businessClearPreview" }), /当前成员/);
+});
+
+test("换届清空仅管理员可用，正式环境也支持但不能通过客户端切换环境", async () => {
+  const f = fixture("production"); f.state().state = createSeed();
+  f.state().state.members.forEach(m => { m.identityKey = m.id; });
+  const admin = f.state().state.members.find(m => m.role === "admin")!;
+  for (const m of f.state().state.members.filter(m => m.role !== "admin")) {
+    for (const operation of ["businessClearPreview", "businessClearBegin", "businessClearStep"]) {
+      await assert.rejects(f.call(m.id, { operation, role: "admin", actorId: admin.id }), /无权/);
+    }
+  }
+  const plan = await f.call(admin.id, { operation: "businessClearPreview", stage: "trial" }) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  assert.equal(plan.stage, "production");
+  const start = await f.call(admin.id, { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }) as { jobId: string };
+  f.advance(); await f.call(admin.id, { operation: "businessClearStep", ...start });
+  assert.equal(f.state().stage, "production"); assert.equal(f.state().state.members[0].id, admin.id);
+});
+
+test("换届照片清理分批、失败冻结可恢复，并发步骤不重复扫目录", async () => {
+  const f = fixture(); await f.join("owner", "20250001");
+  for (let i = 0; i < 43; i++) f.photos.add("photo-" + i);
+  let plan = await f.call("owner", { operation: "businessClearPreview" }) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  const start = await f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }) as { jobId: string };
+  f.advance(); f.failDelete(true);
+  await assert.rejects(f.call("owner", { operation: "businessClearStep", ...start }), /storage/);
+  assert.equal(f.state().cleaning, true); assert.equal(f.state().state.semesters.length, 1);
+  f.failDelete(false); f.failList(true);
+  await assert.rejects(f.call("owner", { operation: "businessClearStep", ...start }), /list/);
+  assert.equal(f.state().businessClear?.lease, undefined);
+  f.failList(false);
+  plan = await f.call("owner", { operation: "businessClearPreview" }) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  assert.equal(plan.jobId, start.jobId);
+  assert.deepEqual(await f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }), start);
+  const steps = await Promise.all([f.call("owner", { operation: "businessClearStep", ...start }), f.call("owner", { operation: "businessClearStep", ...start })]) as { waitMs: number }[];
+  assert.ok(steps.some(s => s.waitMs > 0)); assert.equal(f.photos.size, 23);
+  await f.call("owner", { operation: "businessClearStep", ...start }); assert.equal(f.photos.size, 3);
+  await f.call("owner", { operation: "businessClearStep", ...start }); assert.equal(f.photos.size, 0);
+  assert.equal(f.state().cleaning, true, "删除后须再核查目录为空");
+  await f.call("owner", { operation: "businessClearStep", ...start }); assert.equal(f.state().cleaning, false);
+});
+
+test("清空后管理员可重建学期和课表，恢复本人班级前不可听课，原成员需重新申请", async () => {
+  const f = fixture(); await f.join("owner", "20250001"); await f.join("applicant", "20250002");
+  const id = f.state().state.applications.at(-1)!.id;
+  await f.command("owner", { type: "review", ids: [id], decision: "approved", reason: "" });
+  const semester = { ...f.state().state.semesters[0], id: "new-semester" };
+  const plan = await f.call("owner", { operation: "businessClearPreview" }) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  const start = await f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }) as { jobId: string };
+  f.advance(); await f.call("owner", { operation: "businessClearStep", ...start });
+  await f.command("owner", { type: "createSemester", value: semester });
+  const av = { semesterId: semester.id, memberId: "admin-initial", week: 1, slots: ["1:1"], note: "", optedIn: true, updatedAt: "" };
+  await assert.rejects(f.command("owner", { type: "availability", value: av }), /真实班级/);
+  const c = { id: "new-class", grade: semester.grades[0], major: "真实专业", name: "真实班级" };
+  const course = { id: "new-course", semesterId: semester.id, name: "真实课程", teacher: "教师", nature: "必修", classIds: [c.id], classroom: "101", weekday: 1, start: 1, end: 1, weeks: [1], expected: 40 };
+  await f.command("owner", { type: "import", text: JSON.stringify({ classes: [c], courses: [course] }) });
+  await assert.rejects(f.command("owner", { type: "restoreAdminClass", classId: "missing" }), /真实班级/);
+  await assert.rejects(f.command("applicant", { type: "restoreAdminClass", classId: c.id }), /当前成员/);
+  await f.command("owner", { type: "restoreAdminClass", classId: c.id });
+  await assert.rejects(f.command("owner", { type: "restoreAdminClass", classId: c.id }), /已设置/);
+  await f.command("owner", { type: "availability", value: av });
+  await f.command("owner", { type: "generate", week: 1 });
+  assert.equal(f.state().state.drafts[0].tasks.length, 0, "恢复后仍不能听自己的班级");
+  await f.join("applicant", "20250002");
+  assert.equal(f.state().state.applications[0].status, "pending");
+  assert.equal(f.state().state.members.length, 1);
+});
+
+test("换届清空任务超时后可重新领取步骤，旧任务及旧 epoch 不得继续操作", async () => {
+  const f = fixture(); await f.join("owner", "20250001");
+  const plan = await f.call("owner", { operation: "businessClearPreview" }) as import("../miniprogram/domain/business-clear").BusinessClearPreview;
+  const start = await f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }) as { jobId: string };
+  f.state().businessClear!.lease = { token: "timed-out-worker", until: 10000 };
+  assert.ok((await f.call("owner", { operation: "businessClearStep", ...start }) as { waitMs: number }).waitMs > 0);
+  await assert.rejects(f.call("owner", { operation: "businessClearStep", jobId: "different" }), /任务不存在/);
+  await assert.rejects(f.call("owner", { operation: "businessClearStep" }), /标识/);
+  f.photos.add("late-in-flight-photo"); f.advance();
+  await f.call("owner", { operation: "businessClearStep", ...start });
+  assert.equal(f.photos.size, 0);
+  await f.call("owner", { operation: "businessClearStep", ...start });
+  await assert.rejects(f.call("owner", { operation: "businessClearBegin", ...plan, confirmation: "清空业务数据，保留管理员" }), /数据已变化/);
+});
+
+test("不支持目录核查的后端拒绝换届清空，不冻结或删除任何业务", async () => {
+  const doc = freshDocument("trial", "epoch"); let touched = false;
+  const gateway = createGateway({ stage: "trial", appid: "app", bootstrapOpenid: "owner", uuid: () => "id",
+    async transact(fn) { touched = true; return fn(doc); }, async upload() { return "unused"; }, async urls() { return []; }, async deleteFiles() { touched = true; },
+  });
+  for (const operation of ["businessClearPreview", "businessClearBegin", "businessClearStep"]) {
+    await assert.rejects(gateway({ operation }, { OPENID: "owner", APPID: "app" }), /不支持完整照片核查/);
+  }
+  assert.equal(touched, false);
+});

@@ -1,9 +1,11 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context, published, command, runAsync } from "../../services/store";
 import { taskView } from "../../services/views";
 import { UiEvent } from "../../domain/types";
 import { weekRange } from "../../domain/calendar";
 import { memberPage } from "../../services/member-page";
-memberPage({
+if (cloudEnabled()) registerCloudPage("schedule"); else memberPage({
   data: {
     week: 1,
     maxWeek: 20,

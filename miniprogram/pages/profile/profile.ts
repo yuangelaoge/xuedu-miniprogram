@@ -1,8 +1,10 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context } from "../../services/store";
 import { ROLE_NAMES } from "../../domain/types";
 import { memberPage } from "../../services/member-page";
 import { isCloud } from "../../config/runtime";
-memberPage({
+if (cloudEnabled()) registerCloudPage("profile"); else memberPage({
   data: {
     name: "",
     initial: "",

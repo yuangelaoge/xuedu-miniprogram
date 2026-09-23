@@ -1,3 +1,5 @@
+<block wx:if="{{cloudMode}}"><include src="../../templates/cloud.wxml" /></block>
+<block wx:else>
 <view class="page">
   <view class="title">开发体验</view>
   <view class="subtitle">仅用于本机验证，不是正式账号功能。</view>
@@ -15,3 +17,5 @@
     <button class="secondary" bindtap="joinDemo">体验入组申请</button>
   </view>
 </view>
+
+</block>

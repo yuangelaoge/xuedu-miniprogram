@@ -1,3 +1,5 @@
+<block wx:if="{{cloudMode}}"><include src="../../templates/cloud.wxml" /></block>
+<block wx:else>
 <view class="page">
   <view class="eyebrow">JOIN OUR TEAM</view>
   <view class="title">加入学风督察小组</view>
@@ -36,3 +38,5 @@
   <view wx:if="{{!cloudMode}}" class="footer-note" bindtap="openDemo" style="padding:22rpx">开发体验 ›</view>
   <view wx:else class="footer-note" bindtap="copyIdentity" style="padding:22rpx">首次配置管理员：复制本人微信标识</view>
 </view>
+
+</block>

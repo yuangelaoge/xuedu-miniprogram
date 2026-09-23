@@ -1,82 +1,79 @@
-// 此入口由部署配置决定环境，不接受客户端传入环境或角色。
+// Historical function name is retained. Only protocol 2 and PostgreSQL are served.
 const cloud = require("wx-server-sdk");
 const crypto = require("crypto");
-const { createGateway, freshDocument } = require("./generated/gateway.js");
-const { postgresTransaction, postgresPhotos } = require("./generated/postgres.js");
+const { createGatewayV2, BusinessError } = require("./generated/v2/gateway.js");
+const { PostgresRepository } = require("./generated/v2/postgres.js");
+const { createPhotos } = require("./generated/v2/photos.js");
+const APPID = "wx5c7d4a458873c686";
+const ENVIRONMENT = "xuedu-trial-d2gs2dpnla9206eb3";
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
-const stage = "trial";
-const collection = "xuedu_trial_workspace";
-const backend = process.env.XUEDU_STORAGE || "document";
-if (!["document", "postgresql"].includes(backend)) throw new Error("Invalid XUEDU_STORAGE");
-const pgApp = backend === "postgresql" ? require("@cloudbase/js-sdk").init({
-  env: process.env.SCF_NAMESPACE || process.env.TCB_ENV,
-  // Only platform-injected server credentials; never accept a key from event.
-  accessKey: process.env.CLOUDBASE_API_KEY || process.env.CLOUDBASE_APIKEY || undefined,
-}) : null;
-const pgPhotos = pgApp ? postgresPhotos(pgApp.storage.from("xuedu-photos"), stage) : null;
-const db = pgApp ? null : cloud.database();
-const gateway = createGateway({
-  stage,
-  appid: "wx5c7d4a458873c686",
-  bootstrapOpenid: process.env.BOOTSTRAP_OPENID || "",
-  uuid: () => crypto.randomUUID(),
-  listResetFiles: pgPhotos ? () => pgPhotos.listResetFiles() : undefined,
-  transact: pgApp ? postgresTransaction(pgApp.rdb(), stage, () => crypto.randomUUID()) : async function (fn) {
-    return db.runTransaction(async transaction => {
-      const ref = transaction.collection(collection).doc("workspace");
-      let doc;
-      try { doc = (await ref.get()).data; }
-      catch (e) {
-        if (!/document.*not exist|document.*not found/i.test(e.message || "")) throw e;
-      }
-      if (!doc) doc = freshDocument(stage, crypto.randomUUID());
-      if (!doc.state) throw new Error("云端数据格式异常，已停止写入，请联系管理员");
-      delete doc._id;
-      const before = JSON.stringify(doc);
-      const result = await fn(doc);
-      doc.state.actorId = "";
-      if (before !== JSON.stringify(doc) || doc.version === 0) await ref.set({ data: doc });
-      return result;
-    });
-  },
-  async upload(cloudPath, base64) {
-    if (pgPhotos) return pgPhotos.upload(cloudPath, Buffer.from(base64, "base64"));
-    const result = await cloud.uploadFile({ cloudPath, fileContent: Buffer.from(base64, "base64") });
-    return result.fileID;
-  },
-  async deleteFiles(ids) {
-    if (pgPhotos) return pgPhotos.deleteFiles(ids);
-    for (let i = 0; i < ids.length; i += 50) {
-      const result = await cloud.deleteFile({ fileList: ids.slice(i, i + 50) });
-      if (result.fileList.some(f => f.status !== 0 && !/not exist|not found/i.test(f.errMsg || ""))) throw new Error("部分照片删除失败，请重新预览范围并重试清理");
-    }
-  },
-  async urls(ids) {
-    if (pgPhotos) return pgPhotos.urls(ids);
-    if (!ids.length) return [];
-    const result = await cloud.getTempFileURL({ fileList: ids.map(fileID => ({ fileID, maxAge: 300 })) });
-    if (result.fileList.some(f => f.status !== 0)) throw new Error("照片暂时无法读取");
-    return result.fileList.map(f => f.tempFileURL);
-  },
-});
+let gateway;
+
+function configuration() {
+  // PLATFORM_FUNCTION_TIMEOUT_MS is a deployment check value, NOT a platform-injected variable.
+  // Deployment maintainers must verify it against the actual function timeout before setting both.
+  const expected = process.env.FUNCTION_MAX_EXECUTION_MS || "";
+  const checked = process.env.PLATFORM_FUNCTION_TIMEOUT_MS || "";
+  const maxExecutionMs = Number(expected);
+  const executionConfigured = /^\d+$/.test(expected) && /^\d+$/.test(checked) &&
+    Number.isSafeInteger(maxExecutionMs) && maxExecutionMs >= 1000 && maxExecutionMs <= 900000 && maxExecutionMs === Number(checked);
+  const key = process.env.CLOUDBASE_API_KEY || process.env.CLOUDBASE_APIKEY;
+  const environmentMatches = (process.env.SCF_NAMESPACE || process.env.TCB_ENV) === ENVIRONMENT;
+  const backendMatches = !process.env.XUEDU_STORAGE || process.env.XUEDU_STORAGE === "postgresql";
+  return { maxExecutionMs, executionConfigured, key, environmentMatches, backendMatches };
+}
+const knownErrors = {
+  AUTO_APPROVAL_EXPIRED: "自动通过已到期，请重新提交转入人工审核",
+  VERSION_CONFLICT: "数据已被修改，请刷新后重试", EPOCH_CHANGED: "业务数据已变化，请刷新",
+  MAINTENANCE: "业务数据正在维护，请稍后再试", MAINTENANCE_CHANGED: "维护任务已变化，请刷新",
+  IDENTITY_CHANGED: "成员身份已变化，请重新进入", LAST_ADMIN: "必须保留至少一名有效管理员",
+  ALREADY_INITIALIZED: "管理员已建立，请刷新", UNIQUE_CONFLICT: "身份、学号或任务记录已存在，请刷新核对",
+  FORBIDDEN: "没有操作权限", INVALID_QUERY: "查询参数无效", INVALID_COMMIT: "提交参数无效",
+  INVALID_CHANGE: "修改内容无效", INVALID_ENTITY: "业务资料无效", INVALID_EPOCH: "业务轮次无效，请刷新",
+  INVALID_BINDING: "微信绑定无效", INVALID_ADMIN_CLASS: "管理员班级资料缺失，请联系维护人员",
+  UPDATE_REQUIRED: "请更新小程序", LEGACY_MAINTENANCE_PENDING: "请先完成旧版本维护任务",
+  CUTOVER_REQUIRED: "正在准备数据切换，请稍后再试", DATABASE_UNAVAILABLE: "数据库暂时不可用，请稍后重试",
+};
+
 exports.main = async event => {
   try {
     const context = cloud.getWXContext();
-    if (event?.operation === "deploymentStatus") {
-      await gateway({ operation: "identity" }, context);
-      const key = process.env.CLOUDBASE_API_KEY || process.env.CLOUDBASE_APIKEY;
+    if (!context.OPENID || context.APPID !== APPID) return { ok: false, code: "UNAUTHENTICATED", error: "微信身份无效" };
+    if (!event || event.protocolVersion !== 2) return { ok: false, code: "UPGRADE_REQUIRED", error: "请更新小程序" };
+    const config = configuration();
+    if (event.operation === "deploymentStatus") {
       let keyRole = "unknown";
       try {
-        const role = JSON.parse(Buffer.from((key || "").split(".")[1], "base64url").toString()).role;
+        const role = JSON.parse(Buffer.from((config.key || "").split(".")[1], "base64url").toString()).role;
         if (["service_role", "authenticated", "anon"].includes(role)) keyRole = role;
-      } catch (_) { /* Opaque keys are not JWTs; never return key material. */ }
-      return { ok: true, data: { backend, keyPresent: !!key, keyRole,
+      } catch (_) { /* Never return key material or token claims. */ }
+      return { ok: true, data: { protocolVersion: 2, backend: "postgresql", keyPresent: !!config.key, keyRole,
         bootstrapConfigured: !!process.env.BOOTSTRAP_OPENID,
         bootstrapMatchesCurrentWeChat: !!process.env.BOOTSTRAP_OPENID && process.env.BOOTSTRAP_OPENID === context.OPENID,
-        keyVariableNames: Object.keys(process.env).filter(name => /API_?KEY|ACCESS_?KEY/.test(name)),
+        executionConfigured: config.executionConfigured, environmentMatches: config.environmentMatches,
+        backendMatches: config.backendMatches,
+        keyVariableNames: ["CLOUDBASE_API_KEY", "CLOUDBASE_APIKEY"].filter(name => !!process.env[name]),
       } };
     }
+    const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
+    if (!allowed.includes(event.operation)) return { ok: false, code: "UPGRADE_REQUIRED", error: "请更新小程序" };
+    if (!config.executionConfigured || !config.environmentMatches || !config.backendMatches || !config.key)
+      return { ok: false, code: "CONFIGURATION", error: "云端配置尚未完成，请联系维护人员核对环境、服务端密钥和实际函数执行上限" };
+    if (!gateway) {
+      const pgApp = require("@cloudbase/js-sdk").init({ env: ENVIRONMENT, accessKey: config.key });
+      gateway = createGatewayV2({
+        appid: APPID, bootstrapOpenid: process.env.BOOTSTRAP_OPENID || "",
+        uuid: () => crypto.randomUUID(), maxExecutionMs: config.maxExecutionMs,
+        repository: new PostgresRepository(pgApp.rdb()),
+        photos: createPhotos(pgApp.storage.from("xuedu-photos"), base64 => Buffer.from(base64, "base64")),
+      });
+    }
     return { ok: true, data: await gateway(event, context) };
+  } catch (error) {
+    if (error instanceof BusinessError) return { ok: false, code: error.code, error: error.message };
+    const message = error && typeof error.message === "string" ? error.message : "";
+    if (Object.prototype.hasOwnProperty.call(knownErrors, message)) return { ok: false, code: message, error: knownErrors[message] };
+    // SDK, SQL, token and input fragments must never escape through raw Error.message.
+    return { ok: false, code: "INTERNAL_ERROR", error: "云端操作失败，请稍后重试" };
   }
-  catch (error) { return { ok: false, error: error.message || "云端操作失败" }; }
 };

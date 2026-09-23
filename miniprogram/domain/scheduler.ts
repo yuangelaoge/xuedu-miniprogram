@@ -21,6 +21,7 @@ export function eligible(
   );
   return (
     !!member &&
+    !!member.classId &&
     !!av &&
     !course.classIds.includes(member.classId) &&
     (member.role === "member" || av.optedIn) &&

@@ -1,5 +1,5 @@
 import { AppState, Availability, Observation, Semester } from "./types";
-import { audit, confirm, generate, requireRole, saveAvailability, skip, submitRecord } from "./actions";
+import { actor, audit, confirm, generate, requireRole, saveAvailability, skip, submitRecord } from "./actions";
 import { addSemester, commitImport } from "./imports";
 import { applyForMembership, JoinForm, removeMember, reviewApplications, setMemberRole } from "./membership";
 
@@ -13,6 +13,7 @@ export type Command =
   | { type: "removeMember"; id: string }
   | { type: "role"; id: string; role: "leader" | "member" }
   | { type: "import"; text: string }
+  | { type: "restoreAdminClass"; classId: string }
   | { type: "renameUnusedClass"; id: string; name: string }
   | { type: "semester"; id: string }
   | { type: "createSemester"; value: Semester }
@@ -30,6 +31,16 @@ export function executeCommand(state: AppState, command: Command, identity: stri
     case "removeMember": removeMember(state, command.id); return;
     case "role": setMemberRole(state, command.id, command.role); return;
     case "import": commitImport(state, "courses", command.text); return;
+    case "restoreAdminClass": {
+      requireRole(state, ["admin"]);
+      const user = actor(state);
+      if (user.classId) throw new Error("本人班级已设置，不能通过换届入口修改");
+      const schoolClass = state.classes.find(c => c.id === command.classId);
+      if (!schoolClass) throw new Error("请选择已导入的本人真实班级");
+      user.classId = schoolClass.id;
+      audit(state, "设置管理员本人班级", schoolClass.name);
+      return;
+    }
     case "renameUnusedClass": {
       requireRole(state, ["admin"]);
       const c = state.classes.find(c => c.id === command.id);

@@ -2,11 +2,13 @@
   "name": "xuedu-miniprogram",
   "version": "1.0.0",
   "private": true,
-  "description": "学风督察小程序，本地交互体验版",
+  "description": "学风督察微信小程序：云端业务与本地开发演示",
   "scripts": {
     "build:cloud": "node scripts/build-cloud.mjs",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
-    "test": "node --import tsx --test tests/*.test.ts"
+    "test": "node --import tsx --test tests/*.test.ts",
+    "test:db": "node scripts/v2-db-test.mjs",
+    "test:wxml": "node scripts/check-wxml.mjs"
   },
   "keywords": [],
   "author": "",

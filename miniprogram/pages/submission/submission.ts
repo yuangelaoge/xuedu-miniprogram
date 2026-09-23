@@ -1,3 +1,5 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context, command, run, runAsync, notifyError, draftPrefix } from "../../services/store";
 import { isCloud } from "../../config/runtime";
 import { uploadRecordPhotos } from "../../services/photos";
@@ -12,7 +14,7 @@ import {
 import { courseTime, weekDate } from "../../domain/calendar";
 import { missingMetrics } from "../../domain/metrics";
 import { memberPage } from "../../services/member-page";
-memberPage({
+if (cloudEnabled()) registerCloudPage("submission"); else memberPage({
   data: {
     taskId: "",
     week: 0,

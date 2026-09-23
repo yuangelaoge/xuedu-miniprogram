@@ -1,3 +1,5 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context, run } from "../../services/store";
 import { METRIC_FIELDS, Observation, UiEvent } from "../../domain/types";
 import { ratio, percent } from "../../domain/metrics";
@@ -5,7 +7,7 @@ import { memberPage } from "../../services/member-page";
 import { isCloud } from "../../config/runtime";
 import { recordPhotoUrls } from "../../services/photos";
 import { notifyError } from "../../services/store";
-memberPage({
+if (cloudEnabled()) registerCloudPage("record"); else memberPage({
   data: {
     record: null as Observation | null,
     fields: [] as { label: string; value: string }[],

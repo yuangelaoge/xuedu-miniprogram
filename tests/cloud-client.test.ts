@@ -1,33 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runtime } from "../miniprogram/config/runtime";
-import { initialState } from "../server/policy";
+import { bootstrap, currentBoot, query, viewSemester, selectSemester, draftKey } from "../miniprogram/services/v2/client";
 
-test("客户端：环境不匹配阻断、拉取去重、版本及清理轮次防回退，云端禁用本地改身份", async () => {
-  const global = globalThis as any;
-  const oldWx = global.wx;
-  const originalRuntime = { ...runtime };
-  let calls = 0;
-  const data = { stage: "trial" as const, epoch: "epoch-1", version: 0, identity: "self", state: initialState("trial") };
-  runtime.mode = "trial"; runtime.env = "trial-env";
-  global.wx = { cloud: { init() {}, async callFunction() { calls++; return { result: { ok: true, data: structuredClone(data) } }; } } };
+test("V2客户端：协议拒绝、启动去重、本机学期账号隔离、版本和轮次迟到响应不能回退", async () => {
+  const g = globalThis as any, oldWx = g.wx, original = { ...runtime };
+  runtime.mode = "cloud"; runtime.env = "v2-client-tests";
+  let calls = 0, epoch = "e1", version = 1, actor = "a", protocolVersion = 2, release: (() => void) | undefined;
+  let delay = false;
+  const storage = new Map();
+  g.wx = { getStorageSync: (k: string) => storage.get(k), removeStorageSync: (k: string) => storage.delete(k), setStorageSync: (k: string, v: unknown) => storage.set(k, v), cloud: {
+    init() {}, async callFunction({ data }: any) {
+      calls++; assert.equal(data.protocolVersion, 2);
+      const snapshot = { protocolVersion, epoch, resourceVersions: {workspace: version}, data: data.operation === "bootstrap" ? {workspace: {epoch, version, activeSemesterId: "active"},member: {id: actor},status: "ready"} : {items: []}};
+      if (delay && data.operation === "query") { delay = false; await new Promise<void>(r => { release = r; }); }
+      return {result: {ok: true, data: snapshot}};
+    }
+  }};
   try {
-    const { acceptSnapshot, syncCloud, currentSnapshot } = await import("../miniprogram/services/cloud");
-    const { readState, transact, changeDemoActor, draftPrefix } = await import("../miniprogram/services/store");
-    await Promise.all([syncCloud(), syncCloud()]);
-    assert.equal(calls, 1);
-    assert.equal(readState().members.length, 0, "云端不回退本地假成员");
-    assert.throws(() => transact(() => {}), /不允许本地修改/);
-    assert.throws(() => changeDemoActor("m7"), /不允许本地修改/);
-    acceptSnapshot({ ...data, version: 9 });
-    acceptSnapshot({ ...data, version: 2 });
-    assert.equal(currentSnapshot().version, 9);
-    const before = draftPrefix();
-    acceptSnapshot({ ...data, epoch: "epoch-2", version: 10 });
-    assert.notEqual(draftPrefix(), before);
-    acceptSnapshot({ ...data, version: 15 });
-    assert.equal(currentSnapshot().epoch, "epoch-2", "旧轮次的迟到响应不能复活试用数据");
-    assert.throws(() => acceptSnapshot({ ...data, stage: "production" }), /环境与版本不符/);
-    assert.equal(currentSnapshot().stage, "trial");
-  } finally { Object.assign(runtime, originalRuntime); global.wx = oldWx; }
+    await Promise.all([bootstrap(), bootstrap()]); assert.equal(calls, 1);
+    assert.equal(viewSemester(), "active"); selectSemester("history"); assert.equal(viewSemester(), "history");
+    actor = "b"; await bootstrap(); assert.equal(viewSemester(), "active"); actor = "a"; await bootstrap(); assert.equal(viewSemester(), "history");
+    const oldDraft = draftKey("task");
+    delay = true; const late = query("records", "s"); await new Promise(r => setImmediate(r));
+    epoch = "e2"; version = 2; await bootstrap(); release!(); await assert.rejects(late, /轮次/);
+    assert.notEqual(draftKey("task"), oldDraft); assert.equal(currentBoot().workspace.epoch, "e2");
+    version = 1; await assert.rejects(bootstrap(), /版本/); version = 3; protocolVersion = 1; await assert.rejects(bootstrap(), /请更新/);
+    const { syncCloud } = await import("../miniprogram/services/cloud"); await assert.rejects(syncCloud(), /旧版云端接口已停用/);
+    const { transact, changeDemoActor } = await import("../miniprogram/services/store");
+    assert.throws(() => transact(() => {}), /不允许本地修改/); assert.throws(() => changeDemoActor("m7"), /不允许本地修改/);
+  } finally { g.wx = oldWx; Object.assign(runtime, original); }
 });

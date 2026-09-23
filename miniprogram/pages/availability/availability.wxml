@@ -1,3 +1,5 @@
+<block wx:if="{{cloudMode}}"><include src="../../templates/cloud.wxml" /></block>
+<block wx:else>
 <view class="page"><view class="eyebrow">YOUR AVAILABILITY</view><view class="title">把空闲留给好学风</view><view class="subtitle">选中你可以参加听课的时段。</view>
  <view class="week-switch"><view class="week-arrow" data-delta="-1" bindtap="move">‹</view><view class="week-center"><view class="week-title">第 {{week}} 周 {{week === currentWeek ? '· 本周' : week === currentWeek+1 ? '· 下周' : ''}}</view><view class="week-dates">{{dates}}</view></view><view class="week-arrow" data-delta="1" bindtap="move">›</view></view>
  <view wx:if="{{volunteer}}" class="card row between"><view><view class="section-title">第 {{week}} 周我也听课</view><view class="muted small">仅对本周生效，保存后参加排班</view></view><switch checked="{{optedIn}}" color="#2468e8" bindchange="volunteer"/></view>
@@ -7,3 +9,5 @@
  <view class="row gap grid-legend"><view class="legend-square"></view><text>可听课</text><view class="legend-square off"></view><text>不可安排</text></view></view>
  <view class="card"><view class="field-label">备注 <text class="muted small">选填</text></view><textarea class="input" placeholder="例如：周三下午有临时活动" value="{{note}}" bindinput="note" maxlength="300"/></view>
  <view class="actions"><button class="plain" bindtap="copy" disabled="{{week === 1}}">复制上一周</button><button class="primary" bindtap="save">保存时间表</button></view><view class="footer-note">保存时间不等于已安排 · 正式任务以确认结果为准</view></view>
+
+</block>

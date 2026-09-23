@@ -367,3 +367,26 @@ textarea.input {
   height: 100%;
   border-radius: 8rpx;
 }
+
+/* 云端 V2 沿用现有蓝白配色与原生表单。 */
+.v2-page { padding: 32rpx; padding-bottom: 80rpx; color: #21334d; }
+.v2-heading { font-size: 42rpx; font-weight: 700; margin: 12rpx 0 32rpx; }
+.v2-title { font-size: 32rpx; font-weight: 600; margin-bottom: 16rpx; }
+.v2-card { background: white; border: 1rpx solid #e1e7f0; border-radius: 16rpx; padding: 28rpx; margin-bottom: 24rpx; line-height: 1.7; overflow-wrap: anywhere; }
+.v2-note { color: #64748b; font-size: 26rpx; margin: 20rpx 0; line-height: 1.6; }
+.v2-error { background: #fff0f0; color: #ad2828; padding: 24rpx; border-radius: 12rpx; margin-bottom: 24rpx; }
+.v2-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 16rpx; margin: 18rpx 0; }
+.v2-page button { margin: 12rpx 0; font-size: 28rpx; }
+.v2-page button[type=primary] { background: #2468e8; }
+.v2-actions button { flex: 0 1 auto; }
+.v2-field { margin: 28rpx 0; }
+.v2-label { font-size: 27rpx; color: #52627a; margin-bottom: 12rpx; }
+.v2-field input, .v2-page textarea, .v2-picker { background: #f5f7fb; border: 1rpx solid #dce3ee; border-radius: 8rpx; padding: 18rpx; min-height: 44rpx; width: auto; }
+.v2-page textarea { width: calc(100% - 36rpx); min-height: 140rpx; }
+.v2-week { width: 70rpx; padding: 10rpx; border: 1rpx solid #cbd5e1; }
+.v2-choice { display: block; padding: 12rpx 0; }
+.v2-row { border-top: 1rpx solid #e1e7f0; padding: 18rpx 0; }
+.v2-photos { display: flex; flex-wrap: wrap; gap: 16rpx; margin: 20rpx 0; }
+.v2-photos image { width: 170rpx; height: 170rpx; border-radius: 8rpx; }
+.v2-slot-grid { display: flex; flex-wrap: wrap; margin: 20rpx 0; }
+.v2-slot-grid label { width: 50%; font-size: 24rpx; padding: 10rpx 0; }

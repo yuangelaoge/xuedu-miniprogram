@@ -1,9 +1,11 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context, published } from "../../services/store";
 import { taskView } from "../../services/views";
 import { ROLE_NAMES, UiEvent } from "../../domain/types";
 import { weekRange } from "../../domain/calendar";
 import { memberPage } from "../../services/member-page";
-memberPage({
+if (cloudEnabled()) registerCloudPage("home"); else memberPage({
   data: {
     name: "",
     role: "",

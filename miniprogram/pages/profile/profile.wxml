@@ -1,3 +1,5 @@
+<block wx:if="{{cloudMode}}"><include src="../../templates/cloud.wxml" /></block>
+<block wx:else>
 <view class="page"><view class="eyebrow">MY WORKSPACE</view><view class="title">我的</view>
  <view class="card profile-card"><view class="row"><view class="avatar large">{{initial}}</view><view class="grow"><view class="profile-name">{{name}}</view><view class="muted">{{className}}</view></view><text class="pill">{{role}}</text></view><view class="divider"></view><view class="row between"><text class="muted">学号</text><text class="small">{{studentNo}}</text></view><view class="stat-row"><view class="stat"><view class="number">{{total}}</view><view class="stat-label">本学期任务</view></view><view class="stat"><view class="number">{{done}}</view><view class="stat-label">已提交记录</view></view></view></view>
  <view class="card">
@@ -7,3 +9,5 @@
  </view>
  <view class="footer-note">{{semesterName}} · {{modeLabel}} v1.0<view wx:if="{{!cloudMode}}" class="demo-link" bindtap="openDemo">开发体验 ›</view></view>
 </view>
+
+</block>

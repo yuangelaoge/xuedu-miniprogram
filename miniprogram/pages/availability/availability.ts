@@ -1,8 +1,10 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context, command, runAsync } from "../../services/store";
 import { UiEvent } from "../../domain/types";
 import { WEEKDAYS, weekRange } from "../../domain/calendar";
 import { memberPage } from "../../services/member-page";
-memberPage({
+if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
   data: {
     week: 1,
     currentWeek: 1,

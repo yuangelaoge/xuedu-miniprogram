@@ -92,6 +92,9 @@ export type MetricKey =
   | "other";
 export type Metrics = Record<MetricKey, number>;
 export interface Observation {
+  correctedAt?: string;
+  firstSubmittedAt?: string;
+  classes?: SchoolClass[];
   id: string;
   taskId: string;
   semesterId: string;

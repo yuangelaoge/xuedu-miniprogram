@@ -1,0 +1,11 @@
+import { readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
+const compiler = process.env.WECHAT_WCC || '/Applications/wechatwebdevtools.app/Contents/Resources/app.asar.unpacked/node_modules/wcc-exec/wcc';
+if (!existsSync(compiler)) throw new Error('请用 WECHAT_WCC 指定本机微信开发者工具 wcc 编译器；无需开启工具服务端口');
+const collect = dir => readdirSync(dir, {withFileTypes:true}).flatMap(e => e.isDirectory() ? collect(join(dir,e.name)) : e.name.endsWith('.wxml') ? [join(dir,e.name)] : []);
+const files = collect('miniprogram');
+const result = spawnSync(compiler, [...files, '-o', join(tmpdir(), 'xuedu-v2-wxml-check.js')], {stdio:'inherit'});
+if (result.status !== 0) process.exitCode = 1;
+else console.log(`Compiled ${files.length} WXML files with all shared includes. No upload performed.`);

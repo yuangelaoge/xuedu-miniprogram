@@ -1,8 +1,10 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context } from "../../services/store";
 import { courseView } from "../../services/views";
 import { UiEvent } from "../../domain/types";
 import { memberPage } from "../../services/member-page";
-memberPage({
+if (cloudEnabled()) registerCloudPage("courses"); else memberPage({
   data: {
     search: "",
     grade: "全部",

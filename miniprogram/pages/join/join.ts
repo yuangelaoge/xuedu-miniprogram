@@ -1,3 +1,5 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { readState, run, transact, command, runAsync, notifyError } from "../../services/store";
 import { demoIdentity, submitJoin, enterAsApprovedApplicant } from "../../services/join";
 import { isCloud, modeLabel, runtime } from "../../config/runtime";
@@ -5,9 +7,9 @@ import { syncCloud, cloudCall, CloudSnapshot, acceptSnapshot, currentSnapshot } 
 import { latestApplication, membershipFor } from "../../domain/membership";
 import { UiEvent } from "../../domain/types";
 
-Page({
+if (cloudEnabled()) registerCloudPage("join"); else Page({
   data: {
-    cloudMode: isCloud(), trialMode: runtime.mode === "trial", modeLabel: modeLabel(), connecting: false, connectionError: "",
+    cloudMode: isCloud(), trialMode: runtime.mode === "cloud", modeLabel: modeLabel(), connecting: false, connectionError: "",
     status: "new", reason: "", name: "", studentNo: "", classId: "",
     classIndex: -1, classes: [] as { id: string; label: string }[], busy: false,
     statusTitle: "申请加入学督", statusText: "首次填写资料，由管理员或组部长审核。",
@@ -28,7 +30,7 @@ Page({
     this.setData({ connecting: true, connectionError: "" });
     try {
       const snapshot = await syncCloud();
-      if (runtime.mode === "trial" && !snapshot.state.semesters.length && !snapshot.state.classes.length) {
+      if (runtime.mode === "cloud" && !snapshot.state.semesters.length && !snapshot.state.classes.length) {
         const status = await cloudCall<{ bootstrapMatchesCurrentWeChat: boolean }>("deploymentStatus");
         this.setData({ bootstrapEmpty: status.bootstrapMatchesCurrentWeChat });
       } else this.setData({ bootstrapEmpty: false });

@@ -1,3 +1,5 @@
+<block wx:if="{{cloudMode}}"><include src="../../templates/cloud.wxml" /></block>
+<block wx:else>
 <view class="page"><view class="eyebrow">CLASSROOM OBSERVATION</view><view class="title">记录这一堂课</view><block wx:if="{{valid}}">
  <view class="card"><view class="row between"><text class="pill">{{classLabel}}</text><text class="muted small">第 {{week}} 周</text></view><view class="course-title">{{title}}</view><view class="course-meta">{{date}} · {{time}}</view><view class="course-meta">听课成员：{{name}}</view></view>
  <view class="section row between"><text class="section-title">01　考勤与课堂状态</text><text class="link small" bindtap="zero">其余情况均为 0</text></view>
@@ -6,3 +8,5 @@
  <view class="section section-title">03　观察与反馈</view><view class="card"><view class="field-label">其他情况说明</view><input class="input" value="{{otherDescription}}" data-key="otherDescription" bindinput="text" placeholder="有其他情况人数时，请说明" maxlength="300"/><view class="field"><view class="field-label">班风评价</view><textarea class="input" value="{{evaluation}}" data-key="evaluation" bindinput="text" placeholder="描述课堂整体状态" maxlength="1000"/></view><view class="field"><view class="field-label">异常情况及反馈</view><textarea class="input" value="{{feedback}}" data-key="feedback" bindinput="text" placeholder="无异常可留空" maxlength="1000"/></view><view class="field"><view class="field-label">任课教师意见及建议</view><textarea class="input" value="{{suggestion}}" data-key="suggestion" bindinput="text" placeholder="按老师实际反馈填写" maxlength="1000"/></view></view>
  <view class="section row between"><text class="section-title">04　签字照片</text><text class="pill amber">必传</text></view><view class="card"><view class="photo-list"><view wx:for="{{photos}}" wx:key="*this" class="photo-wrap"><image class="photo" src="{{item}}" mode="aspectFill" data-path="{{item}}" bindtap="preview"/><view class="remove" data-path="{{item}}" bindtap="remove">×</view></view><view wx:if="{{photos.length < 3}}" class="photo-add" bindtap="choosePhoto"><view class="photo-plus">＋</view><text>{{busy ? '保存中…' : '拍照 / 相册'}}</text></view></view></view>
  <view class="actions"><button class="plain" bindtap="draft" disabled="{{busy}}">保存草稿</button><button class="primary" bindtap="submit" loading="{{busy}}" disabled="{{busy}}">提交记录</button></view></block></view>
+
+</block>

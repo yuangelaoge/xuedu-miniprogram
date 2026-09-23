@@ -1,3 +1,5 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { context, published, run } from "../../services/store";
 import { UiEvent } from "../../domain/types";
 import { percent } from "../../domain/metrics";
@@ -10,7 +12,7 @@ import {
 import { weekRange } from "../../domain/calendar";
 import { saveExport, openExport } from "../../services/files";
 import { memberPage } from "../../services/member-page";
-memberPage({
+if (cloudEnabled()) registerCloudPage("records"); else memberPage({
   data: {
     week: 1,
     maxWeek: 20,

@@ -34,6 +34,7 @@ export function exportTxt(state: AppState, week: number): string {
         r.classLabel + " · " + r.course.name + " · " + r.date,
         "旷课：" + r.absentNames,
         "请假：" + r.leaveNames,
+        ...(r.correctedAt ? ["最近更正：" + r.correctedAt] : []),
         "",
       ),
     );
@@ -51,7 +52,7 @@ export function gradeStats(state: AppState, week: number) {
   return semester.grades.map((grade) => {
     const records = weekRecords(state, week).filter((r) =>
       r.course.classIds.some(
-        (id) => state.classes.find((c) => c.id === id)?.grade === grade,
+        (id) => (r.classes || state.classes).find((c) => c.id === id)?.grade === grade,
       ),
     );
     const valid = records.filter(
@@ -109,10 +110,11 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
     "异常情况及反馈",
     "任课教师意见及建议",
     "提交状态",
+    "最近更正时间",
   ];
   const raw: Cell[][] = [
     [semester.name + " 第" + week + "周入班听课汇总表"],
-    ["-1 表示信息缺失；违纪暂按行为人次；缺失指标不进入图表；本地体验数据"],
+    ["-1 表示信息缺失；违纪暂按行为人次；缺失指标不进入图表；统计仅代表实际听课观测"],
     headers,
   ];
   if (plan?.status === "skipped") raw.push(["本周已跳过", plan.reason || ""]);
@@ -150,7 +152,7 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
       grade: Array.from(
         new Set(
           r.course.classIds.map(
-            (id) => state.classes.find((c) => c.id === id)?.grade || "",
+            (id) => (r.classes || state.classes).find((c) => c.id === id)?.grade || "",
           ),
         ),
       ).join("/"),
@@ -247,6 +249,7 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
           e.record?.feedback || "",
           e.record?.suggestion || "",
           e.record ? "已提交" : "未提交 / 未安排",
+          e.record?.correctedAt || "",
         ]);
       });
   }

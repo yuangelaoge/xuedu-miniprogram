@@ -1,75 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { runtime } from "../miniprogram/config/runtime";
-import { createGateway, freshDocument } from "../server/gateway";
-import { createSeed } from "../miniprogram/domain/seed";
-import { BUSINESS_CLEAR_CONFIRMATION } from "../miniprogram/domain/business-clear";
+import { createGatewayV2 } from "../server/v2/gateway";
+import { MemoryRepository } from "../server/v2/memory";
+import { CLEAR_CONFIRMATION } from "../miniprogram/domain/v2/protocol";
+import { registerCloudPage } from "../miniprogram/services/v2/page";
 
-test("管理页清空：取消与错误文字不写入，成功后管理员可设置新学期、其他页面引导配置", async () => {
-  // wx/Page are runtime-injected framework objects; mocks match the project's page regression harness.
-  const globals = globalThis as any;
-  const oldWx = globals.wx, oldPage = globals.Page, oldRuntime = { ...runtime };
-  runtime.mode = "trial"; runtime.env = "ui-test-env";
-  let doc = freshDocument("trial", "ui-epoch"), sequence = 0, clock = 0;
-  doc.state = createSeed();
-  doc.state.members.find(m => m.role === "admin")!.identityKey = "owner";
-  const gateway = createGateway({ stage: "trial", appid: "test", bootstrapOpenid: "owner",
-    uuid: () => "ui-id-" + ++sequence, now: () => clock,
-    async transact(fn) { const next = structuredClone(doc); const result = await fn(next); doc = next; return result; },
-    async upload() { throw new Error("unexpected upload"); }, async urls() { return []; }, async deleteFiles() {}, async listResetFiles() { return []; },
-  });
-  const operations: string[] = [], routes: string[] = [];
-  let registered: any, modalAnswer = { confirm: false, content: "" }, failStep = false;
-  const storage = new Map([
-    ["xuedu.form.ui-test-env.trial.old.member.task", "old draft"],
-    ["xuedu.form.other-env.trial.old.member.task", "other environment"],
-    ["xuedu.form.ui-test-env.production.old.member.task", "production"],
-  ]);
-  globals.wx = {
-    cloud: { init() {}, async callFunction({ data }: any) {
-      operations.push(data.operation);
-      try {
-        if (data.operation === "businessClearStep" && failStep) throw new Error("模拟网络中断");
-        const result = await gateway(data, { OPENID: "owner", APPID: "test" });
-        if (data.operation === "businessClearBegin") clock += 11000;
-        return { result: { ok: true, data: result } };
-      } catch (e) { return { result: { ok: false, error: (e as Error).message } }; }
-    } },
-    async showModal() { return modalAnswer; }, showToast() {},
-    getStorageInfoSync() { return { keys: [...storage.keys()] }; }, removeStorageSync(key: string) { storage.delete(key); },
-    reLaunch(o: any) { routes.push(o.url); o.complete?.(); },
-  };
-  globals.Page = (options: any) => { registered = options; };
+test("V2页面清空：取消和旧文字不执行、断线续跑同一任务、保留管理员班级直接建草稿", async () => {
+  const g = globalThis as any, oldWx = g.wx, oldPage = g.Page, original = {...runtime};
+  runtime.mode = "cloud"; runtime.env = "v2-clear-ui";
+  const repository = new MemoryRepository(); let n = 0, now = 0;
+  const gateway = createGatewayV2({ repository, appid: "app", bootstrapOpenid: "owner", maxExecutionMs: 3000, uuid: () => "ui-" + ++n, now: () => now, photos: {async upload() {throw new Error("unused");},async urls() {return [];},async list() {return [];},async delete() {}}});
+  const ctx = {OPENID:"owner",APPID:"app"};
+  await gateway({protocolVersion:2,operation:"initialize",epoch:"initial",requestId:"init",payload:{member:{name:"管理员",studentNo:"1"},schoolClass:{name:"26自动化",grade:"26",major:"自动化"},semester:{name:"本学期",startDate:"2026-09-07",weeks:20}}},ctx);
+  let registered: any, modal = {confirm:false,content:""}, failStep = false;
+  const operations: string[] = [], storage = new Map([["xuedu.form.v2-clear-ui.cloud.old.a.t",1],["xuedu.form.other.cloud.old.a.t",2]]);
+  g.Page = (o:any) => {registered=o;};
+  g.wx = { getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:unknown)=>storage.set(k,v), getStorageInfoSync:()=>({keys:[...storage.keys()]}),removeStorageSync:(k:string)=>storage.delete(k),showToast(){}, async showModal(){return modal;}, cloud:{init(){},async callFunction({data}:any){ operations.push(data.operation); try{ if(data.operation==="clearStep"&&failStep) throw new Error("模拟断线"); const out=await gateway(data,ctx); if(data.operation==="clearBegin") now+=5000; return {result:{ok:true,data:out}};}catch(e){return {result:{ok:false,error:(e as Error).message}};} }}};
   try {
-    const { syncCloud } = await import("../miniprogram/services/cloud");
-    const { ensureMember } = await import("../miniprogram/services/member-page");
-    await syncCloud();
-    await import("../miniprogram/pages/manage/manage");
-    const page = { ...registered, route: "pages/manage/manage", data: structuredClone(registered.data), setData(v: any) { Object.assign(this.data, v); } };
-    page.refresh(); assert.equal(page.data.admin, true);
-    const version = doc.version;
-    await page.clearBusiness();
-    assert.equal(doc.version, version); assert.equal(doc.cleaning, undefined);
-    assert.equal(operations.includes("businessClearBegin"), false);
-    modalAnswer = { confirm: true, content: "清空试用数据" };
-    await page.clearBusiness(); assert.equal(operations.includes("businessClearBegin"), false);
-    modalAnswer = { confirm: true, content: BUSINESS_CLEAR_CONFIRMATION }; failStep = true;
-    await page.clearBusiness(); assert.equal(doc.cleaning, true);
-    assert.equal(page.data.clearingBusiness, false); assert.match(page.data.clearProgress, /未完成/);
-    const jobId = doc.businessClear!.id;
-    failStep = false; await page.clearBusiness();
-    assert.equal(doc.lastBusinessClearId, jobId);
-    assert.equal(page.data.tab, "semester"); assert.equal(page.data.needsSemester, true);
-    assert.equal(page.data.needsAdminClass, true); assert.equal(page.data.admin, true);
-    assert.equal(storage.size, 2); assert.equal(page.data.clearingBusiness, false);
-    assert.equal(ensureMember("pages/index/index"), false);
-    assert.equal(routes.at(-1), "/pages/manage/manage?tab=semester");
-    assert.equal(ensureMember("pages/manage/manage"), true);
-    page.data.form = { name: "2027–2028 第一学期", startDate: "2027-09-06", weeks: "20", grades: "26,27", days: "5", periods: "14" };
-    await page.createSemester();
-    assert.equal(page.data.needsSemester, false);
-    assert.equal(ensureMember("pages/index/index"), true);
-    assert.equal(doc.state.members.filter(m => m.role === "admin").length, 1);
-    assert.equal(doc.state.classes.length, 0); assert.equal(doc.state.courses.length, 0);
-  } finally { globals.wx = oldWx; globals.Page = oldPage; Object.assign(runtime, oldRuntime); }
+    registerCloudPage("manage"); const page = {...registered,data:structuredClone(registered.data),setData(v:any){Object.assign(this.data,v);}};
+    await page.load(); assert.equal(page.data.admin,true);
+    const before=await repository.workspace(); await page.clearBusiness(); assert.equal((await repository.workspace()).version,before.version);
+    modal={confirm:true,content:"清空业务数据，保留管理员"}; await page.clearBusiness(); assert.equal(operations.includes("clearBegin"),false);
+    modal={confirm:true,content:CLEAR_CONFIRMATION};failStep=true;await page.clearBusiness(); const job=(await repository.workspace()).maintenance; assert.ok(job);assert.equal(page.data.busy,false);
+    failStep=false;await page.clearBusiness();assert.equal((await repository.workspace()).maintenance,"");assert.equal(operations.filter(x=>x==="clearBegin").length,1);assert.equal(page.data.section,"semesters");
+    const members=(await repository.query("members", {})).items,classes=(await repository.query("classes", {})).items;
+    assert.equal(members.length,1);assert.equal(classes.length,1);assert.equal(members[0].data.classId,classes[0].id);assert.equal(storage.size,1);
+    await page.openForm("semesterCreate");const values:any={name:"下学期",startDate:"2027-02-22"};page.data.fields=page.data.fields.map((f:any)=>({...f,value:values[f.key]||f.value}));await page.saveForm();
+    assert.equal((await repository.query("semesters", {})).items.length,1);assert.equal((await repository.workspace()).activeSemesterId,"","新建草稿不能自动启用");
+  } finally {g.wx=oldWx;g.Page=oldPage;Object.assign(runtime,original);}
 });

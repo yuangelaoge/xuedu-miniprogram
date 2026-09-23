@@ -27,7 +27,7 @@ export const memberPage: WechatMiniprogram.Page.Constructor = (options) => {
   const loads = new WeakMap<object, Promise<void>>();
   Page({
     ...options,
-    data: { ...options.data, cloudMode: isCloud(), modeLabel: modeLabel(), trialMode: runtime.mode === "trial" },
+    data: { ...options.data, cloudMode: isCloud(), modeLabel: modeLabel(), trialMode: runtime.mode === "cloud" },
     onLoad(query) {
       if (!isCloud()) { if (ensureMember(this.route)) options.onLoad?.call(this, query); return; }
       const load = syncCloud().then(() => { if (ensureMember(this.route)) options.onLoad?.call(this, query); }).catch(notifyError);

@@ -1,3 +1,5 @@
+import { isCloud as cloudEnabled } from "../../config/runtime";
+import { registerCloudPage } from "../../services/v2/page";
 import { readState, run, command, runAsync } from "../../services/store";
 import { UiEvent, Semester, JoinApplication } from "../../domain/types";
 import {
@@ -5,27 +7,20 @@ import {
   ImportKind,
 } from "../../domain/imports";
 import { memberPage } from "../../services/member-page";
-import { cloudCall, CloudSnapshot, acceptSnapshot } from "../../services/cloud";
-import { runtime } from "../../config/runtime";
 import { actor } from "../../domain/actions";
-import { BUSINESS_CLEAR_CONFIRMATION, BusinessClearPreview } from "../../domain/business-clear";
 // Management remains usable after clearing every semester.
 function context() {
   const state = readState(), user = actor(state);
   return { state, user, manager: user.role !== "member", semester: state.semesters.find(s => s.id === state.activeSemesterId) };
 }
-memberPage({
+if (cloudEnabled()) registerCloudPage("manage"); else memberPage({
   data: {
     tab: "members",
     admin: false,
     manager: false,
-    resettingAll: false,
-    clearingBusiness: false,
-    clearProgress: "",
     needsSemester: false,
     needsAdminClass: false,
     adminClasses: [] as { id: string; name: string }[],
-    resetProgress: "",
     memberTab: "pending",
     pending: [] as (JoinApplication & { classLabel: string; selected: boolean })[],
     selected: [] as string[],
@@ -313,69 +308,6 @@ memberPage({
         if (!r.confirm) return;
         await runAsync(async () => { await command({ type: "restoreAdminClass", classId: selected.id }); this.refresh(); }, "本人班级已设置");
       },
-    });
-  },
-  async clearBusiness() {
-    if (runtime.mode === "demo" || !this.data.admin || this.data.resettingAll || this.data.clearingBusiness) return;
-    this.setData({ clearingBusiness: true, clearProgress: "正在核对清空范围…" });
-    try {
-      const ok = await runAsync(async () => {
-        const plan = await cloudCall<BusinessClearPreview>("businessClearPreview");
-        const r = await wx.showModal({ title: plan.jobId ? "继续清空业务数据" : "清空业务数据（保留管理员）",
-          content: `当前为${plan.stage === "production" ? "正式" : "试用"}环境。不按年份筛选，将永久删除全部 ${plan.members} 名非管理员（含部长及已归档成员）、${plan.applications} 份申请、${plan.semesters} 个学期及年级、${plan.classes} 个班级、${plan.courses} 个课程时段、全部排班和无课时间、${plan.records} 份记录、旧操作记录及照片（已登记 ${plan.files} 张，另扫描未登记照片）。保留 ${plan.administrators} 名管理员的账号和微信绑定、系统连接配置；管理员班级需重新选择。不清平台备份、日志、手机或导出副本。不可撤销，请输入：${BUSINESS_CLEAR_CONFIRMATION}`,
-          editable: true, confirmText: "确认清空", confirmColor: "#c73535" });
-        if (!r.confirm) { this.setData({ clearProgress: "已取消，未执行清空。" }); return; }
-        if (r.content !== BUSINESS_CLEAR_CONFIRMATION) throw new Error("确认文字不符，未执行清空");
-        const start = await cloudCall<{ jobId: string }>("businessClearBegin", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
-        for (let i = 0; i < 100; i++) {
-          const next = await cloudCall<{ done: boolean; waitMs: number; snapshot?: CloudSnapshot }>("businessClearStep", { jobId: start.jobId });
-          if (next.done && next.snapshot) {
-            acceptSnapshot(next.snapshot);
-            const prefix = "xuedu.form." + runtime.env + "." + runtime.mode + ".";
-            for (const key of wx.getStorageInfoSync().keys) if (key.startsWith(prefix)) wx.removeStorageSync(key);
-            this.setData({ tab: "semester", selected: [], search: "", text: "", previewed: false, preview: [], errors: [], clearProgress: "清空完成，管理员已保留。请建立新学期并导入班级和课表。" });
-            this.refresh();
-            return;
-          }
-          this.setData({ clearProgress: next.waitMs ? "等待在途请求结束…" : "正在分批核查并清理照片…" });
-          if (next.waitMs) await new Promise(resolve => setTimeout(resolve, Math.min(1000, next.waitMs)));
-        }
-        throw new Error("本轮处理上限已到，请再次预览并继续清空；完成前写入保持冻结");
-      });
-      if (!ok) this.setData({ clearProgress: "操作未完成。如已开始清空，写入保持冻结，请重新预览并继续。" });
-    } finally { this.setData({ clearingBusiness: false }); }
-  },
-  async resetAll() {
-    if (runtime.mode !== "trial" || !this.data.admin || this.data.resettingAll || this.data.clearingBusiness) return;
-    await runAsync(async () => {
-      const plan = await cloudCall<{ epoch: string; version: number; members: number; applications: number; semesters: number; classes: number; courses: number; records: number; files: number; resetId: string }>("resetAllPreview");
-      wx.showModal({ title: plan.resetId ? "继续彻底重置" : "彻底重置试用环境",
-        content: `永久清空全部 ${plan.members} 名成员（含你和所有管理员）、${plan.applications} 份申请、${plan.semesters} 个学期、${plan.classes} 个班级、${plan.courses} 个课程时段、全部排班和无课时间、${plan.records} 份记录、操作记录及照片。已登记照片 ${plan.files} 张；还将扫描试用照片目录清理未登记照片。保留云环境、代码、密钥和你的重新初始化资格。不清除平台备份/日志、手机副本和导出文件。不可撤销，请输入：清空全部业务数据`,
-        editable: true, confirmText: "彻底重置", confirmColor: "#c73535",
-        success: async r => {
-          if (!r.confirm) return;
-          if (r.content !== "清空全部业务数据") { wx.showToast({ title: "确认文字不符，未执行", icon: "none" }); return; }
-          this.setData({ resettingAll: true, resetProgress: "正在冻结写入…" });
-          try {
-            await runAsync(async () => {
-              const start = await cloudCall<{ resetId: string }>("resetAllBegin", { epoch: plan.epoch, version: plan.version, confirmation: r.content });
-              for (let i = 0; i < 100; i++) {
-                const next = await cloudCall<{ done: boolean; waitMs: number; snapshot?: CloudSnapshot }>("resetAllStep", { resetId: start.resetId });
-                if (next.done && next.snapshot) {
-                  acceptSnapshot(next.snapshot);
-                  const prefix = "xuedu.form." + runtime.env + ".trial.";
-                  for (const key of wx.getStorageInfoSync().keys) if (key.startsWith(prefix)) wx.removeStorageSync(key);
-                  wx.reLaunch({ url: "/pages/join/join" });
-                  return;
-                }
-                this.setData({ resetProgress: next.waitMs ? "等待正在上传的请求结束…" : "正在分批核查并清理照片…" });
-                if (next.waitMs) await new Promise(resolve => setTimeout(resolve, Math.min(1000, next.waitMs)));
-              }
-              throw new Error("本轮处理上限已到，写入仍冻结。请再次点击彻底重置继续，不会重复创建任务");
-            });
-          } finally { this.setData({ resettingAll: false, resetProgress: "如发生中断，请再次预览并继续；未完成前写入保持冻结。" }); }
-        },
-      });
     });
   },
 });

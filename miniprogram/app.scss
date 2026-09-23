@@ -429,3 +429,11 @@ textarea.input {
 .v2-page .v2-report-actions button { flex: 1 1 0; min-width: 0; margin: 0; padding: 20rpx 10rpx; }
 .v2-copy-report { display: block; text-align: center; margin-top: 22rpx; padding: 10rpx 0; }
 .v2-report-file { margin-top: 20rpx; }
+
+/* 记录卡保留课程快照与详情入口，管理资料卡继续使用通用布局。 */
+.v2-record-head { gap: 12rpx; align-items: flex-start; }
+.v2-record-head .row { min-width: 0; flex-wrap: wrap; }
+.v2-record-head > .muted { flex: 0 0 auto; }
+.v2-record-footer { gap: 12rpx; margin-top: 12rpx; align-items: flex-start; }
+.v2-record-meta { flex: 1 1 auto; min-width: 0; }
+.v2-record-link { flex: 0 0 auto; white-space: nowrap; }

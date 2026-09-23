@@ -16,7 +16,7 @@ async function fixture(work:(f:any)=>Promise<void>,activeSemesterId='semester') 
  const workspace:Workspace={id:'main',epoch:'ui',version:1,permissionsVersion:1,protocolVersion:2,activeSemesterId,maintenance:'',maxExecutionMs:3000};
  const semester={name:'合成秋季',startDate:'2026-09-07',weeks:20,days:5,periods:14,status:'active',edition:'合成组织'};
  const course={id:'course',name:'合成数学',classIds:['c'],classroom:'101',start:1,end:2,weekday:1,weeks:[1],expected:20};
- const repo=new MemoryRepository(workspace,{members:[e('admin',{name:'合成管理员',studentNo:'001',role:'admin',classId:'c',active:true},{studentNo:'001'}),e('member',{name:'合成成员',studentNo:'002',role:'member',classId:'c',active:true},{studentNo:'002'})],bindings:[e('ba',{},{identityKey:'owner',memberId:'admin'}),e('bm',{},{identityKey:'member',memberId:'member'})],classes:[e('c',{name:'合成班',grade:'26',major:'合成专业',active:true})],semesters:[e('semester',semester),e('historical',{...semester,name:'历史合成学期',startDate:'2025-09-01',status:'draft'})],
+ const repo=new MemoryRepository(workspace,{members:[e('admin',{name:'合成管理员',studentNo:'001',role:'admin',classId:'c',active:true},{studentNo:'001'}),e('member',{name:'合成成员',studentNo:'002',role:'member',classId:'c',active:true},{studentNo:'002'})],bindings:[e('ba',{},{identityKey:'owner',memberId:'admin'}),e('bm',{},{identityKey:'member',memberId:'member'})],classes:[e('c',{name:'合成班',grade:'26',major:'合成专业',active:true})],semester_classes:[e('sc',{},{semesterId:'semester',parentId:'c'})],semesters:[e('semester',semester),e('historical',{...semester,name:'历史合成学期',startDate:'2025-09-01',status:'draft'})],
  applications:Array.from({length:55},(_,i)=>e('app-'+String(i).padStart(3,'0'),{name:'申请'+i,studentNo:'A'+i,classId:'c',classLabel:'合成班',status:i===1||i===52?'pending':'rejected'},{identityKey:'applicant'+i,studentNo:'A'+i})),
  availability:[e('previous',{slots:['1:1','1:2'],note:'上一周备注',optedIn:true},{semesterId:'semester',memberId:'admin',week:1})],
  tasks:[e('task',{status:'submitted',memberName:'合成成员',classLabel:'合成班',course,date:'2026-09-07'},{semesterId:'semester',week:1,memberId:'member'}),e('pending',{status:'pendingAdjustment',memberName:'待调整成员',classLabel:'合成班',course,date:'2026-09-07'},{semesterId:'semester',week:1,memberId:'admin'}),e('cancelled',{status:'cancelled',memberName:'不应显示'},{semesterId:'semester',week:1,memberId:'member'})],
@@ -71,7 +71,7 @@ test('V2前端：切回启用学期按校历选周，历史学期从首周浏览
 
 test('V2记录页：周统计随切周重新读取，跳过周与无学期不沿用旧进度',async()=>fixture(async f=>{
  const page=await f.page('records',{week:'1'});assert.equal(page.data.weekSubmitted,1);assert.equal(page.data.weekTotal,2);await page.showStats();assert.equal(page.data.statsCount,1);
- await page.moveWeek(event({delta:'1'}));assert.equal(page.data.week,2);assert.equal(page.data.skipped,true);assert.equal(page.data.weekSubmitted,0);assert.equal(page.data.weekTotal,0);assert.equal(page.data.statsLoaded,true);assert.equal(page.data.statsCount,0);
+ await page.moveWeek(event({delta:'1'}));assert.equal(page.data.week,2);assert.equal(page.data.skipped,true);assert.equal(page.data.weekSubmitted,0);assert.equal(page.data.weekTotal,0);assert.equal(page.data.statsLoaded,true);assert.equal(page.data.statsCount,0);assert.equal(page.data.stats.length,1,'仍有配置年级行，空状态必须依据记录数');assert.equal(page.data.stats[0].count,0);
  const reports=f.calls.filter((c:any)=>c.payload?.kind==='report');assert.equal(reports.length,2);assert.equal(reports.at(-1).payload.week,2);
 }));
 test('V2记录页：无启用学期保持空业务状态，不查询周记录',async()=>fixture(async f=>{
@@ -80,5 +80,12 @@ test('V2记录页：无启用学期保持空业务状态，不查询周记录',a
 test('V2记录页：列表与统计排在导出前，按钮不再按原生文字宽度逐个换行',()=>{
  const template=readFileSync(new URL('../miniprogram/templates/cloud.wxml',import.meta.url),'utf8');const styles=readFileSync(new URL('../miniprogram/app.scss',import.meta.url),'utf8');
  assert.ok(template.indexOf('wx:for="{{visibleRows}}"')<template.indexOf('class="card v2-record-export"'));assert.ok(template.indexOf('statsLoaded}}"')<template.indexOf('class="card v2-record-export"'));
- assert.doesNotMatch(template,/bindtap="showStats"/);assert.match(template,/class="v2-report-actions"/);assert.match(styles,/\.v2-page \.v2-actions button \{[^}]*flex: 1 1 220rpx;[^}]*min-width: 0;[^}]*margin: 0;/);
+ assert.doesNotMatch(template,/bindtap="showStats"/);assert.match(template,/class="v2-report-actions"/);assert.match(template,/wx:if="\{\{statsCount > 0\}\}"[^]*wx:for="\{\{stats\}\}"[^]*<view wx:else class="v2-note"/);assert.match(styles,/\.v2-page \.v2-actions button \{[^}]*flex: 1 1 220rpx;[^}]*min-width: 0;[^}]*margin: 0;/);
 });
+
+test('V2记录页：有记录使用课程快照卡和轻量详情入口',async()=>fixture(async f=>{
+ const page=await f.page('records',{week:'1'});assert.equal(page.data.visibleRows.length,1);const record=page.data.visibleRows[0];assert.equal(record.data.memberName,'合成成员');assert.equal(record.data.classLabel,'合成班');assert.equal(record.data.date,'2026-09-07');assert.equal(record.data.course.name,'合成数学');
+ page.open(event({id:record.id}));assert.match(f.navigation[0],/\/pages\/record\/record\?id=record&semesterId=semester/);
+ const template=readFileSync(new URL('../miniprogram/templates/cloud.wxml',import.meta.url),'utf8');const recordsCard=template.split("<block wx:if=\"{{view === 'records'}}\"><view class=\"row between v2-record-head\">")[1]?.split('</block>\n        <block wx:else>')[0] || '';
+ assert.match(recordsCard,/item.data.memberName/);assert.match(recordsCard,/item.data.date/);assert.match(recordsCard,/item.data.classLabel/);assert.match(recordsCard,/item.data.course.start/);assert.match(recordsCard,/data-id="\{\{item.id\}\}" bindtap="open"/);assert.doesNotMatch(recordsCard,/<button|item.detail|item.statusLabel/);
+}));

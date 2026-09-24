@@ -10,7 +10,8 @@
     "pages/record/record",
     "pages/manage/manage",
     "pages/join/join",
-    "pages/demo/demo"
+    "pages/demo/demo",
+    "pages/review/review"
   ],
   "window": {
     "navigationBarTextStyle": "black",

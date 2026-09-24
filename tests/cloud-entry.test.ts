@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import * as gateway from "../server/v2/gateway";
 import * as photos from "../server/v2/photos";
+import * as review from "../server/v2/review";
 import { MemoryRepository } from "../server/v2/memory";
 
 const APPID = "wx5c7d4a458873c686";
@@ -22,6 +23,7 @@ function entry(context: { OPENID?: string; APPID?: string }, bootstrapOpenid = "
       if (name === "./generated/v2/gateway.js") return gateway;
       if (name === "./generated/v2/postgres.js") return { PostgresRepository: class { constructor() { return repository; } } };
       if (name === "./generated/v2/photos.js") return photos;
+      if (name === "./generated/v2/review.js") return review;
       if (name === "@cloudbase/js-sdk") return { init(options: any) {
         sdkInitializations++; assert.equal(options.accessKey, key); assert.equal(options.env, env.SCF_NAMESPACE);
         if (sdkFailure) throw new Error(sdkFailure); return app;

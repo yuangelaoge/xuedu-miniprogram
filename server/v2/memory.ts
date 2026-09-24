@@ -32,6 +32,9 @@ export class MemoryRepository implements Repository {
     this.state = clone(workspace);
     for (const resource of RESOURCES) this.rows.set(resource, new Map((seed[resource] || []).map(e => [e.id, clone(e)])));
   }
+  snapshot(): { workspace: Workspace; rows: Partial<Record<Resource, Entity[]>> } {
+    return { workspace: clone(this.state), rows: Object.fromEntries([...this.rows].map(([resource, values]) => [resource, clone([...values.values()])])) };
+  }
   async workspace() { return clone(this.state); }
   async get(resource: Resource, id: string) { const row = this.rows.get(resource)?.get(id); return row ? clone(row) : undefined; }
   async query(resource: Resource, q: Query): Promise<PageResult> {

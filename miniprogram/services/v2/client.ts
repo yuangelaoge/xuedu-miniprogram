@@ -11,6 +11,20 @@ let epoch = "";
 let generation = 0;
 let workspaceVersion = -1;
 let bootstrapPending: Promise<Boot> | undefined;
+const reviewKey = () => "xuedu.review.active." + runtime.env;
+export function reviewActive(): boolean { return runtime.mode === "cloud" && wx.getStorageSync(reviewKey()) === true; }
+function resetCloudSession(): void { boot=undefined; epoch=""; generation++; workspaceVersion=-1; bootstrapPending=undefined; }
+export function leaveReviewLocally(): void { wx.removeStorageSync(reviewKey()); resetCloudSession(); }
+export async function reviewControl(operation: "reviewLogin" | "reviewStatus" | "reviewRole" | "reviewLogout", payload: Record<string,unknown> = {}): Promise<{role?:string;expiresAt?:string;ended?:boolean}> {
+  if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
+  if (initializedEnv !== runtime.env) { wx.cloud.init({env:runtime.env,traceUser:false}); initializedEnv=runtime.env; resetCloudSession(); }
+  const result = (await wx.cloud.callFunction({name:runtime.functionName,data:{protocolVersion:2,operation,review:true,payload}})).result as unknown as {ok:boolean;data?:ApiResponse<{role?:string;expiresAt?:string;ended?:boolean}>;error?:string};
+  if (!result?.ok || result.data?.protocolVersion !== 2) throw new Error(result?.error || "审核体验暂时不可用");
+  if (operation === "reviewLogin") wx.setStorageSync(reviewKey(),true);
+  if (operation === "reviewLogin" || operation === "reviewRole") resetCloudSession();
+  if (operation === "reviewLogout") leaveReviewLocally();
+  return result.data.data;
+}
 export function currentBoot(): Boot {
   if (!boot) throw new Error("请先连接云端");
   return boot;
@@ -20,9 +34,9 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
   if (initializedEnv !== runtime.env) { wx.cloud.init({ env: runtime.env, traceUser: false }); initializedEnv = runtime.env; boot = undefined; epoch = ""; generation++; workspaceVersion = -1; }
   const startedGeneration = generation;
-  const response = await wx.cloud.callFunction({ name: runtime.functionName, data: { protocolVersion: 2, operation, epoch: epoch || undefined, ...options } });
-  const result = response.result as unknown as { ok: boolean; data?: ApiResponse<T>; error?: string };
-  if (!result?.ok || !result.data) throw new Error(result?.error || "云端请求失败，请刷新重试");
+  const response = await wx.cloud.callFunction({ name: runtime.functionName, data: { protocolVersion: 2, operation, epoch: epoch || undefined, review: reviewActive(), ...options } });
+  const result = response.result as unknown as { ok: boolean; data?: ApiResponse<T>; error?: string; code?: string };
+  if (!result?.ok || !result.data) { if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw new Error(result?.error || "云端请求失败，请刷新重试"); }
   if (result.data.protocolVersion !== 2) throw new Error("请更新小程序，云端协议不匹配");
   if (startedGeneration !== generation) throw new Error("业务数据轮次已变化，请刷新后重试");
   if (epoch && epoch !== result.data.epoch && operation !== "bootstrap" && operation !== "clearStep") throw new Error("业务数据轮次已变化，请刷新后重试");
@@ -37,7 +51,7 @@ export async function bootstrap(): Promise<Boot> {
   if (!bootstrapPending) bootstrapPending = call<Boot>("bootstrap").then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
   return bootstrapPending;
 }
-function viewKey(): string { return "xuedu.view." + runtime.env + "." + (currentBoot().member?.id || "visitor"); }
+function viewKey(): string { return "xuedu.view." + runtime.env + (reviewActive() ? ".review." : ".") + (currentBoot().member?.id || "visitor"); }
 export function viewSemester(): string {
   const saved = wx.getStorageSync(viewKey());
   return typeof saved === "string" && saved ? saved : currentBoot().workspace.activeSemesterId;

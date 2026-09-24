@@ -2,7 +2,7 @@ import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protoc
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
-import { bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey } from "./client";
+import { bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
 
 import { boundedWeek, weekRange } from "../../domain/calendar";
 
@@ -66,7 +66,7 @@ export function registerCloudPage(view: View): void {
       availabilityDays: [] as {n:number;name:string}[], availabilityRows: [] as {n:number;cells:{key:string;selected:boolean}[]}[],
       recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
       eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
-      cloudMode: true, title: titles[view], view, busy: false, refreshing: false, loadingInitial: ["home", "schedule", "records", "profile"].includes(view), hasLoaded: false, error: "", status: "", canInitialize: false, removed: false,
+      cloudMode: true, reviewMode: reviewActive(), title: titles[view], view, busy: false, refreshing: false, loadingInitial: ["home", "schedule", "records", "profile"].includes(view), hasLoaded: false, error: "", status: "", canInitialize: false, removed: false,
       admin: false, manager: false, memberName: "", memberId: "", role: "", maintenance: "",
       autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
       selectedApplications: [] as string[], section: view === "manage" ? "members" : view === "records" ? "records" : "", rows: [] as Row[], cursor: "",
@@ -84,7 +84,7 @@ export function registerCloudPage(view: View): void {
     onPullDownRefresh() { void this.load().finally(() => wx.stopPullDownRefresh()); },
     async load(more = false): Promise<void> {
       if (this.data.busy) return;
-      this.setData({ busy: true, refreshing: this.data.hasLoaded && !more, loadingInitial: !this.data.hasLoaded && ["home", "schedule", "records", "profile"].includes(view), error: "", statsLoaded: this.data.hasLoaded && this.data.statsLoaded });
+      this.setData({ busy: true, reviewMode: reviewActive(), refreshing: this.data.hasLoaded && !more, loadingInitial: !this.data.hasLoaded && ["home", "schedule", "records", "profile"].includes(view), error: "", statsLoaded: this.data.hasLoaded && this.data.statsLoaded });
       try {
         const boot = await bootstrap(), member = boot.member;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
@@ -247,7 +247,7 @@ export function registerCloudPage(view: View): void {
     navigate(e: UiEvent) {
       const target = e.currentTarget.dataset.target;
       if (["schedule", "reports", "profile", "index"].includes(target)) { wx.switchTab({url:"/pages/" + target + "/" + target}); return; }
-      if (["manage", "courses", "availability", "join"].includes(target)) {
+      if (["manage", "courses", "availability", "join", "review"].includes(target)) {
         const params = target === "manage" && e.currentTarget.dataset.section ? "?section=" + encodeURIComponent(e.currentTarget.dataset.section) : target === "availability" && view === "schedule" ? "?week=" + this.data.week + "&semesterId=" + encodeURIComponent(this.data.semesterId) : target === "courses" ? "?semesterId=" + encodeURIComponent(this.data.semesterId) : "";
         wx.navigateTo({ url: "/pages/" + target + "/" + target + params });
       }

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 export async function buildCloud(outputDirectory = join(root, "cloudfunctions/xueduTrial/generated")) {
-  const names = ["gateway", "postgres", "photos"];
+  const names = ["gateway", "postgres", "photos", "review"];
   const forbidden = ["server/gateway.ts", "server/postgres.ts", "server/policy.ts", "miniprogram/domain/seed.ts"];
   const results = await Promise.all(names.map(name => build({
     absWorkingDir: root, entryPoints: [`server/v2/${name}.ts`], bundle: true,

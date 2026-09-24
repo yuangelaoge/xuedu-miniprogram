@@ -3,9 +3,10 @@
  <view class="card">
   <view class="menu-row" data-target="availability" bindtap="navigate"><view class="row"><view class="menu-icon">▦</view><view>{{admin ? '我也听课 / 无课时间' : '我的无课时间'}}</view></view><text class="chevron">›</text></view>
   <view wx:if="{{manager}}" class="menu-row" data-target="manage" data-section="applications" bindtap="navigate"><view class="row"><view class="menu-icon">▤</view><view>管理工作台</view></view><view class="row"><text wx:if="{{pendingLabel}}" class="pill amber">{{pendingLabel}}</text><text class="chevron">›</text></view></view>
+  <view class="menu-row" data-target="review" bindtap="navigate"><view class="row"><view class="menu-icon">◉</view><view>{{reviewMode ? '切换审核样例角色 / 退出' : '微信审核账号体验'}}</view></view><text class="chevron">›</text></view>
   <view class="menu-row" bindtap="rules"><view class="row"><view class="menu-icon">≡</view><view>听课说明</view></view><text class="chevron">›</text></view>
  </view>
- <view wx:if="{{admin}}" class="card"><view class="menu-row" bindtap="stepDown"><view>本人卸任管理员</view><text class="chevron">›</text></view></view>
+ <view wx:if="{{admin && !reviewMode}}" class="card"><view class="menu-row" bindtap="stepDown"><view>本人卸任管理员</view><text class="chevron">›</text></view></view>
  <view wx:if="{{manager && pendingMore}}" class="muted small">申请提示来自前 50 条；进入工作台可继续加载核查。</view>
  <view class="footer-note">{{semesterName}} · {{modeLabel}} v1.0</view>
 </view>

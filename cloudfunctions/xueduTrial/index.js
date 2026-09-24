@@ -4,10 +4,11 @@ const crypto = require("crypto");
 const { createGatewayV2, BusinessError } = require("./generated/v2/gateway.js");
 const { PostgresRepository } = require("./generated/v2/postgres.js");
 const { createPhotos } = require("./generated/v2/photos.js");
+const { createReviewGateway, PostgresReviewStore } = require("./generated/v2/review.js");
 const APPID = "wx5c7d4a458873c686";
 const ENVIRONMENT = "xuedu-trial-d2gs2dpnla9206eb3";
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
-let gateway;
+let gateway, reviewGateway;
 
 function configuration() {
   // PLATFORM_FUNCTION_TIMEOUT_MS is a deployment check value, NOT a platform-injected variable.
@@ -20,7 +21,9 @@ function configuration() {
   const key = process.env.CLOUDBASE_API_KEY || process.env.CLOUDBASE_APIKEY;
   const environmentMatches = (process.env.SCF_NAMESPACE || process.env.TCB_ENV) === ENVIRONMENT;
   const backendMatches = !process.env.XUEDU_STORAGE || process.env.XUEDU_STORAGE === "postgresql";
-  return { maxExecutionMs, executionConfigured, key, environmentMatches, backendMatches };
+  return { maxExecutionMs, executionConfigured, key, environmentMatches, backendMatches,
+    reviewEnabled: process.env.REVIEW_ENABLED === "true", reviewPasswordHash: process.env.REVIEW_PASSWORD_HASH || "",
+    reviewSessionKey: process.env.REVIEW_SESSION_KEY || "", reviewAccessUntil: process.env.REVIEW_ACCESS_UNTIL || "" };
 }
 const knownErrors = {
   AUTO_APPROVAL_EXPIRED: "自动通过已到期，请重新提交转入人工审核",
@@ -33,6 +36,7 @@ const knownErrors = {
   INVALID_BINDING: "微信绑定无效", INVALID_ADMIN_CLASS: "管理员班级资料缺失，请联系维护人员",
   UPDATE_REQUIRED: "请更新小程序", LEGACY_MAINTENANCE_PENDING: "请先完成旧版本维护任务",
   CUTOVER_REQUIRED: "正在准备数据切换，请稍后再试", DATABASE_UNAVAILABLE: "数据库暂时不可用，请稍后重试",
+  REVIEW_STORE_UNAVAILABLE: "审核体验暂时不可用，请稍后再试", REVIEW_VERSION_CONFLICT: "审核样例已变化，请刷新后重试",
 };
 
 exports.main = async event => {
@@ -55,10 +59,20 @@ exports.main = async event => {
         keyVariableNames: ["CLOUDBASE_API_KEY", "CLOUDBASE_APIKEY"].filter(name => !!process.env[name]),
       } };
     }
+    const reviewOperation = ["reviewLogin", "reviewStatus", "reviewRole", "reviewLogout"].includes(event.operation);
     const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
-    if (!allowed.includes(event.operation)) return { ok: false, code: "UPGRADE_REQUIRED", error: "请更新小程序" };
+    if (!allowed.includes(event.operation) && !reviewOperation) return { ok: false, code: "UPGRADE_REQUIRED", error: "请更新小程序" };
     if (!config.executionConfigured || !config.environmentMatches || !config.backendMatches || !config.key)
       return { ok: false, code: "CONFIGURATION", error: "云端配置尚未完成，请联系维护人员核对环境、服务端密钥和实际函数执行上限" };
+    if (reviewOperation || event.review === true) {
+      if (!reviewGateway) {
+        const reviewApp = require("@cloudbase/js-sdk").init({ env: ENVIRONMENT, accessKey: config.key });
+        reviewGateway = createReviewGateway({ appid: APPID, enabled: config.reviewEnabled, passwordHash: config.reviewPasswordHash,
+          sessionKey: config.reviewSessionKey, accessUntil: config.reviewAccessUntil, maxExecutionMs: config.maxExecutionMs,
+          uuid: () => crypto.randomUUID(), store: new PostgresReviewStore(reviewApp.rdb()) });
+      }
+      return { ok: true, data: await reviewGateway(event, context) };
+    }
     if (!gateway) {
       const pgApp = require("@cloudbase/js-sdk").init({ env: ENVIRONMENT, accessKey: config.key });
       gateway = createGatewayV2({

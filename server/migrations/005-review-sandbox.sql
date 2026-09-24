@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS xuedu_review.sessions (
   digest text PRIMARY KEY CHECK (digest ~ '^[0-9a-f]{64}$'),
   snapshot jsonb CHECK (snapshot IS NULL OR octet_length(snapshot::text) <= 524288),
   version bigint NOT NULL DEFAULT 1 CHECK (version > 0),
-  role text NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','leader','member')),
+  role text NOT NULL DEFAULT 'admin' CHECK (role IN ('admin','leader','member','applicant')),
   expires_at timestamptz NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
@@ -69,7 +69,7 @@ CREATE OR REPLACE FUNCTION public.xuedu_review_role(p_digest text,p_expected_ver
 RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE v bigint; BEGIN
   PERFORM xuedu_v2.require_server();
-  IF p_role NOT IN ('admin','leader','member') OR p_digest !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'INVALID_REVIEW_REQUEST'; END IF;
+  IF p_role NOT IN ('admin','leader','member','applicant') OR p_digest !~ '^[0-9a-f]{64}$' THEN RAISE EXCEPTION 'INVALID_REVIEW_REQUEST'; END IF;
   UPDATE xuedu_review.sessions SET role=p_role,version=version+1,updated_at=clock_timestamp()
    WHERE digest=p_digest AND version=p_expected_version AND expires_at>clock_timestamp() AND snapshot IS NOT NULL RETURNING version INTO v;
   IF v IS NULL THEN RAISE EXCEPTION 'REVIEW_VERSION_CONFLICT'; END IF;

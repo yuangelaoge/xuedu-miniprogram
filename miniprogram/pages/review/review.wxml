@@ -3,9 +3,9 @@
   <view class="notice">使用隔离的审核样例资料，可分别体验管理员、组部长与普通成员。账号只在指定期限内有效，原微信身份仍由云端校验。</view>
   <view wx:if="{{error}}" class="notice warn">{{error}}</view>
   <view wx:if="{{active}}" class="card">
-    <view class="section-title">当前角色：{{role === 'admin' ? '管理员' : role === 'leader' ? '组部长' : '普通成员'}}</view>
+    <view class="section-title">当前角色：{{role === 'admin' ? '管理员' : role === 'leader' ? '组部长' : role === 'applicant' ? '新用户申请' : '普通成员'}}</view>
     <view class="muted small">会话截止：{{expiresAt}}</view>
-    <view class="review-role-buttons"><button data-role="admin" disabled="{{busy}}" bindtap="switchRole">体验管理员</button><button data-role="leader" disabled="{{busy}}" bindtap="switchRole">体验组部长</button><button data-role="member" disabled="{{busy}}" bindtap="switchRole">体验普通成员</button></view>
+    <view class="review-role-buttons"><button data-role="admin" disabled="{{busy}}" bindtap="switchRole">体验管理员</button><button data-role="leader" disabled="{{busy}}" bindtap="switchRole">体验组部长</button><button data-role="member" disabled="{{busy}}" bindtap="switchRole">体验普通成员</button><button data-role="applicant" disabled="{{busy}}" bindtap="switchRole">体验新用户申请</button></view>
     <button disabled="{{busy}}" bindtap="logout">退出审核体验</button>
   </view>
   <view wx:else class="card">

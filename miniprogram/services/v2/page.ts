@@ -52,6 +52,17 @@ function availabilityGrid(slots: {key:string}[], selected: string[]) {
 }
 function displayError(e: unknown): void { wx.showModal({ title: "未完成", content: e instanceof Error ? e.message : "操作失败，请刷新重试", showCancel: false }); }
 
+export async function previewAuthorizedImages(urls: string[], index = 0): Promise<void> {
+  if (!urls.length) return;
+  let visible = urls;
+  if (reviewActive() && urls.some(url => url === "/assets/review-signature.png")) {
+    // Code-package images are valid for <image>, but previewImage expects a local file path.
+    const sample = await wx.getImageInfo({ src: "/assets/review-signature.png" });
+    visible = urls.map(url => url === "/assets/review-signature.png" ? sample.path : url);
+  }
+  await wx.previewImage({ urls: visible, current: visible[Math.max(0, Math.min(index, visible.length - 1))] });
+}
+
 export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   Page({
@@ -507,16 +518,16 @@ export function registerCloudPage(view: View): void {
       this.setData({busy:true});
       try {const response=await call<{urls:string[]}>("photoUrls",{semesterId:this.data.semesterId,payload:{ids:this.data.photoIds}});
         if(response.data.urls.length !== this.data.photoIds.length)throw new Error("照片链接不完整，请重试");
-        this.setData({formPhotos:response.data.urls});wx.previewImage({urls:response.data.urls,current:response.data.urls[index]});
+        this.setData({formPhotos:response.data.urls});await previewAuthorizedImages(response.data.urls,index);
       }catch(e){displayError(e);}finally{this.setData({busy:false});}
     },
     async previewPhoto(e: UiEvent) {
       if(this.data.busy || !this.data.record)return;const index=Math.max(0,this.data.photoUrls.indexOf(e.currentTarget.dataset.url));
       this.setData({busy:true});
-      try {const r=await call<{urls:string[]}>("photoUrls",{semesterId:this.data.semesterId,payload:{recordId:this.data.record.id}});this.setData({photoUrls:r.data.urls});if(r.data.urls.length)wx.previewImage({urls:r.data.urls,current:r.data.urls[index] || r.data.urls[0]});}catch(e){displayError(e);}finally{this.setData({busy:false});}
+      try {const r=await call<{urls:string[]}>("photoUrls",{semesterId:this.data.semesterId,payload:{recordId:this.data.record.id}});this.setData({photoUrls:r.data.urls});await previewAuthorizedImages(r.data.urls,index);}catch(e){displayError(e);}finally{this.setData({busy:false});}
     },
     async history() { try { if (!this.data.record) return; if (this.data.versions.length && !this.data.versionCursor) return; const r = await query("recordVersions", this.data.semesterId, { id: this.data.record.id }, this.data.versionCursor); this.setData({ versions: this.data.versions.concat(r.data.items.map(row)), versionCursor: r.cursor || "" }); } catch (e) { displayError(e); } },
-    async versionPhotos(e: UiEvent) { try { const r = await call<{ urls: string[] }>("photoUrls", { semesterId: this.data.semesterId, payload: { recordId: this.data.targetId, versionId: e.currentTarget.dataset.id } }); wx.previewImage({ urls: r.data.urls }); } catch (e) { displayError(e); } },
+    async versionPhotos(e: UiEvent) { try { const r = await call<{ urls: string[] }>("photoUrls", { semesterId: this.data.semesterId, payload: { recordId: this.data.targetId, versionId: e.currentTarget.dataset.id } }); await previewAuthorizedImages(r.data.urls); } catch (e) { displayError(e); } },
     async showStats(preserve = false) {
       if(this.data.busy || !this.data.manager)return;
       this.setData({busy:true,statsLoaded:preserve && this.data.statsLoaded,recordTab:"stats"});

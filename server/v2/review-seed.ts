@@ -5,7 +5,7 @@ export interface ReviewSnapshot {
   rows: Partial<Record<Resource, Entity[]>>;
 }
 
-export const REVIEW_ROLES = ["admin", "leader", "member"] as const;
+export const REVIEW_ROLES = ["admin", "leader", "member", "applicant"] as const;
 export type ReviewRole = typeof REVIEW_ROLES[number];
 export const reviewIdentity = (digest: string, role: ReviewRole) => `review:${digest}:${role}`;
 
@@ -38,14 +38,14 @@ export function makeReviewSeed(digest: string, uuid: string, now: number, maxExe
   const record = entity("review-record", recordData, { semesterId, week: 1, memberId: leader.id, taskId: leaderTask.id });
   const rows: ReviewSnapshot["rows"] = {
     classes: [classA, classB], members: [admin, leader, member],
-    bindings: REVIEW_ROLES.map((role, index) => entity(`review-binding-${role}`, {}, { identityKey: reviewIdentity(digest, role), memberId: [admin, leader, member][index].id })),
+    bindings: (["admin", "leader", "member"] as const).map((role, index) => entity(`review-binding-${role}`, {}, { identityKey: reviewIdentity(digest, role), memberId: [admin, leader, member][index].id })),
     semesters: [entity(semesterId, { name: "审核样例学期", startDate: monday, weeks: 4, days: 5, periods: 14, grades: ["26"], edition: "审核样例", status: "active" })],
     semester_classes: [entity("review-link-a", {}, { semesterId, parentId: classA.id }), entity("review-link-b", {}, { semesterId, parentId: classB.id })],
     courses: [entity(courseA.id, { name: courseA.name, course: courseA, active: true }, { semesterId }), entity(courseB.id, { name: courseB.name, course: courseB, active: true }, { semesterId })],
     occurrences: [occA1, occB1, occA2, occB2], plans: [plan], tasks: [memberTask, leaderTask],
     availability: [entity("review-member-available", { slots: ["1:3", "1:4"], optedIn: true, note: "审核样例" }, { semesterId, week: 2, memberId: member.id }), entity("review-leader-available", { slots: ["1:1", "1:2"], optedIn: true, note: "审核样例" }, { semesterId, week: 2, memberId: leader.id })],
     records: [record], record_versions: [entity("review-version", { ...recordData, recordVersion: 1 }, { semesterId, week: 1, memberId: leader.id, taskId: leaderTask.id, recordId: record.id })], photos: [samplePhoto],
-    applications: [entity("review-application", { name: "样例申请人", studentNo: "REVIEW-N", classId: classB.id, classLabel: classB.data.name, status: "pending", createdAt: new Date(now).toISOString() }, { identityKey: `review:${digest}:applicant`, studentNo: "REVIEW-N" })],
+    applications: [entity("review-application", { name: "样例申请人", studentNo: "REVIEW-N", classId: classB.id, classLabel: classB.data.name, status: "pending", createdAt: new Date(now).toISOString() }, { identityKey: `review:${digest}:pending`, studentNo: "REVIEW-N" })],
   };
   return { workspace: { id: "review", epoch, version: 1, permissionsVersion: 1, protocolVersion: 2, activeSemesterId: semesterId, maintenance: "", maxExecutionMs }, rows };
 }

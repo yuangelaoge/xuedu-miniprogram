@@ -36,6 +36,11 @@ async function fixture(work: (f: any) => Promise<void>) {
     records: [e('record', data, recordIndexes)], record_versions: [e('version-one', { ...data, actorId: 'member', recordVersion: 1, reason: '首次提交' }, { ...recordIndexes, recordId: 'record' })],
     photos: [e('photo', { storageId: 'pg://xuedu-photos/cloud/epoch-boundary/photo.jpg' }, { ...recordIndexes, recordId: 'record' })],
   });
+  const reads: {resource:string;method:string}[] = [];
+  for (const method of ['get','query','count'] as const) {
+    const original = repository[method].bind(repository) as any;
+    (repository as any)[method] = (...args:any[]) => { reads.push({resource:args[0],method}); return original(...args); };
+  }
   let who = 'owner', registered: any, sequence = 0;
   const errors: string[] = [], calls: any[] = [], modalCalls: any[] = [];
   const gateway = createGatewayV2({ repository, appid: 'app', bootstrapOpenid: 'owner', maxExecutionMs: 3000,
@@ -48,7 +53,7 @@ async function fixture(work: (f: any) => Promise<void>) {
     cloud: { init() {}, async callFunction({ data }: any) { calls.push(data); try { return { result: { ok: true, data: await gateway(data, { OPENID: who, APPID: 'app' }) } }; } catch (error) { return { result: { ok: false, error: (error as Error).message } }; } } } };
   const page = async (view: string, q = {}) => { registerCloudPage(view as any); const p = { ...registered, data: structuredClone(registered.data), setData(values: any) { Object.assign(this.data, values); } }; p.onLoad({...(view === "home" ? {} : {week:"1"}),...q}); await p.load(); return p; };
   const fill = (p: any, values: Record<string, unknown>) => { p.data.fields = p.data.fields.map((field: any) => values[field.key] === undefined ? field : { ...field, value: String(values[field.key]) }); };
-  try { await work({ repository, page, fill, errors, calls, modalCalls, who: (value: string) => { who = value; }, event }); }
+  try { await work({ repository, reads, gateway, storage, page, fill, errors, calls, modalCalls, who: (value: string) => { who = value; }, event }); }
   finally { g.wx = oldWx; g.Page = oldPage; Object.assign(runtime, previousRuntime); }
 }
 
@@ -174,4 +179,98 @@ test('首页启动合并：兼容尚未支持附带首页数据的旧后端', as
   assert.equal(home.data.error, '');
   assert.equal(f.calls.length, 3);
   assert.equal(home.data.semesterId, 'semester');
+}));
+
+
+test('页面合并：主要页面各一次启动请求，详情只多一次照片授权', async () => fixture(async f => {
+  for (const [view,q] of [['profile',{}],['schedule',{}],['availability',{}],['records',{}],['courses',{}],['manage',{}],['join',{}],['submission',{taskId:'pending-task',semesterId:'semester'}]] as const) {
+    const before=f.calls.length;
+    const p=await f.page(view,q);
+    assert.equal(p.data.error,'',view);
+    assert.equal(f.calls.length-before,1,view+'只请求一次');
+    assert.equal(f.calls.at(-1).payload.page.view,view);
+  }
+  const before=f.calls.length, detail=await f.page('record',{id:'record',semesterId:'semester'});
+  assert.equal(detail.data.error,'');assert.equal(detail.data.record.id,'record');
+  assert.equal(f.calls.length-before,2);assert.equal(f.calls.at(-1).operation,'photoUrls');
+}));
+
+test('页面合并：无课时间和个人页不扫描无关资料，记录概览计数不重复读全周明细', async () => fixture(async f => {
+  const availability=await f.page('availability');
+  assert.equal(availability.data.error,'');
+  assert.ok(!f.reads.some((r:any)=>['tasks','records','occurrences','plans','classes'].includes(r.resource)));
+  f.reads.length=0;
+  const profile=await f.page('profile');
+  assert.equal(profile.data.className,'合成班一');
+  assert.equal(f.reads.filter((r:any)=>r.resource==='classes'&&r.method==='get').length,1);
+  assert.ok(!f.reads.some((r:any)=>r.resource==='classes'&&r.method==='query'));
+  assert.ok(f.reads.some((r:any)=>r.resource==='applications'&&r.method==='count'));
+  f.reads.length=0;
+  const records=await f.page('records');
+  assert.equal(records.data.weekTotal,1);assert.equal(records.data.weekSubmitted,1);
+  assert.equal(f.reads.filter((r:any)=>r.resource==='records'&&r.method==='query').length,1);
+  assert.ok(f.reads.some((r:any)=>r.resource==='records'&&r.method==='count'));
+  assert.ok(!f.reads.some((r:any)=>r.resource==='occurrences'));
+}));
+
+test('页面合并：翻页只追加下一页，不重取学期列表、统计或课程班级', async () => fixture(async f => {
+  const w=await f.repository.workspace();
+  await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'page-fixture',reads:[],changes:Array.from({length:55},(_,i)=>({resource:'records',id:'extra-'+i.toString().padStart(3,'0'),expectedVersion:0,value:e('extra-'+i.toString().padStart(3,'0'),{memberName:'合成成员'},{semesterId:'semester',week:1,memberId:'member',taskId:'extra-task-'+i})})),result:{}});
+  const p=await f.page('records');
+  assert.equal(p.data.error,'');assert.equal(p.data.rows.length,50);assert.equal(p.data.weekSubmitted,56);
+  const before=f.calls.length;f.reads.length=0;
+  await p.more();
+  assert.equal(p.data.error,'');assert.equal(p.data.rows.length,56);assert.equal(p.data.cursor,'');
+  assert.equal(f.calls.length-before,1);
+  assert.ok(!f.reads.some((r:any)=>r.method==='count'||r.resource==='semesters'&&r.method==='query'));
+  assert.equal(p.data.weekSubmitted,56);
+}));
+
+test('页面合并：未入组、维护、越权管理和他人记录仍受限制', async () => fixture(async f => {
+  const invoke=(view:string,other:any={})=>f.gateway({protocolVersion:2,operation:'bootstrap',payload:{page:{view,week:1,semesterId:'semester',...other}}},{OPENID:'member-wechat',APPID:'app'});
+  await assert.rejects(invoke('manage',{section:'classes'}),/权限/);
+  const existing=await f.repository.get('records','record'), state=await f.repository.workspace();
+  await f.repository.commit({epoch:state.epoch,workspaceVersion:state.version,permissionsVersion:state.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'foreign-record',reads:[],changes:[{resource:'records',id:'foreign',expectedVersion:0,value:{...existing,id:'foreign',memberId:'admin',taskId:'foreign-task'}}],result:{}});
+  await assert.rejects(invoke('record',{targetId:'foreign'}),/无权查看/);
+  const own=await invoke('records');assert.ok(own.data.page.list.items.every((r:Entity)=>r.memberId==='member'));
+  assert.equal(own.data.page.summary.submitted,1);
+  await assert.rejects(invoke('submission',{targetId:'missing'}),/不存在/);
+  f.who('applicant');const applicant=await f.page('records');assert.equal(applicant.data.memberId,'');assert.equal(applicant.data.rows.length,1);
+  const rejected=await f.gateway({protocolVersion:2,operation:'bootstrap',payload:{page:{view:'records'}}},{OPENID:'applicant',APPID:'app'});
+  assert.equal(rejected.data.page,null);
+  const w=await f.repository.workspace();f.repository.workspace=async()=>({...w,maintenance:'maintenance-test'});
+  f.who('owner');f.reads.length=0;const p=await f.page('records');assert.equal(p.data.maintenance,'maintenance-test');
+  assert.ok(!f.reads.some((r:any)=>r.resource==='records'));
+}));
+
+
+test('页面合并：旧后端回退和历史学期深链保留原有功能', async () => fixture(async f => {
+  const wx=(globalThis as any).wx, invoke=wx.cloud.callFunction;
+  wx.cloud.callFunction=({data}:any)=>invoke({data:data.operation==='bootstrap'?{...data,payload:{}}:data});
+  const records=await f.page('records');assert.equal(records.data.error,'');assert.equal(records.data.rows.length,1);
+  assert.equal(f.calls.length,4);
+  wx.cloud.callFunction=invoke;
+  const state=await f.repository.workspace();
+  await f.repository.commit({epoch:state.epoch,workspaceVersion:state.version,permissionsVersion:state.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'historical',reads:[],changes:[
+    {resource:'semesters',id:'historical',expectedVersion:0,value:e('historical',{name:'历史学期',startDate:'2025-09-01',weeks:18,days:5,periods:14,status:'draft'})},
+    {resource:'availability',id:'historical-own',expectedVersion:0,value:e('historical-own',{slots:['2:3'],optedIn:true,note:'历史填报'},{semesterId:'historical',memberId:'admin',week:1})},
+  ],result:{}});
+  const page=await f.page('availability',{semesterId:'historical',week:'1'});
+  assert.equal(page.data.error,'');assert.equal(page.data.semesterId,'historical');
+  assert.deepEqual(page.data.selectedSlots,['2:3']);assert.equal(page.data.availabilityNote,'历史填报');
+}));
+
+test('页面合并：读取过程中权限撤销不返回旧权限资料', async () => fixture(async f => {
+  const query=f.repository.query.bind(f.repository), workspace=f.repository.workspace.bind(f.repository);
+  let revoked=false;
+  f.repository.query=async(resource:any,q:any)=>{const result=await query(resource,q);if(resource==='records')revoked=true;return result;};
+  f.repository.workspace=async()=>{const w=await workspace();return revoked?{...w,permissionsVersion:w.permissionsVersion+1}:w;};
+  await assert.rejects(f.gateway({protocolVersion:2,operation:'bootstrap',payload:{page:{view:'records',week:1}}},{OPENID:'owner',APPID:'app'}),/权限已变化/);
+}));
+
+
+test('页面合并：旧轮次先更新身份上下文并丢弃旧选择，旧轮次分页拒绝拼接', async () => fixture(async f => {
+  const boot=await f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'old-epoch',payload:{page:{view:'records',semesterId:'deleted-semester'}}},{OPENID:'owner',APPID:'app'});
+  assert.equal(boot.epoch,'epoch-boundary');assert.equal(boot.data.page,null);
+  await assert.rejects(f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'old-epoch',payload:{page:{view:'records',semesterId:'deleted-semester',more:true}}},{OPENID:'owner',APPID:'app'}),/业务数据已变化/);
 }));

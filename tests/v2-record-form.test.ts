@@ -44,7 +44,7 @@ test('V2照片：选择中缩略图、上传锁定、授权后预览；纠错和
  assert.equal((await f.repo.get('photos','existing')).recordId,'record');assert.equal((await f.repo.query('record_versions',{})).items.length,1);
 }));
 test('V2课程：年级依照班级资料、保持分页，补加载后按年级和教师筛选且可看有效周次',async()=>fixture(async f=>{
- const p=await f.page('courses');assert.equal(p.data.rows.length,2);assert.equal(p.data.courseClasses.length,50);assert.equal(p.data.courseClassesIncomplete,true);assert.deepEqual(p.data.courseGrades,['26']);assert.equal(f.calls.filter((c:any)=>c.payload?.kind==='classes').length,1);
+ const p=await f.page('courses');assert.equal(p.data.rows.length,2);assert.equal(p.data.courseClasses.length,50);assert.equal(p.data.courseClassesIncomplete,true);assert.deepEqual(p.data.courseGrades,['26']);assert.equal(f.calls.length,1);assert.equal(f.calls[0].payload.page.view,'courses');
  await p.moreCourseClasses();assert.equal(p.data.courseClassesIncomplete,false);assert.deepEqual(p.data.courseGrades,['25','26']);p.filterCourseGrade({currentTarget:{dataset:{grade:'25'}}});assert.equal(p.data.visibleRows.length,1);assert.equal(p.data.visibleRows[0].id,'last');p.search(ev('', '另一老师'));assert.equal(p.data.visibleRows.length,1);p.search(ev('','数学老师'));assert.equal(p.data.visibleRows.length,0);
  p.courseDetails({currentTarget:{dataset:{id:'last'}}});assert.match(f.errors.pop(),/有效周次：1、2/);assert.equal(f.calls.filter((c:any)=>c.operation==='command').length,0);
 }));

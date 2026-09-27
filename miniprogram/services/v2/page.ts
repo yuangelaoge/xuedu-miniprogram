@@ -2,7 +2,7 @@ import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protoc
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
-import { WeekData, bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
+import { WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
 
 import { boundedWeek, weekRange } from "../../domain/calendar";
 
@@ -96,7 +96,13 @@ export function registerCloudPage(view: View): void {
       if (this.data.busy) return;
       this.setData({ busy: true, reviewMode: reviewActive(), refreshing: this.data.hasLoaded && !more, loadingInitial: !this.data.hasLoaded && ["home", "schedule", "records", "profile"].includes(view), error: "", statsLoaded: this.data.hasLoaded && this.data.statsLoaded });
       try {
-        const boot = await bootstrap(view === "home"), member = boot.member;
+        const boot = view === "home" ? await bootstrap(true) : await pageBootstrap({
+          view, section:this.data.section, semesterId:this.data.fixedSemester || (more ? this.data.semesterId : ""),
+          selectionOwner:more ? this.data.memberId : undefined, week:this.data.weekInitialized ? this.data.week : undefined,
+          targetId:this.data.targetId, cursor:more ? this.data.cursor : "", more,
+        });
+        const member = boot.member, bundle = view === "home" ? undefined : boot.page;
+        const identityChanged = !!this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role);
         const home = view === "home" ? boot.home : undefined;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
         if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
@@ -110,7 +116,17 @@ export function registerCloudPage(view: View): void {
           }
           return;
         }
-        if (view === "profile") {
+        if (identityChanged && more) throw new Error("身份已变化，请刷新后重试");
+        if (boot.workspace.maintenance) return;
+        if (bundle && more) {
+          this.setData({rows:this.data.rows.concat((bundle.list?.items || []).map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})),cursor:bundle.list?.cursor || ""});
+          this.filterRows();
+          return;
+        }
+        if (view === "profile" && bundle?.profile) {
+          const {className,pendingCount} = bundle.profile;
+          this.setData({className,pendingCount,pendingMore:false,pendingLabel:pendingCount ? `${pendingCount} 待审核` : ""});
+        } else if (view === "profile") {
           const classes = await optionsFor("classes");
           this.setData({className: classes.find(c => c.value === member.data.classId)?.label || "班级未设置",pendingCount:0,pendingMore:false,pendingLabel:""});
           if (manager) {
@@ -119,20 +135,23 @@ export function registerCloudPage(view: View): void {
             this.setData({pendingCount:count,pendingMore:more,pendingLabel:count ? `${count}${more ? "+" : ""} 待审核` : more ? "查看申请" : ""});
           }
         }
-        if (home) {
+        if (bundle?.semesters) {
+          const {items,cursor} = bundle.semesters;
+          this.setData({semesters:items,semesterCursor:cursor,semesterOptions:items.map(e=>({label:s(e.data.name),value:e.id}))});
+        } else if (home) {
           const semesters = home.semester ? [home.semester] : [];
           this.setData({ semesters, semesterCursor: "", semesterOptions: semesters.map(e => ({label: s(e.data.name), value: e.id})) });
         } else if (!this.data.semesters.length || !more) {
           const response = await query("semesters");
           this.setData({ semesters: response.data.items, semesterCursor: response.cursor || "", semesterOptions: response.data.items.map(e => ({label: s(e.data.name), value: e.id})) });
         }
-        const selected = home ? boot.workspace.activeSemesterId : this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
-        let selectedSemester = this.data.semesters.find(e => e.id === selected);
+        const selected = bundle ? bundle.semester?.id || "" : home ? boot.workspace.activeSemesterId : this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
+        let selectedSemester = bundle?.semester || this.data.semesters.find(e => e.id === selected);
         if (selected && !selectedSemester) selectedSemester = (await query<{semester:Entity}>("semester", selected)).data.semester;
         const semesterId = selected || boot.workspace.activeSemesterId;
         const maxWeek = Number(selectedSemester?.data.weeks || 60);
         const calendarWeek = home?.week ?? (selectedSemester?.data.startDate ? boundedWeek(selectedSemester.data as unknown as Semester) : 1);
-        const displayedWeek = view === "home" ? calendarWeek : !this.data.weekInitialized && ["schedule","availability","records"].includes(view)
+        const displayedWeek = bundle ? bundle.week : view === "home" ? calendarWeek : !this.data.weekInitialized && ["schedule","availability","records"].includes(view)
           ? Math.min(maxWeek, calendarWeek + (["schedule","availability"].includes(view) ? 1 : 0)) : Math.min(maxWeek, Math.max(1,this.data.week));
         if (!semesterId) this.setData({tasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},taskCount:0,recordCount:0,coverage:0,weekTotal:0,weekSubmitted:0,weekProgress:0,availabilityReady:false});
         this.setData({ semesterId, semesterIndex: Math.max(0, this.data.semesters.findIndex(e => e.id === semesterId)), semesterName: s(selectedSemester?.data.name || (semesterId ? "所选历史学期" : "尚未启用学期")) });
@@ -140,7 +159,7 @@ export function registerCloudPage(view: View): void {
         if (view === "manage" || view === "records" || view === "courses") {
           const kind = view === "manage" ? this.data.section : view === "courses" ? "courses" : "records";
           if (admin && view === "manage" && ["applications", "autoApproved"].includes(kind)) {
-            const setting = await query<AutoApprovalView>("autoApproval");
+            const setting = bundle?.autoApproval ? {data:bundle.autoApproval} : await query<AutoApprovalView>("autoApproval");
             const {data} = setting;
             this.setData({autoApprovalActive:data.active,autoApprovalExpired:data.expired,autoApprovalVersion:data.version,autoApprovalDeadline:localTime(data.setting?.expiresAt || ""),autoApprovalUpdated:data.setting ? data.setting.updatedByName + " · " + localTime(data.setting.updatedAt) : "尚未开启"});
             if (autoExpiryTimer) clearTimeout(autoExpiryTimer);
@@ -152,19 +171,22 @@ export function registerCloudPage(view: View): void {
           if (!manager && view === "manage") throw new Error("无管理权限");
           if (view === "manage" && !admin && ["classes", "semesters", "courses"].includes(kind)) throw new Error("此维护入口仅管理员可用");
           if (["courses", "records"].includes(kind) && !semesterId) { this.setData({ rows: [], cursor: "" }); return; }
-          if (view === "records" && semesterId) {
+          if (view === "records" && bundle?.summary) {
+            const {total,submitted,skipped} = bundle.summary;
+            this.setData({weekTotal:total,weekSubmitted:submitted,weekProgress:total ? Math.min(100,Math.round(submitted / total * 100)) : 0,skipped});
+          } else if (view === "records" && semesterId) {
             const w = (await query<WeekData>("week", semesterId, {week:this.data.week})).data;
             const total = w.tasks.filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status))).length;
             const submitted = (w.records || []).length;
             this.setData({weekTotal:total,weekSubmitted:submitted,weekProgress:total ? Math.min(100,Math.round(submitted / total * 100)) : 0,skipped:w.plan?.data.status === "skipped"});
           }
-          const response = await query(kind, ["courses", "records"].includes(kind) ? semesterId : "", kind === "records" ? { week: this.data.week } : {}, more ? this.data.cursor : "");
+          const response = bundle?.list ? {data:{items:bundle.list.items},cursor:bundle.list.cursor} : await query(kind, ["courses", "records"].includes(kind) ? semesterId : "", kind === "records" ? { week: this.data.week } : {}, more ? this.data.cursor : "");
           if(kind === "courses" && (!more || !this.data.courseClasses.length)) {
-            const classes = await query("classes");this.setData({courseClasses:classes.data.items,courseClassCursor:classes.cursor || ""});
+            const classes = bundle?.classes ? {data:{items:bundle.classes.items},cursor:bundle.classes.cursor} : await query("classes");this.setData({courseClasses:classes.data.items,courseClassCursor:classes.cursor || ""});
           }
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
         } else if (["home", "schedule", "availability"].includes(view) && semesterId) {
-          const w = home?.weekData || (await query<WeekData>("week", semesterId, { week: displayedWeek })).data;
+          const w = bundle?.weekData || home?.weekData || (await query<WeekData>("week", semesterId, { week: displayedWeek })).data;
           const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
           this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,
             taskCount: visibleTasks.length, recordCount: (w.records || []).length, coverage: new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",
@@ -177,14 +199,14 @@ export function registerCloudPage(view: View): void {
           }
           if (view === "availability") this.setData(availabilityGrid(this.data.slots, this.data.selectedSlots));
         } else if (view === "record" && this.data.targetId) {
-          const response = await query<{ record: Entity; canEdit: boolean }>("record", semesterId, { id: this.data.targetId });
+          const response = bundle?.record ? {data:bundle.record} : await query<{ record: Entity; canEdit: boolean }>("record", semesterId, { id: this.data.targetId });
           const record = response.data.record;
           const metrics = record.data.metrics as Record<string, number>;
           this.setData({ record, canEdit: response.data.canEdit, recordFields: METRIC_FIELDS.map(f => ({ label: f.label, value: metrics?.[f.key] === -1 ? "信息缺失" : s(metrics?.[f.key]) })) });
           const urls = await call<{ urls: string[] }>("photoUrls", { semesterId, payload: { recordId: record.id } });
           this.setData({ photoUrls: urls.data.urls });
         } else if (view === "submission" && this.data.targetId && !this.data.formType) {
-          const response = await query<{ task: Entity }>("task", semesterId, { id: this.data.targetId });
+          const response = bundle?.task ? {data:{task:bundle.task}} : await query<{ task: Entity }>("task", semesterId, { id: this.data.targetId });
           this.openRecordForm(response.data.task);
         }
         this.filterRows();

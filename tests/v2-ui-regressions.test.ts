@@ -29,8 +29,8 @@ async function fixture(work:(f:any)=>Promise<void>,activeSemesterId='semester') 
  const pages:any[]=[];const page=async(view:any,q:any={week:'1'})=>{registerCloudPage(view);const p={...pageDefinition,data:structuredClone(pageDefinition.data),setData(v:any){Object.assign(this.data,v);}};pages.push(p);p.onLoad(q);await p.load();assert.equal(p.data.error,'');return p;};
  try{await work({page,repo,calls,errors,copied,written,opened,navigation,semester,who:(v:string)=>who=v,confirm:(v:boolean)=>confirm=v,mutateOnWrite:()=>mutateOnWrite=true});}finally{pages.forEach(p=>p.onUnload());g.wx=oldWx;g.Page=oldPage;Object.assign(runtime,oldRuntime);}
 }
-test('V2前端：待审核提示只读一页并标注更多，搜索与全选不跨已加载范围',async()=>fixture(async f=>{
- const profile=await f.page('profile');assert.equal(profile.data.pendingLabel,'1+ 待审核');assert.equal(f.calls.filter((c:any)=>c.payload?.kind==='applications').length,1);
+test('V2前端：待审核提示用准确计数，搜索与全选不跨已加载范围',async()=>fixture(async f=>{
+ const profile=await f.page('profile');assert.equal(profile.data.pendingLabel,'2 待审核');assert.equal(f.calls.length,1);assert.equal(f.calls[0].payload.page.view,'profile');
  profile.navigate(event({target:'manage',section:'applications'}));assert.match(f.navigation[0],/section=applications/);
  const manage=await f.page('manage',{section:'applications'});assert.equal(manage.data.rows.length,50);assert.equal(manage.data.visibleRows.length,1);await manage.more();assert.equal(manage.data.rows.length,55);assert.equal(manage.data.visibleRows.length,2);
  manage.search(event({},'申请52'));manage.selectAllApplications();assert.deepEqual(manage.data.selectedApplications,['app-052']);assert.equal(manage.data.visibleRows[0].selected,true);

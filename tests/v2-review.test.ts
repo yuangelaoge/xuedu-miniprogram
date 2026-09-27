@@ -139,3 +139,16 @@ test('审核样例首页复用合并启动，普通成员只收到本人任务�
   assert.ok(home.weekData.tasks.every((task:any)=>task.memberId===(boot.data.member as any).id));
   assert.ok(home.weekData.records.every((record:any)=>record.memberId===(boot.data.member as any).id));
 });
+
+
+test('审核样例各页面合并请求仍按所选角色隔离数据', async()=>{
+  const x=setup(); await x.call('reviewLogin',{payload:{username:'审核老师辛苦了',password}});
+  const page=(view:string,extra:Record<string,unknown>={})=>x.call('bootstrap',{review:true,payload:{page:{view,week:1,...extra}}});
+  const admin=await page('records');assert.equal((admin.data.page as any).list.items.length,1);
+  await x.call('reviewRole',{payload:{role:'member'}});
+  const mine=await page('records');assert.equal((mine.data.page as any).list.items.length,0);
+  assert.equal((mine.data.page as any).summary.submitted,0);
+  const schedule=await page('schedule');assert.ok((schedule.data.page as any).weekData.tasks.every((t:any)=>t.memberId===(schedule.data.member as any).id));
+  await assert.rejects(page('manage'),/管理权限/);
+  await assert.rejects(page('record',{targetId:'review-record'}),/无权查看/);
+});

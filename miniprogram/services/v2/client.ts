@@ -1,7 +1,9 @@
 import { runtime } from "../../config/runtime";
 import { ApiRequest, ApiResponse, Entity, Workspace } from "../../domain/v2/protocol";
-export interface WeekData { records?: Entity[]; semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity | null; uncovered?: { label: string; reason: string }[]; }
+import { PageData, PageLoadRequest, WeekData } from "../../domain/v2/page-data";
+export { WeekData } from "../../domain/v2/page-data";
 export interface Boot {
+  page?: PageData | null;
   home?: { semester: Entity | null; week: number; weekData: WeekData | null };
   workspace: Workspace; member: Entity | null; application?: Entity | null;
   status: "needsAdministrator" | "preparing" | "ready";
@@ -14,9 +16,10 @@ let generation = 0;
 let workspaceVersion = -1;
 let bootstrapPending: Promise<Boot> | undefined;
 let bootstrapIncludesHome = false;
+let pageBootstrapPending: Promise<Boot> | undefined;
 const reviewKey = () => "xuedu.review.active." + runtime.env;
 export function reviewActive(): boolean { return runtime.mode === "cloud" && wx.getStorageSync(reviewKey()) === true; }
-function resetCloudSession(): void { boot=undefined; epoch=""; generation++; workspaceVersion=-1; bootstrapPending=undefined; }
+function resetCloudSession(): void { boot=undefined; epoch=""; generation++; workspaceVersion=-1; bootstrapPending=undefined; pageBootstrapPending=undefined; }
 export function leaveReviewLocally(): void { wx.removeStorageSync(reviewKey()); resetCloudSession(); }
 export async function reviewControl(operation: "reviewLogin" | "reviewStatus" | "reviewRole" | "reviewLogout", payload: Record<string,unknown> = {}): Promise<{role?:string;expiresAt?:string;ended?:boolean}> {
   if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
@@ -51,6 +54,7 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   return result.data;
 }
 export async function bootstrap(includeHome = false): Promise<Boot> {
+  if (pageBootstrapPending) { const pending = await pageBootstrapPending; if (!includeHome) return pending; }
   // A basic request already in flight cannot satisfy the richer home request.
   if (bootstrapPending && includeHome && !bootstrapIncludesHome) {
     await bootstrapPending;
@@ -61,6 +65,26 @@ export async function bootstrap(includeHome = false): Promise<Boot> {
     bootstrapPending = call<Boot>("bootstrap", includeHome ? { payload: { includeHome: true } } : {}).then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
   }
   return bootstrapPending;
+}
+export async function pageBootstrap(request: PageLoadRequest): Promise<Boot> {
+  // Establish the session once before another page can send a request with an old epoch.
+  if (bootstrapPending) await bootstrapPending;
+  if (pageBootstrapPending) await pageBootstrapPending;
+  const previous = initializedEnv === runtime.env ? boot : undefined;
+  const usesView = !["availability", "profile", "join"].includes(request.view);
+  const selected = request.semesterId || (usesView && previous ? viewSemester() : "");
+  const selectionOwner = request.selectionOwner || (!request.semesterId ? previous?.member?.id : "");
+  const pending = call<Boot>("bootstrap", {payload:{page:{...request,semesterId:selected,selectionOwner}}}).then(response => { boot = response.data; return boot; });
+  pageBootstrapPending = pending;
+  let result: Boot;
+  try { result = await pending; }
+  finally { if (pageBootstrapPending === pending) pageBootstrapPending = undefined; }
+  // A cold deep link may have a saved historical semester keyed to the newly verified identity.
+  if (!previous && !request.semesterId && usesView && result.member && result.page) {
+    const saved = viewSemester();
+    if (saved && saved !== result.page.semester?.id) return pageBootstrap({...request,semesterId:saved,selectionOwner:result.member.id});
+  }
+  return result;
 }
 function viewKey(): string { return "xuedu.view." + runtime.env + (reviewActive() ? ".review." : ".") + (currentBoot().member?.id || "visitor"); }
 export function viewSemester(): string {

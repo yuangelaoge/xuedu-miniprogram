@@ -1,5 +1,7 @@
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { Repository } from "./repository";
+import { readPageData } from "./page-load";
+import { PageLoadRequest } from "../../miniprogram/domain/v2/page-data";
 import { AppState, Course, Metrics, Semester } from "../../miniprogram/domain/types";
 import { generatePlan } from "../../miniprogram/domain/scheduler";
 import { inspectImport } from "../../miniprogram/domain/imports";
@@ -165,6 +167,29 @@ export function createGatewayV2(deps: DependenciesV2) {
       return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => member().data.role !== "member" || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) };
     };
 
+    const paginated: Record<string, Resource> = { autoApproved: "applications", semesters: "semesters", classes: "classes", courses: "courses", members: "members", applications: "applications", rebindings: "rebindings", audit: "audit", records: "records", recordVersions: "record_versions" };
+    const readList = async (kind: string, request: {semesterId?:string;week?:unknown;id?:unknown;version?:unknown;cursor?:string;limit?:number}, knownSemester = false) => {
+      if (!Object.prototype.hasOwnProperty.call(paginated, kind)) fail("查询类型无效");
+      if (kind === "rebindings" || kind === "autoApproved") admin();
+      else if (["members", "applications", "audit"].includes(kind)) manager();
+      else if (kind !== "classes") member(); // Unapproved applicants need class labels to apply.
+      const query: Query = { after: request.cursor || "", limit: integer(request.limit ?? 50, "每页条数", 1, 100) };
+      if (kind === "autoApproved") query.eq = { sortKey: "automatic" };
+      if (["courses", "records", "recordVersions"].includes(kind)) { if (!knownSemester) await get("semesters", text(request.semesterId, "学期标识", 200)); query.eq = { semesterId: request.semesterId }; }
+      if (kind === "records") {
+        if (request.week !== undefined) query.eq!.week = integer(request.week, "周次", 1, 60);
+        if (member().data.role === "member") query.eq!.memberId = member().id;
+      }
+      if (kind === "recordVersions") {
+        const record = (await get("records", text(request.id, "记录标识")))!;
+        if (record.semesterId !== request.semesterId) fail("学期不匹配");
+        if (member().data.role === "member" && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        query.eq!.recordId = record.id;
+      }
+      const result = await page(paginated[kind], query);
+      if (request.version !== undefined && request.version !== workspace.version) fail("列表已变化，请刷新后重试", "VERSION_CONFLICT");
+      return { items: result.items.map(row => kind === "members" && member().data.role !== "admin" ? { ...clean(row), studentNo: undefined, data: { ...row.data, studentNo: "" } } : clean(row)), cursor: result.cursor };
+    };
     if (input.operation === "bootstrap") {
       // Every initialized transaction is constrained to retain an effective admin.
       const hasAdministrator = workspace.version > 0;
@@ -177,7 +202,20 @@ export function createGatewayV2(deps: DependenciesV2) {
         const week = semester ? boundedWeek(semester.data as unknown as Semester, new Date(now)) : 1;
         home = { semester: semester ? clean(semester) : null, week, weekData: semester ? await readWeek(semester, week) : null };
       }
-      return response({ ...(home ? { home } : {}), workspace: { ...workspace, autoApproval: validActor?.data.role === "admin" ? workspace.autoApproval : undefined }, member: validActor ? clean(validActor) : null, status, canInitialize: !hasAdministrator && context.OPENID === deps.bootstrapOpenid,
+      let pageData;
+      if (p.page !== undefined) {
+        if (!p.page || typeof p.page !== "object" || Array.isArray(p.page)) fail("页面参数无效");
+        const request = p.page as unknown as PageLoadRequest;
+        if (request.more) epoch();
+        // A cleared workspace invalidates saved semester selections; reset the client before querying.
+        const staleEpoch = !!input.epoch && input.epoch !== workspace.epoch;
+        pageData = validActor && !workspace.maintenance && !staleEpoch ? await readPageData(request, {
+          actor: validActor, workspace, now, get, page, all, clean, fail,
+          count: (resource, query) => repo.count(resource, {...query,eq:{...query.eq,epoch:workspace.epoch}}),
+          list: (kind, semester, week, cursor) => readList(kind, {semesterId:semester?.id,week,cursor}, !!semester),
+        }) : null;
+      }
+      return response({ ...(p.page !== undefined ? {page:pageData} : {}), ...(home ? { home } : {}), workspace: { ...workspace, autoApproval: validActor?.data.role === "admin" ? workspace.autoApproval : undefined }, member: validActor ? clean(validActor) : null, status, canInitialize: !hasAdministrator && context.OPENID === deps.bootstrapOpenid,
         application: application ? clean(application) : null, removed: !!actor && !validActor, executionConfigured });
     }
     if (input.operation === "initialize") {
@@ -201,27 +239,9 @@ export function createGatewayV2(deps: DependenciesV2) {
         admin(); const setting = workspace.autoApproval;
         return response({ setting: setting || null, active: setting?.enabled === true && Date.parse(setting.expiresAt) > now, expired: setting?.enabled === true && Date.parse(setting.expiresAt) <= now, version: workspace.version, serverNow: now });
       }
-      const paginated: Record<string, Resource> = { autoApproved: "applications", semesters: "semesters", classes: "classes", courses: "courses", members: "members", applications: "applications", rebindings: "rebindings", audit: "audit", records: "records", recordVersions: "record_versions" };
-      if (kind in paginated) {
-        if (kind === "rebindings" || kind === "autoApproved") admin();
-        else if (["members", "applications", "audit"].includes(kind)) manager();
-        else if (kind !== "classes") member(); // Unapproved applicants need class labels to apply.
-        const query: Query = { after: input.cursor || "", limit: integer(input.limit ?? 50, "每页条数", 1, 100) };
-        if (kind === "autoApproved") query.eq = { sortKey: "automatic" };
-        if (["courses", "records", "recordVersions"].includes(kind)) { await requireSemester(); query.eq = { semesterId: input.semesterId }; }
-        if (kind === "records") {
-          if (p.week !== undefined) query.eq!.week = integer(p.week, "周次", 1, 60);
-          if (member().data.role === "member") query.eq!.memberId = member().id;
-        }
-        if (kind === "recordVersions") {
-          const record = (await get("records", text(p.id, "记录标识")))!;
-          if (record.semesterId !== input.semesterId) fail("学期不匹配");
-          if (member().data.role === "member" && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
-          query.eq!.recordId = record.id;
-        }
-        const result = await page(paginated[kind], query);
-        if (p.version !== undefined && p.version !== workspace.version) fail("列表已变化，请刷新后重试", "VERSION_CONFLICT");
-        return response({ version: workspace.version, items: result.items.map(row => kind === "members" && member().data.role !== "admin" ? { ...clean(row), studentNo: undefined, data: { ...row.data, studentNo: "" } } : clean(row)) }, result.cursor);
+      if (Object.prototype.hasOwnProperty.call(paginated, kind)) {
+        const result = await readList(kind, {semesterId:input.semesterId,week:p.week,id:p.id,version:p.version,cursor:input.cursor,limit:input.limit});
+        return response({version:workspace.version,items:result.items},result.cursor);
       }
       if (kind === "semester") {
         member(); const semester = await requireSemester();

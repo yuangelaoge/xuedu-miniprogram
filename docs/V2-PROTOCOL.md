@@ -66,6 +66,24 @@ interface Response<T> {
 
 2026-09-27 已发布可选 `payload: { includeHome: true }`：返回额外的 `home: { semester, week, weekData }`，仅有效成员可获得当前启用学期及对应周数据，周次按服务端北京时间计算；未入组或无启用学期时 semester、weekData 为 null。weekData 复用原周查询的分页与权限规则，仍检查响应前的轮次和权限版本。首页通常由三次串行请求缩为一次；其他页面不附带首页数据，新前端遇到旧后端不返回 home 时回退原流程。本地请求次数、权限边界、审核样例及兼容性测试已通过；部署后官方模拟器可信微信只读调用返回了 home。真机计时由用户进行；无需数据库迁移。发布证据见 [1.0.4 发布记录](RELEASE-1.0.4.md)。
 
+### 页面合并加载（2026-09-27，源码实现，尚未部署）
+
+`bootstrap` 新增可选 `payload.page`，类型见 `miniprogram/domain/v2/page-data.ts`：
+
+```typescript
+{ view, section?, semesterId?, selectionOwner?, week?, targetId?, cursor?, more? }
+```
+
+view 固定为 schedule / records / profile / manage / join / record / submission / availability / courses；manage.section 只允许现有管理分类。这是固定页面读取，不接受任意资源或操作批量执行。此启动扩展的学期参数放在 `payload.page.semesterId`；其余查询、命令仍遵循顶层 semesterId 规则。selectionOwner 只用于判定本机学期选择是否属于当前成员，不参与身份授权。
+
+- 返回 `data.page`，按页面包含 semester、week、分页 semesters/list/classes、weekData、summary、profile、autoApproval、record 或 task；所有数据继续使用可信微信身份和现有权限。未入组、维护或旧轮次切换时 page 为 null，先更新启动上下文。
+- 安排页只读目标周任务和计划；无课时间只读本人填报；记录页读取一页记录与数据库计数；个人页仅查询本人班级和待审核总数。相互独立的读取并行执行。
+- 通常每个页面一次云函数调用，记录详情另一次取得照片授权。冷启动直达且存在本人保存的历史学期时，需再请求一次以恢复选择；统计、导出、编辑表单选项及照片操作按需另取。
+- `more:true` 必须携带当前 epoch，只读取下一页，不重复学期列表、课程班级或周统计；普通列表仍为 50 条。初始加载、翻页、照片、导出保留原权限和版本边界，无新增哈希校验。
+- 旧后端不返回 page 时前端回退原查询。历史学期深链、未保存表单和身份变化后的受限内容清理继续有效；业务清空后的旧轮次不能用旧游标拼接。
+
+本地验证记录见 [页面加载优化](PAGE-LOAD-OPTIMIZATION.md)。本扩展需要后续部署云函数并上传前端才会在微信生效；不需要数据库迁移。
+
 `initialize` 需epoch、requestId，payload：
 
 ```json

@@ -62,7 +62,9 @@ interface Response<T> {
 
 ## 启动与初始化
 
-`bootstrap` 无payload，返回 `{ workspace, member, application, status, canInitialize, removed, executionConfigured }`。member仅为当前有效成员，申请仅为当前身份；没有全组历史。status为 `needsAdministrator | preparing | ready`；ready表示有启用学期，是否存在课程由课程列表决定，不表示部署验收完成。
+`bootstrap` 默认无payload，返回 `{ workspace, member, application, status, canInitialize, removed, executionConfigured }`。member仅为当前有效成员，申请仅为当前身份；没有全组历史。status为 `needsAdministrator | preparing | ready`；ready表示有启用学期，是否存在课程由课程列表决定，不表示部署验收完成。
+
+2026-09-27 已发布可选 `payload: { includeHome: true }`：返回额外的 `home: { semester, week, weekData }`，仅有效成员可获得当前启用学期及对应周数据，周次按服务端北京时间计算；未入组或无启用学期时 semester、weekData 为 null。weekData 复用原周查询的分页与权限规则，仍检查响应前的轮次和权限版本。首页通常由三次串行请求缩为一次；其他页面不附带首页数据，新前端遇到旧后端不返回 home 时回退原流程。本地请求次数、权限边界、审核样例及兼容性测试已通过；部署后官方模拟器可信微信只读调用返回了 home。真机计时由用户进行；无需数据库迁移。发布证据见 [1.0.4 发布记录](RELEASE-1.0.4.md)。
 
 `initialize` 需epoch、requestId，payload：
 

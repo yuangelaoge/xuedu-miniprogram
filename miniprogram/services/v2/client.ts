@@ -1,6 +1,8 @@
 import { runtime } from "../../config/runtime";
 import { ApiRequest, ApiResponse, Entity, Workspace } from "../../domain/v2/protocol";
+export interface WeekData { records?: Entity[]; semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity | null; uncovered?: { label: string; reason: string }[]; }
 export interface Boot {
+  home?: { semester: Entity | null; week: number; weekData: WeekData | null };
   workspace: Workspace; member: Entity | null; application?: Entity | null;
   status: "needsAdministrator" | "preparing" | "ready";
   canInitialize: boolean; removed?: boolean;
@@ -11,6 +13,7 @@ let epoch = "";
 let generation = 0;
 let workspaceVersion = -1;
 let bootstrapPending: Promise<Boot> | undefined;
+let bootstrapIncludesHome = false;
 const reviewKey = () => "xuedu.review.active." + runtime.env;
 export function reviewActive(): boolean { return runtime.mode === "cloud" && wx.getStorageSync(reviewKey()) === true; }
 function resetCloudSession(): void { boot=undefined; epoch=""; generation++; workspaceVersion=-1; bootstrapPending=undefined; }
@@ -47,8 +50,16 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   epoch = result.data.epoch;
   return result.data;
 }
-export async function bootstrap(): Promise<Boot> {
-  if (!bootstrapPending) bootstrapPending = call<Boot>("bootstrap").then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
+export async function bootstrap(includeHome = false): Promise<Boot> {
+  // A basic request already in flight cannot satisfy the richer home request.
+  if (bootstrapPending && includeHome && !bootstrapIncludesHome) {
+    await bootstrapPending;
+    return bootstrap(true);
+  }
+  if (!bootstrapPending) {
+    bootstrapIncludesHome = includeHome;
+    bootstrapPending = call<Boot>("bootstrap", includeHome ? { payload: { includeHome: true } } : {}).then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
+  }
   return bootstrapPending;
 }
 function viewKey(): string { return "xuedu.view." + runtime.env + (reviewActive() ? ".review." : ".") + (currentBoot().member?.id || "visitor"); }

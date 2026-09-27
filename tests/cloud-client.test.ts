@@ -12,13 +12,19 @@ test("V2客户端：协议拒绝、启动去重、本机学期账号隔离、版
   g.wx = { getStorageSync: (k: string) => storage.get(k), removeStorageSync: (k: string) => storage.delete(k), setStorageSync: (k: string, v: unknown) => storage.set(k, v), cloud: {
     init() {}, async callFunction({ data }: any) {
       calls++; assert.equal(data.protocolVersion, 2);
-      const snapshot = { protocolVersion, epoch, resourceVersions: {workspace: version}, data: data.operation === "bootstrap" ? {workspace: {epoch, version, activeSemesterId: "active"},member: {id: actor},status: "ready"} : {items: []}};
+      const snapshot = { protocolVersion, epoch, resourceVersions: {workspace: version}, data: data.operation === "bootstrap" ? {workspace: {epoch, version, activeSemesterId: "active"},member: {id: actor},status: "ready",...(data.payload?.includeHome ? {home:{semester:null,week:1,weekData:null}} : {})} : {items: []}};
       if (delay && data.operation === "query") { delay = false; await new Promise<void>(r => { release = r; }); }
       return {result: {ok: true, data: snapshot}};
     }
   }};
   try {
     await Promise.all([bootstrap(), bootstrap()]); assert.equal(calls, 1);
+    let before = calls;
+    const [, home] = await Promise.all([bootstrap(), bootstrap(true)]);
+    assert.ok(home.home); assert.equal(calls - before, 2, "普通启动不能冒充首页合并响应");
+    before = calls;
+    const [first, second] = await Promise.all([bootstrap(true), bootstrap()]);
+    assert.ok(first.home); assert.equal(first, second); assert.equal(calls - before, 1, "首页启动可同时满足普通启动");
     assert.equal(viewSemester(), "active"); selectSemester("history"); assert.equal(viewSemester(), "history");
     actor = "b"; await bootstrap(); assert.equal(viewSemester(), "active"); actor = "a"; await bootstrap(); assert.equal(viewSemester(), "history");
     const oldDraft = draftKey("task");

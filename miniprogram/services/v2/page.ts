@@ -2,7 +2,7 @@ import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protoc
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
-import { bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
+import { WeekData, bootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
 
 import { boundedWeek, weekRange } from "../../domain/calendar";
 
@@ -12,7 +12,6 @@ type View = "home" | "schedule" | "records" | "profile" | "manage" | "join" | "r
 interface Option { label: string; value: string; checked?: boolean; }
 interface Field { key: string; label: string; value: string; kind: string; options: Option[]; selected: string[]; }
 interface Row extends Entity { courseGrades?: string[]; courseClassLabel?: string; selected?: boolean; label: string; detail: string; status: string; active: boolean; role: string; statusLabel: string; cancel: boolean; replaces: boolean; historyFields: {label:string;value:string}[]; }
-interface WeekData { records?: Entity[]; semester?: Entity; tasks: Entity[]; occurrences: Entity[]; plan?: Entity; draft?: Entity; availability?: Entity; uncovered?: { label: string; reason: string }[]; }
 const titles: Record<View, string> = { home: "学风督察", schedule: "听课安排", records: "听课记录", profile: "我的", manage: "管理工作台", join: "申请加入", record: "听课记录详情", submission: "填写听课记录", availability: "无课时间", courses: "课程总表" };
 const s = (value: unknown) => value === undefined || value === null ? "" : String(value);
 const actionLabels: Record<string,string> = { autoApprovalEnabled:"开启自动通过", autoApprovalDisabled:"关闭自动通过", autoApproveApplication:"自动通过入组申请", initialize:"首次初始化", roleChange:"调整角色", memberStatus:"调整启停状态", memberRemove:"移除成员", memberRestore:"恢复成员", classSave:"维护班级", classDisable:"停用班级", semesterCreate:"建立学期草稿", semesterActivate:"启用学期", semesterParticipants:"配置参与班级", courseSave:"维护课程", courseDisable:"停用课程", exceptionSave:"停调补课", planGenerate:"生成排班草稿", planConfirm:"确认排班", taskAdjust:"调整任务草稿", recordSubmit:"提交记录", recordEdit:"更正记录", rebindConfirm:"确认微信换绑", applicationReview:"审核申请", clearBegin:"开始业务清空", import:"导入课表" };
@@ -97,7 +96,8 @@ export function registerCloudPage(view: View): void {
       if (this.data.busy) return;
       this.setData({ busy: true, reviewMode: reviewActive(), refreshing: this.data.hasLoaded && !more, loadingInitial: !this.data.hasLoaded && ["home", "schedule", "records", "profile"].includes(view), error: "", statsLoaded: this.data.hasLoaded && this.data.statsLoaded });
       try {
-        const boot = await bootstrap(), member = boot.member;
+        const boot = await bootstrap(view === "home"), member = boot.member;
+        const home = view === "home" ? boot.home : undefined;
         const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
         if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
@@ -119,16 +119,19 @@ export function registerCloudPage(view: View): void {
             this.setData({pendingCount:count,pendingMore:more,pendingLabel:count ? `${count}${more ? "+" : ""} 待审核` : more ? "查看申请" : ""});
           }
         }
-        if (!this.data.semesters.length || !more) {
+        if (home) {
+          const semesters = home.semester ? [home.semester] : [];
+          this.setData({ semesters, semesterCursor: "", semesterOptions: semesters.map(e => ({label: s(e.data.name), value: e.id})) });
+        } else if (!this.data.semesters.length || !more) {
           const response = await query("semesters");
           this.setData({ semesters: response.data.items, semesterCursor: response.cursor || "", semesterOptions: response.data.items.map(e => ({label: s(e.data.name), value: e.id})) });
         }
-        const selected = this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
+        const selected = home ? boot.workspace.activeSemesterId : this.data.fixedSemester || (view === "home" || view === "availability" ? boot.workspace.activeSemesterId : viewSemester());
         let selectedSemester = this.data.semesters.find(e => e.id === selected);
         if (selected && !selectedSemester) selectedSemester = (await query<{semester:Entity}>("semester", selected)).data.semester;
         const semesterId = selected || boot.workspace.activeSemesterId;
         const maxWeek = Number(selectedSemester?.data.weeks || 60);
-        const calendarWeek = selectedSemester?.data.startDate ? boundedWeek(selectedSemester.data as unknown as Semester) : 1;
+        const calendarWeek = home?.week ?? (selectedSemester?.data.startDate ? boundedWeek(selectedSemester.data as unknown as Semester) : 1);
         const displayedWeek = view === "home" ? calendarWeek : !this.data.weekInitialized && ["schedule","availability","records"].includes(view)
           ? Math.min(maxWeek, calendarWeek + (["schedule","availability"].includes(view) ? 1 : 0)) : Math.min(maxWeek, Math.max(1,this.data.week));
         if (!semesterId) this.setData({tasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},taskCount:0,recordCount:0,coverage:0,weekTotal:0,weekSubmitted:0,weekProgress:0,availabilityReady:false});
@@ -161,8 +164,7 @@ export function registerCloudPage(view: View): void {
           }
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
         } else if (["home", "schedule", "availability"].includes(view) && semesterId) {
-          const response = await query<WeekData>("week", semesterId, { week: displayedWeek });
-          const w = response.data;
+          const w = home?.weekData || (await query<WeekData>("week", semesterId, { week: displayedWeek })).data;
           const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
           this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,
             taskCount: visibleTasks.length, recordCount: (w.records || []).length, coverage: new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",

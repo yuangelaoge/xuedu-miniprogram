@@ -37,7 +37,7 @@ test("云端页面完整流程：首次登记、独立建班、申请审核、�
   who="member";const submission=await page("submission",{taskId:task.id,semesterId});fill(submission,{expected:30,actual:29,late:0,early:0,sleep:0,phone:0,talk:0,other:0,absentNames:"无",leaveNames:"测试同学"});await submission.choosePhotos();assert.deepEqual(errors,[]);await save(submission);
   const home=await page("home");
   const currentSemester=(await repository.get("semesters",semesterId))!.data as unknown as Semester;
-  const currentWeek=boundedWeek(currentSemester);
+  const currentWeek=boundedWeek(currentSemester,new Date("2026-09-07T04:00:00Z"));
   assert.equal(home.data.week,currentWeek,"首页按学期日期显示当前周，而不是固定第一周");
   assert.equal(home.data.dates,weekRange(currentSemester,currentWeek));
   assert.equal(home.data.homeTasks.length,currentWeek===1?1:0,"首页只显示当前周任务");

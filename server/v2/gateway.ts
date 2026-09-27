@@ -4,7 +4,7 @@ import { AppState, Course, Metrics, Semester } from "../../miniprogram/domain/ty
 import { generatePlan } from "../../miniprogram/domain/scheduler";
 import { inspectImport } from "../../miniprogram/domain/imports";
 import { validateMetrics } from "../../miniprogram/domain/metrics";
-import { weekDate, currentWeek, slotsFor } from "../../miniprogram/domain/calendar";
+import { weekDate, currentWeek, boundedWeek, slotsFor } from "../../miniprogram/domain/calendar";
 
 export interface PhotosV2 {
   upload(path: string, base64: string): Promise<string>;
@@ -158,12 +158,26 @@ export function createGatewayV2(deps: DependenciesV2) {
         return response(receipt.data.result as Record<string, unknown>);
       }
     }
+    const readWeek = async (semester: Entity, week: number) => {
+      member();
+      const filter: Query = { eq: { semesterId: semester.id, week } };
+      const [tasks, plans, availability, records, occurrences] = await Promise.all([all("tasks", filter), all("plans", filter), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", member().data.role === "member" ? { eq: { ...filter.eq, memberId: member().id } } : filter), all("occurrences", filter)]);
+      return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => member().data.role !== "member" || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) };
+    };
+
     if (input.operation === "bootstrap") {
       // Every initialized transaction is constrained to retain an effective admin.
       const hasAdministrator = workspace.version > 0;
       const status = !hasAdministrator ? "needsAdministrator" : !workspace.activeSemesterId ? "preparing" : "ready";
       const application = (await page("applications", { eq: { identityKey }, limit: 1 })).items[0];
-      return response({ workspace: { ...workspace, autoApproval: validActor?.data.role === "admin" ? workspace.autoApproval : undefined }, member: validActor ? clean(validActor) : null, status, canInitialize: !hasAdministrator && context.OPENID === deps.bootstrapOpenid,
+      // Home uses the same permission-filtered week data, within this request's identity check.
+      let home;
+      if (p.includeHome === true) {
+        const semester = validActor && workspace.activeSemesterId ? await get("semesters", workspace.activeSemesterId) : undefined;
+        const week = semester ? boundedWeek(semester.data as unknown as Semester, new Date(now)) : 1;
+        home = { semester: semester ? clean(semester) : null, week, weekData: semester ? await readWeek(semester, week) : null };
+      }
+      return response({ ...(home ? { home } : {}), workspace: { ...workspace, autoApproval: validActor?.data.role === "admin" ? workspace.autoApproval : undefined }, member: validActor ? clean(validActor) : null, status, canInitialize: !hasAdministrator && context.OPENID === deps.bootstrapOpenid,
         application: application ? clean(application) : null, removed: !!actor && !validActor, executionConfigured });
     }
     if (input.operation === "initialize") {
@@ -252,8 +266,7 @@ export function createGatewayV2(deps: DependenciesV2) {
           if ((await repo.workspace()).version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
           return response({ records: records.map(clean), semester: clean(semester), reportVersion: workspace.version, version: workspace.version, state });
         }
-        const [tasks, plans, availability, records, occurrences] = await Promise.all([all("tasks", filter), all("plans", filter), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", member().data.role === "member" ? { eq: { ...filter.eq, memberId: member().id } } : filter), all("occurrences", filter)]);
-        return response({ semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => member().data.role !== "member" || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) });
+        return response(await readWeek(semester, week));
       }
       fail("查询类型无效");
     }

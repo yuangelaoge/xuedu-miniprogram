@@ -126,3 +126,16 @@ test('审核申请人可走人工审核和限时自动通过，均只绑定本�
   assert.equal(joined.data.automaticallyApproved,true);
   const autoMember=await automatic.call('bootstrap',{review:true});assert.equal((autoMember.data.member as any).data.role,'member');
 });
+
+
+test('审核样例首页复用合并启动，普通成员只收到本人任务和记录', async()=>{
+  const x=setup(); await x.call('reviewLogin',{payload:{username:'审核老师辛苦了',password}});
+  await x.call('reviewRole',{payload:{role:'member'}});
+  const boot=await x.call('bootstrap',{review:true,payload:{includeHome:true}});
+  const home=boot.data.home as any;
+  assert.equal(home.semester.id,'review-semester');
+  const week=await x.call('query',{review:true,epoch:boot.epoch,semesterId:home.semester.id,payload:{kind:'week',week:home.week}});
+  assert.deepEqual(home.weekData,week.data);
+  assert.ok(home.weekData.tasks.every((task:any)=>task.memberId===(boot.data.member as any).id));
+  assert.ok(home.weekData.records.every((record:any)=>record.memberId===(boot.data.member as any).id));
+});

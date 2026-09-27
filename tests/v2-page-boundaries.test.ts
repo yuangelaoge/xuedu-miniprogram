@@ -124,3 +124,54 @@ test('V2边界：页面查看新学期草稿不启用全组，另一账号默认
   assert.equal(records.data.semesterId, 'semester');
   assert.equal((await f.repository.get('records', 'record')).semesterId, 'semester');
 }));
+
+
+test('首页启动合并：一次请求返回当前学期和周数据，刷新仍只请求一次', async () => fixture(async f => {
+  const home = await f.page('home');
+  assert.equal(home.data.error, '');
+  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls[0].payload.includeHome, true);
+  assert.equal(home.data.week, 1, '当前周以服务端时间为准');
+  assert.equal(home.data.semesterId, 'semester');
+  assert.equal(home.data.taskCount, 1);
+  assert.equal(home.data.recordCount, 1);
+  await home.load();
+  assert.equal(f.calls.length, 2);
+  f.who('member-wechat');
+  const member = await f.page('home');
+  assert.equal(member.data.error, '');
+  assert.equal(member.data.homeTasks.length, 1);
+  assert.ok(member.data.weekData.tasks.every((task: Entity) => task.memberId === 'member'));
+  assert.ok(member.data.weekData.records.every((record: Entity) => record.memberId === 'member'));
+  const wx = (globalThis as any).wx;
+  const legacy = await wx.cloud.callFunction({data:{protocolVersion:2,operation:'query',epoch:'epoch-boundary',semesterId:'semester',payload:{kind:'week',week:1}}});
+  assert.deepEqual(member.data.weekData, legacy.result.data.data, '复用原周查询结果，不改变权限和业务口径');
+}));
+
+test('首页启动合并：未入组与无启用学期不返回内部周数据', async () => fixture(async f => {
+  f.who('applicant');
+  const applicant = await f.page('home');
+  assert.equal(applicant.data.error, '');
+  assert.equal(f.calls.length, 1);
+  assert.equal(applicant.data.memberId, '');
+  const wx = (globalThis as any).wx;
+  const response = await wx.cloud.callFunction({data:{protocolVersion:2,operation:'bootstrap',payload:{includeHome:true}}});
+  assert.deepEqual(response.result.data.data.home, {semester:null,week:1,weekData:null});
+  f.who('owner');
+  const state = await f.repository.workspace();
+  f.repository.workspace = async () => ({...state, activeSemesterId:''});
+  const before = f.calls.length, home = await f.page('home');
+  assert.equal(home.data.error, '');
+  assert.equal(f.calls.length - before, 1);
+  assert.equal(home.data.semesterId, '');
+  assert.deepEqual(home.data.homeTasks, []);
+}));
+
+test('首页启动合并：兼容尚未支持附带首页数据的旧后端', async () => fixture(async f => {
+  const wx = (globalThis as any).wx, invoke = wx.cloud.callFunction;
+  wx.cloud.callFunction = ({data}:any) => invoke({data: data.operation === 'bootstrap' ? {...data, payload:{}} : data});
+  const home = await f.page('home');
+  assert.equal(home.data.error, '');
+  assert.equal(f.calls.length, 3);
+  assert.equal(home.data.semesterId, 'semester');
+}));

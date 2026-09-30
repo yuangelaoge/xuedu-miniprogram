@@ -3,6 +3,8 @@ import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
 import { WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
+import { runtime } from "../../config/runtime";
+import { ImportPlan, planCourseImport } from "./import-batch";
 
 import { boundedWeek, weekRange } from "../../domain/calendar";
 
@@ -51,6 +53,27 @@ function availabilityGrid(slots: {key:string}[], selected: string[]) {
 }
 function displayError(e: unknown): void { wx.showModal({ title: "未完成", content: e instanceof Error ? e.message : "操作失败，请刷新重试", showCancel: false }); }
 
+function importPlanKey(semesterId: string): string {
+  const boot = currentBoot();
+  return ["xuedu.import.v2", runtime.env, reviewActive() ? "review" : "cloud", boot.workspace.epoch, boot.member?.id || "visitor", semesterId].join(".");
+}
+function readImportPlan(semesterId: string): ImportPlan | null {
+  const stored = wx.getStorageSync(importPlanKey(semesterId)) as ImportPlan | undefined;
+  if (!stored) return null;
+  const boot = currentBoot();
+  if (stored.semesterId !== semesterId || stored.epoch !== boot.workspace.epoch || stored.memberId !== boot.member?.id ||
+      stored.permissionsVersion !== boot.workspace.permissionsVersion || !Array.isArray(stored.batches) ||
+      !Number.isInteger(stored.next) || stored.next < 0 || stored.next > stored.batches.length || typeof stored.sourceText !== "string")
+    throw new Error("本机导入续传状态与当前身份不符，请核对已导入资料后清除续传记录");
+  let index = 0;
+  const expected = planCourseImport(stored.sourceText, () => stored.batches[index++]?.requestId || "");
+  if (expected.length !== stored.batches.length || expected.some((batch, i) =>
+      batch.text !== stored.batches[i].text || batch.courses !== stored.batches[i].courses ||
+      batch.classes !== stored.batches[i].classes || batch.dates !== stored.batches[i].dates))
+    throw new Error("本机导入续传状态损坏，请核对已导入资料后清除续传记录");
+  return stored;
+}
+
 export async function previewAuthorizedImages(urls: string[], index = 0): Promise<void> {
   if (!urls.length) return;
   let visible = urls;
@@ -68,7 +91,7 @@ export function registerCloudPage(view: View): void {
     data: {
       metricFields: [] as Field[], nameFields: [] as Field[], feedbackFields: [] as Field[], recordContext: null as Row | null, uploadingPhoto: "",
       courseClasses: [] as Entity[], courseClassCursor: "", courseGrade: "全部", courseGrades: [] as string[], courseClassesIncomplete: false,
-      importPreview: [] as string[], importCount: 0, importClassCount: 0, importReady: false,
+      importPreview: [] as string[], importCount: 0, importClassCount: 0, importReady: false, importPending: false, importProgress: "",
       pendingCount: 0, pendingMore: false, pendingLabel: "", searchText: "", applicationFilter: "pending", visibleRows: [] as Row[], visibleTasks: [] as Row[],
       dirty: false, weekInitialized: false, maxWeek: 60, filename: "", filePath: "", fileOwner: "",
       modeLabel: "云端试用", roleLabel: "", initial: "", className: "", studentNo: "", dates: "", availabilityReady: false,
@@ -312,8 +335,15 @@ export function registerCloudPage(view: View): void {
         if (type === "join") { const classes = await options(); fields = [field("name", "本人真实姓名", d.name), field("studentNo", "学号", d.studentNo), field("classId", "本人班级", Math.max(0,classes.findIndex(c => c.value === d.classId)), "select", classes)]; }
         if (type === "initialize") fields = [field("semesterName", "学期名称"), field("startDate", "第一周周一", "", "date"), field("weeksCount", "教学周数", "20", "number"), field("grade", "本人入学年级（两位数字）"), field("major", "本人专业"), field("className", "本人班级名称"), field("name", "本人真实姓名"), field("studentNo", "本人学号")];
         if (type === "rebindRequest") fields = [field("studentNo", "原成员学号"), field("reason", "换绑原因（需管理员线下核实）", "", "textarea")];
-        if (type === "import") fields = [field("text", "粘贴JSON课表（先解析预览）", "", "textarea")];
-        this.setData({ importPreview:[],importReady:false,formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
+        let pending: ImportPlan | null = null, pendingError = "";
+        if (type === "import") try { pending = readImportPlan(this.data.semesterId); }
+        catch(e) { pendingError = e instanceof Error ? e.message : "本机导入续传状态不可用"; }
+        const importSource = pending ? JSON.parse(pending.sourceText) as {courses:Record<string,unknown>[];classes?:unknown[]} : null;
+        if (type === "import") fields = [field("text", "粘贴JSON课表（先解析预览）", pending?.sourceText || "", "textarea")];
+        this.setData({ importPreview:importSource ? importSource.courses.slice(0,20).map((c,i)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`) : [],
+          importReady:!!pending,importPending:!!pending || !!pendingError,importCount:importSource?.courses.length || 0,importClassCount:importSource?.classes?.length || 0,
+          importProgress:pending ? `待续传：已完成 ${pending.next}/${pending.batches.length} 批` : pendingError,
+          formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
       } catch (e) { displayError(e); }
     },
     input(e: UiEvent) {
@@ -345,6 +375,60 @@ export function registerCloudPage(view: View): void {
         this.setData({importReady:true,importCount:parsed.courses.length,importClassCount:parsed.classes?.length || 0,importPreview:parsed.courses.slice(0,20).map((c:Record<string,unknown>,i:number)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`)});
       }catch(e){this.setData({importReady:false,importPreview:[]});displayError(e);}
     },
+    restoreImport() {
+      try {
+        const pending = readImportPlan(this.data.semesterId);
+        if (!pending) throw new Error("没有可续传的导入");
+        const parsed = JSON.parse(pending.sourceText);
+        this.setData({fields:this.data.fields.map(f=>f.key === "text" ? {...f,value:pending.sourceText} : f),importReady:true,importPending:true,
+          importCount:parsed.courses.length,importClassCount:parsed.classes?.length || 0,
+          importPreview:parsed.courses.slice(0,20).map((c:Record<string,unknown>,i:number)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`),
+          importProgress:`待续传：已完成 ${pending.next}/${pending.batches.length} 批`});
+      } catch(e) { displayError(e); }
+    },
+    async discardImport() {
+      if (this.data.busy) return;
+      const answer = await wx.showModal({title:"清除本机续传记录",content:"只清除本机的导入进度，不删除云端已成功导入的班级和课程。重新导入相同全文会因重复 ID 被拒绝，请先核对云端列表。"});
+      if (!answer.confirm) return;
+      wx.removeStorageSync(importPlanKey(this.data.semesterId));
+      this.setData({importPending:false,importReady:false,importProgress:"已清除本机续传记录；云端已成功批次仍保留。"});
+    },
+    async runImport(content: string): Promise<boolean> {
+      const semesterId = this.data.semesterId, key = importPlanKey(semesterId);
+      let plan = readImportPlan(semesterId);
+      if (plan && plan.sourceText !== content) throw new Error("存在未完成导入，请恢复上次内容继续；不能用新文件覆盖续传状态");
+      if (!plan) {
+        if (reviewActive()) {
+          const sample = JSON.parse(content) as {courses?:unknown[]};
+          if ((sample.courses?.length || 0) > 20) throw new Error("审核样例仅支持少量课程体验；完整课表请在真实业务身份中导入");
+        }
+        this.setData({importProgress:"正在校验完整课表，尚未写入云端…"});
+        const inspection = await query<{courses:number;classes:number}>("importInspect",semesterId,{text:content});
+        const batches = planCourseImport(content,requestId);
+        if (batches.reduce((n,b)=>n+b.courses,0) !== inspection.data.courses || batches.reduce((n,b)=>n+b.classes,0) !== inspection.data.classes)
+          throw new Error("分批计划与完整课表数量不符，已停止导入");
+        const answer = await wx.showModal({title:"确认分批导入",content:`完整校验通过：${inspection.data.courses} 条课程、${inspection.data.classes} 个班级。将分 ${batches.length} 批写入；中断后可在本机继续，已成功批次不会回滚。`});
+        if (!answer.confirm) { this.setData({importProgress:"已取消，未写入云端。"}); return false; }
+        const boot = currentBoot();
+        plan = {sourceText:content,semesterId,epoch:boot.workspace.epoch,memberId:boot.member!.id,
+          permissionsVersion:boot.workspace.permissionsVersion,next:0,batches};
+        wx.setStorageSync(key,plan); // Must persist request IDs before the first write.
+      } else {
+        const answer = await wx.showModal({title:"继续导入",content:`已完成 ${plan.next}/${plan.batches.length} 批。将用原请求号重试当前批次，并继续剩余课程。`});
+        if (!answer.confirm) return false;
+      }
+      this.setData({importPending:true});
+      while (plan.next < plan.batches.length) {
+        const batch = plan.batches[plan.next];
+        this.setData({importProgress:`正在导入 ${plan.next+1}/${plan.batches.length} 批（${batch.courses} 条课程、${batch.dates} 个日期）…`});
+        await call("command",{semesterId,requestId:batch.requestId,payload:{type:"import",text:batch.text}});
+        plan.next++;
+        wx.setStorageSync(key,plan); // Lost response retries the same request ID; no duplicate commit.
+      }
+      wx.removeStorageSync(key);
+      this.setData({importPending:false,importProgress:`导入完成：${plan.batches.length} 批，全部课程已提交。`});
+      return true;
+    },
     cancelForm() { if(this.data.busy)return; this.setData({ formType: "", photoIds: [], formPhotos: [],uploadingPhoto:"",recordContext:null }); },
     async saveForm() {
       if (this.data.busy) return;
@@ -366,8 +450,6 @@ export function registerCloudPage(view: View): void {
           if(!this.data.importReady)throw new Error("请先解析预览，再确认导入");
           const parsed = JSON.parse(s(payload.text)) as { courses?: unknown[]; classes?: unknown[] };
           if (!Array.isArray(parsed.courses)) throw new Error("JSON缺少courses课程列表");
-          const confirmation = await wx.showModal({ title: "确认导入", content: `预览：${parsed.courses.length} 条课程、${parsed.classes?.length || 0} 个班级。云端将完整校验后再保存。` });
-          if (!confirmation.confirm) return;
         }
         if (type === "recordSubmit" || type === "recordEdit") {
           const metrics: Record<string, number> = {};
@@ -379,11 +461,20 @@ export function registerCloudPage(view: View): void {
             semester: { name: payload.semesterName, startDate: payload.startDate, weeks: payload.weeksCount, days: 5, periods: 14, edition: "西南大学计信院学风督察小组" },
             schoolClass: { name: payload.className, grade: payload.grade, major: payload.major }, member: { name: payload.name, studentNo: payload.studentNo },
           } });
+        } else if (type === "import") {
+          if (!await this.runImport(s(payload.text))) return;
         } else { const result = await command(type, payload, ["join", "classSave", "rebindRequest", "semesterCreate", "autoApprovalSet"].includes(type) ? "" : type === "semesterParticipants" ? this.data.formId : this.data.semesterId, this.data.formVersion); admitted = type === "join" && result.data.automaticallyApproved === true; this.setData({ impacts: Array.isArray(result.data.impacts) ? (result.data.impacts as Entity[]).map(row) : [] }); }
         if (type === "recordSubmit") wx.removeStorageSync(draftKey(s(payload.taskId)));
         this.setData({ formType: "", record: null, rows: [], versions: [], versionCursor: "" });
         wx.showToast({ title: "已保存", icon: "success" });
-      } catch (e) { displayError(e); }
+      } catch (e) {
+        if (this.data.formType === "import") try {
+          const pending = readImportPlan(this.data.semesterId);
+          if (pending) this.setData({importPending:true,importProgress:`导入中断：已完成 ${pending.next}/${pending.batches.length} 批。请确认后继续同一文件。`});
+          else this.setData({importProgress:"校验失败，未写入云端。"});
+        } catch { /* Keep the original error; a corrupt plan can be cleared explicitly. */ }
+        displayError(e);
+      }
       finally { this.setData({ busy: false }); }
       await this.load();
       if (admitted && this.data.memberId) wx.switchTab({url:"/pages/index/index"});

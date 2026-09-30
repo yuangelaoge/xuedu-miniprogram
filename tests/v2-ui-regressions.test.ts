@@ -50,7 +50,7 @@ test('V2前端：复制上一周仅改本地时段与备注，不复制报名；
  f.confirm(false);await page.moveWeek(event({delta:'1'}));assert.equal(page.data.week,2);assert.equal(page.data.dirty,true);await page.saveAvailability();assert.equal(page.data.dirty,false);assert.equal((await f.repo.query('availability',{eq:{week:2}})).items[0].data.optedIn,false);
 }));
 test('V2前端：安排默认下周、记录默认当前周，目标周传递和已取消任务过滤',async()=>fixture(async f=>{
- const current=boundedWeek(f.semester as Semester);const schedule=await f.page('schedule',{});assert.equal(schedule.data.week,Math.min(20,current+1));const records=await f.page('records',{});assert.equal(records.data.week,current);
+ const current=boundedWeek(f.semester as Semester,new Date("2026-09-23T00:00:00Z"));const schedule=await f.page('schedule',{});assert.equal(schedule.data.week,Math.min(20,current+1));const records=await f.page('records',{});assert.equal(records.data.week,current);
  const first=await f.page('schedule',{week:'1',semesterId:'semester'});assert.equal(first.data.visibleTasks.length,2);first.search(event({},'待调整'));assert.equal(first.data.visibleTasks.length,1);assert.equal(first.data.visibleTasks[0].status,'pendingAdjustment');first.navigate(event({target:'availability'}));assert.match(f.navigation[0],/week=1&semesterId=semester/);
 }));
 test('V2前端：JSON/TXT文件只在本机预览，改内容后重新预览，超限和成员导入拦截',async()=>fixture(async f=>{
@@ -66,7 +66,7 @@ test('V2前端：切回启用学期按校历选周，历史学期从首周浏览
  const page=await f.page('records');
  const choose=async(id:string)=>{page.chooseSemester(event({},String(page.data.semesters.findIndex((s:Entity)=>s.id===id))));while(page.data.busy)await new Promise(r=>setImmediate(r));assert.equal(page.data.error,'');};
  await choose('historical');assert.equal(page.data.week,1);await page.moveWeek(event({delta:'1'}));await page.load();assert.equal(page.data.week,2);assert.equal((await f.repo.workspace()).activeSemesterId,'semester');
- await choose('semester');assert.equal(page.data.week,boundedWeek(f.semester as Semester));assert.equal((await f.repo.workspace()).activeSemesterId,'semester');
+ await choose('semester');assert.equal(page.data.week,boundedWeek(f.semester as Semester,new Date("2026-09-23T00:00:00Z")));assert.equal((await f.repo.workspace()).activeSemesterId,'semester');
 }));
 
 test('V2记录页：周统计随切周重新读取，跳过周与无学期不沿用旧进度',async()=>fixture(async f=>{

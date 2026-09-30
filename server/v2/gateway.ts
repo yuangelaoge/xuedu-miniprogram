@@ -137,6 +137,19 @@ export function createGatewayV2(deps: DependenciesV2) {
       for (const id of ids) { const pending = changes.get("classes:" + id)?.value; rows.push(pending ? { ...pending, version: 0 } : (await get("classes", id))!); }
       return rows;
     };
+    const validateCourseImport = async (semester: Entity, sourceText: string) => {
+      const oldClasses = await all("classes");
+      const oldCourses = await all("courses", { eq: { semesterId: semester.id } });
+      const sem = { ...semester.data, id: semester.id, grades: semester.data.grades || [] } as unknown as Semester;
+      const state = { schema: 1, activeSemesterId: semester.id, actorId: member().id, semesters: [sem], classes: oldClasses.map(c => ({ id: c.id, ...c.data })), courses: oldCourses.map(c => c.data.course), members: [{ id: member().id, ...member().data }], applications: [], availability: [], plans: [], drafts: [], records: [], audit: [], generation: 0 } as unknown as AppState;
+      const imported = inspectImport(state, "courses", sourceText);
+      if (imported.errors.length) fail(imported.errors.join("\n"));
+      const classRows = new Map(oldClasses.map(c => [c.id, c]));
+      for (const course of imported.courses) for (const id of course.classIds) {
+        if (classRows.get(id)?.data.active === false) fail("不能使用停用班级");
+      }
+      return { imported, classRows };
+    };
     const observation = async (recordId?: string, taskId?: string) => {
       const metrics = p.metrics as Metrics; if (!metrics || typeof metrics !== "object") fail("请填写观察数据"); validateMetrics(metrics);
       const photos = strings(p.photos, "照片", 3); if (!photos.length) fail("每份记录需要1至3张照片");
@@ -235,6 +248,11 @@ export function createGatewayV2(deps: DependenciesV2) {
     if (input.operation === "query") {
       epoch(); if (workspace.maintenance) fail("业务数据正在维护", "MAINTENANCE");
       const kind = text(p.kind, "查询类型");
+      if (kind === "importInspect") {
+        admin(); const semester = await requireSemester();
+        const { imported } = await validateCourseImport(semester, text(p.text, "JSON课表", 300000));
+        return response({ courses: imported.courses.length, classes: imported.classes.length, version: workspace.version });
+      }
       if (kind === "autoApproval") {
         admin(); const setting = workspace.autoApproval;
         return response({ setting: setting || null, active: setting?.enabled === true && Date.parse(setting.expiresAt) > now, expired: setting?.enabled === true && Date.parse(setting.expiresAt) <= now, version: workspace.version, serverNow: now });
@@ -655,20 +673,25 @@ export function createGatewayV2(deps: DependenciesV2) {
     };
     if (type === "import") {
       admin(); const sourceText = text(p.text, "JSON课表", 300000);
-      const oldClasses = await all("classes"); const oldCourses = await all("courses", { eq: { semesterId: semester.id } });
-      const state = { schema: 1, activeSemesterId: semester.id, actorId: member().id, semesters: [sem], classes: oldClasses.map(c => ({ id: c.id, ...c.data })), courses: oldCourses.map(c => c.data.course), members: [{ id: member().id, ...member().data }], applications: [], availability: [], plans: [], drafts: [], records: [], audit: [], generation: 0 } as unknown as AppState;
-      const imported = inspectImport(state, "courses", sourceText);
-      if (imported.errors.length) fail(imported.errors.join("\n"));
+      const { imported, classRows } = await validateCourseImport(semester, sourceText);
       if (imported.classes.length + imported.courses.length > 200 || imported.courses.reduce((n, c) => n + c.weeks.length, 0) > 700) fail("单批最多200个班级和课程、700个上课日期，请分批导入");
       const participants = await all("semester_classes", { eq: { semesterId: semester.id } });
-      for (const c of imported.classes) add("classes", { name: c.name, grade: c.grade, major: c.major, active: true }, {}, c.id);
+      for (const c of imported.classes) classRows.set(c.id, add("classes", { name: c.name, grade: c.grade, major: c.major, active: true }, {}, c.id));
       const classIds = Array.from(new Set(imported.courses.flatMap(c => c.classIds)));
       for (const id of classIds) if (!participants.some(row => row.parentId === id)) add("semester_classes", {}, { semesterId: semester.id, parentId: id });
       for (const course of imported.courses) {
         const normalized = { ...course, semesterId: semester.id };
         const row = add("courses", { name: course.name, course: normalized, active: true }, { semesterId: semester.id }, course.id);
-        add("course_versions", { course: normalized, active: true, createdAt: at, sequence: workspace.version + 1 }, { semesterId: semester.id, parentId: row.id, date: sem.startDate });
-        await rebuildCourse(row, sem.startDate);
+        const version = add("course_versions", { course: normalized, active: true, createdAt: at, sequence: workspace.version + 1 }, { semesterId: semester.id, parentId: row.id, date: sem.startDate });
+        // Imported IDs are new: there are no historical versions, exceptions or tasks to rebuild.
+        // Reuse the already validated class snapshots, avoiding database reads per course/date.
+        const klasses = course.classIds.map(id => classRows.get(id)!);
+        for (const week of new Set(course.weeks)) {
+          const on = weekDate(sem, week, course.weekday);
+          add("occurrences", { course: { ...normalized, weeks: [week] }, classes: klasses.map(c => ({ id: c.id, ...c.data })),
+            classLabel: klasses.map(c => c.data.name).join(" / "), status: "active", originalDate: on, courseVersionId: version.id },
+            { semesterId: semester.id, parentId: row.id, week, date: on }, row.id + ":" + on);
+        }
       }
       audit(type, semester.id, { classes: imported.classes.length, courses: imported.courses.length }); return commit();
     }

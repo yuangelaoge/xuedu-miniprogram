@@ -4,6 +4,7 @@ import { context, command, runAsync } from "../../services/store";
 import { UiEvent } from "../../domain/types";
 import { WEEKDAYS, weekRange } from "../../domain/calendar";
 import { memberPage } from "../../services/member-page";
+import { syncAvailabilityExitAlert } from "../../services/availability-exit";
 if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
   data: {
     week: 1,
@@ -27,6 +28,8 @@ if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
     });
     this.load();
   },
+  onShow() { syncAvailabilityExitAlert(this.data.dirty); },
+  onUnload() { syncAvailabilityExitAlert(false); },
   load() {
     const { state, semester, user } = context(),
       week = Math.max(1, Math.min(this.data.week, semester.weeks));
@@ -64,6 +67,7 @@ if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
         })),
       })),
     });
+    syncAvailabilityExitAlert(this.data.dirty);
   },
   toggle(e: UiEvent) {
     const key = e.currentTarget.dataset.key;
@@ -93,9 +97,11 @@ if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
   },
   note(e: UiEvent) {
     this.setData({ note: e.detail.value, dirty: true });
+    syncAvailabilityExitAlert(true);
   },
   volunteer() {
     this.setData({ optedIn: !this.data.optedIn, dirty: true });
+    syncAvailabilityExitAlert(true);
   },
   move(e: UiEvent) {
     const week = this.data.week + Number(e.currentTarget.dataset.delta);
@@ -157,7 +163,9 @@ if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
             } }),
         "无课时间已保存",
       )
-    )
+    ) {
       this.setData({ dirty: false, saved: true });
+      syncAvailabilityExitAlert(false);
+    }
   },
 });

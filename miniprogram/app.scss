@@ -421,6 +421,7 @@ textarea.input {
 .v2-picker, .v2-field input, .v2-page textarea { border-color: #eaf0f7; border-radius: 14rpx; padding: 22rpx 24rpx; }
 .v2-page .title { margin-bottom: 12rpx; }
 .v2-page .v2-form { border-top: 6rpx solid #2468e8; }
+.v2-save-toolbar { position: sticky; top: 0; z-index: 5; background: #fff; padding: 14rpx 0; border-bottom: 1rpx solid #eaf0f7; }
 
 /* V2 提交和更正共用分组，避免更正页缺少 submission 专属样式。 */
 .v2-record-context { background: #f5f8ff; border-radius: 18rpx; padding: 22rpx; }

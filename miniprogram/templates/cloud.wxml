@@ -57,12 +57,13 @@
     </block>
     <view wx:if="{{view === 'availability' && semesterId}}" class="v2-card">
       <view class="v2-title">勾选完整可听课时间</view>
+      <view class="v2-save-toolbar"><view class="muted small">{{dirty ? "有未保存修改" : availabilityReady ? "本周无课时间已保存" : "尚未提交本周无课时间"}}</view><view class="v2-actions"><button wx:if="{{week > 1}}" disabled="{{busy}}" bindtap="copyAvailability">复制上一周</button><button type="primary" disabled="{{busy}}" bindtap="saveAvailability">确认保存第 {{week}} 周</button></view></view>
       <label wx:if="{{role !== 'member'}}"><switch checked="{{optedIn}}" disabled="{{busy}}" bindchange="optIn"/>第 {{week}} 周我也听课</label>
       <view class="muted small">点击星期可整列切换 · 已选 {{selectedSlots.length}} 节</view>
       <view class="grid-row"><view class="grid-label"></view><view wx:for="{{availabilityDays}}" wx:key="n" class="day-head" data-day="{{item.n}}" bindtap="toggleDay">{{item.name}}</view></view>
       <view wx:for="{{availabilityRows}}" wx:for-item="row" wx:key="n" class="grid-row"><view class="grid-label">{{row.n}}</view><view wx:for="{{row.cells}}" wx:key="key" class="time-cell {{item.selected ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="toggleSlot">{{item.selected ? '✓' : ''}}</view></view>
       <view class="row gap grid-legend"><view class="legend-square"></view><text>可听课</text><view class="legend-square off"></view><text>不可安排</text></view>
-      <textarea placeholder="备注" value="{{availabilityNote}}" bindinput="availabilityNote"/><view class="muted small">{{dirty ? "有未保存修改" : availabilityReady ? "本周无课时间已保存" : "尚未提交本周无课时间"}}</view><view class="actions"><button wx:if="{{week > 1}}" disabled="{{busy}}" bindtap="copyAvailability">复制上一周</button><button type="primary" disabled="{{busy}}" bindtap="saveAvailability">保存第 {{week}} 周无课时间</button></view>
+      <textarea placeholder="备注" value="{{availabilityNote}}" bindinput="availabilityNote"/>
     </view>
     <view wx:if="{{view === 'manage'}}" class="filters"><view wx:for="{{sections}}" wx:key="id" wx:if="{{admin || (item.id !== 'classes' && item.id !== 'semesters' && item.id !== 'courses' && item.id !== 'rebindings' && item.id !== 'autoApproved')}}" class="chip {{section === item.id ? 'active' : ''}}" data-id="{{item.id}}" bindtap="section">{{item.label}}</view></view>
     <view wx:if="{{view === 'manage' && admin && (section === 'applications' || section === 'autoApproved')}}" class="v2-card">
@@ -80,6 +81,8 @@
       <button wx:if="{{section === 'semesters'}}" data-type="semesterCreate" bindtap="newForm">新建学期草稿</button>
       <block wx:if="{{section === 'courses' && semesterId}}"><button data-type="courseSave" bindtap="newForm">新增课程</button><button data-type="import" bindtap="newForm">JSON课表导入</button></block>
     </view>
+    <block wx:if="{{view === 'manage'}}"><include src="cloud-form.wxml" /></block>
+    <view wx:if="{{view === 'manage' && admin && section === 'audit' && !reviewMode}}" class="v2-card"><view class="v2-title">换届业务清空</view><view>清空所有年份的业务资料，保留全部管理员及其绑定班级，管理员启停状态不变。</view><button type="warn" disabled="{{busy}}" bindtap="clearBusiness">预览清空范围</button><view>{{clearProgress}}</view></view>
     <block wx:if="{{view === 'records' && semesterId}}">
       <view class="card v2-record-progress"><view class="row between"><view class="section-title">{{skipped ? '本周已跳过' : '本周提交进度'}}</view><view><text class="number" style="font-size:36rpx">{{weekSubmitted}}</text><text class="muted"> / {{weekTotal}}</text></view></view><view class="progress"><view class="progress-fill" style="width:{{weekProgress}}%"></view></view><view class="muted small" style="margin-top:16rpx">{{skipped ? '本周不计漏交或零出勤统计' : '已提交记录 / 正式安排任务'}}</view></view>
       <view class="tabs"><view wx:if="{{manager}}" class="tab {{recordTab === 'all' ? 'active' : ''}}" data-id="all" bindtap="recordTab">听课汇总</view><view class="tab {{recordTab === 'mine' ? 'active' : ''}}" data-id="mine" bindtap="recordTab">个人听课</view><view wx:if="{{manager}}" class="tab {{recordTab === 'stats' ? 'active' : ''}}" data-id="stats" bindtap="recordTab">周统计</view></view>
@@ -120,22 +123,8 @@
       <button bindtap="history">{{versions.length ? (versionCursor ? '加载更多修改历史' : '查看修改历史') : '查看修改历史'}}</button>
       <view wx:for="{{versions}}" wx:key="id" class="v2-row"><view>{{item.detail}}</view><view>{{item.data.correctedAt || item.data.firstSubmittedAt}} · {{item.data.reason}}</view><view wx:for="{{item.historyFields}}" wx:for-item="metric" wx:key="label">{{metric.label}}：{{metric.value}}</view><view>旷课：{{item.data.absentNames}}；请假：{{item.data.leaveNames}}</view><view>班风：{{item.data.evaluation}}；反馈：{{item.data.feedback}}；建议：{{item.data.suggestion}}；其他：{{item.data.otherDescription}}</view><view>修改人：{{item.data.actorId}} · 版本 {{item.data.recordVersion}}</view><button size="mini" data-id="{{item.id}}" bindtap="versionPhotos">查看该版本照片</button></view>
     </view>
-    <view wx:if="{{view === 'manage' && admin && section === 'audit' && !reviewMode}}" class="v2-card"><view class="v2-title">换届业务清空</view><view>清空所有年份的业务资料，保留全部管理员及其绑定班级，管理员启停状态不变。</view><button type="warn" disabled="{{busy}}" bindtap="clearBusiness">预览清空范围</button><view>{{clearProgress}}</view></view>
-  </block>
-  <view wx:if="{{formType}}" class="v2-card v2-form">
-    <view class="v2-title">{{formTitle}}</view>
-    <block wx:if="{{formType === 'recordSubmit' || formType === 'recordEdit'}}"><include src="cloud-record-form.wxml" /></block>
-    <view wx:for="{{fields}}" wx:key="key" wx:for-item="field" wx:if="{{formType !== 'recordSubmit' && formType !== 'recordEdit'}}" class="v2-field">
-      <view class="v2-label">{{field.label}}</view>
-      <textarea wx:if="{{field.kind === 'textarea'}}" value="{{field.value}}" data-key="{{field.key}}" bindinput="input" maxlength="-1"/>
-      <picker wx:elif="{{field.kind === 'date' || field.kind === 'time'}}" mode="{{field.kind}}" value="{{field.value}}" data-key="{{field.key}}" bindchange="input"><view class="v2-picker">{{field.value || (field.kind === 'time' ? '选择时间' : '选择日期')}} ▾</view></picker>
-      <picker wx:elif="{{field.kind === 'select'}}" range="{{field.options}}" range-key="label" value="{{field.value}}" data-key="{{field.key}}" bindchange="input"><view class="v2-picker">{{field.options[field.value].label || '暂无可选项'}} ▾</view></picker>
-      <checkbox-group wx:elif="{{field.kind === 'multi'}}" data-key="{{field.key}}" bindchange="multi"><label wx:for="{{field.options}}" wx:key="value" class="v2-choice"><checkbox value="{{item.value}}" checked="{{item.checked}}"/>{{item.label}}</label></checkbox-group>
-      <input wx:else value="{{field.value}}" type="{{field.kind === 'number' ? 'number' : 'text'}}" data-key="{{field.key}}" bindinput="input" maxlength="500"/>
-    </view>
-    <block wx:if="{{formType === 'import'}}"><view class="actions"><button disabled="{{busy}}" bindtap="chooseImportFile">选择JSON／TXT文件</button><button disabled="{{busy}}" bindtap="previewImport">解析预览</button></view><view wx:if="{{importProgress}}" class="v2-note">{{importProgress}}</view><view wx:if="{{importPending}}" class="actions"><button disabled="{{busy}}" bindtap="restoreImport">恢复上次内容</button><button disabled="{{busy}}" bindtap="discardImport">清除本机续传记录</button></view><view wx:if="{{importReady}}"><view class="section-title">{{importCount}} 条课程 · {{importClassCount}} 个新班级</view><view wx:for="{{importPreview}}" wx:key="*this" class="v2-row">{{item}}</view><view class="muted small">仅展示前20条。确认时服务端先校验完整文件，再分小批写入；中断后使用相同请求号续传，已成功批次不会自动回滚。</view></view></block>
 
-    <view class="v2-actions"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
-  </view>
+  </block>
+  <block wx:if="{{view !== 'manage' || !memberId || maintenance}}"><include src="cloud-form.wxml" /></block>
   </block>
 </view>

@@ -22,12 +22,12 @@ async function fixture(work:(f:any)=>Promise<void>,activeSemesterId='semester') 
  tasks:[e('task',{status:'submitted',memberName:'合成成员',classLabel:'合成班',course,date:'2026-09-07'},{semesterId:'semester',week:1,memberId:'member'}),e('pending',{status:'pendingAdjustment',memberName:'待调整成员',classLabel:'合成班',course,date:'2026-09-07'},{semesterId:'semester',week:1,memberId:'admin'}),e('cancelled',{status:'cancelled',memberName:'不应显示'},{semesterId:'semester',week:1,memberId:'member'})],
  plans:[e('plan',{status:'confirmed',uncovered:[{label:'未覆盖班',reason:'无可用成员'}]},{semesterId:'semester',week:1}),e('skipped-week',{status:'skipped',reason:'假期'},{semesterId:'semester',week:2})],
  records:[e('record',{memberName:'合成成员',classLabel:'合成班',classes:[{id:'c',name:'合成班',grade:'26',major:'合成专业'}],course,date:'2026-09-07',firstSubmittedAt:'2026-09-07T00:00:00Z',metrics:{expected:20,actual:20,late:0,early:0,sleep:0,phone:0,talk:0,other:0},absentNames:'无',leaveNames:'无',photos:[],revision:1},{semesterId:'semester',week:1,memberId:'member',taskId:'task'})]});
- let who='owner',pageDefinition:any,confirm=true,mutateOnWrite=false;const calls:any[]=[],errors:string[]=[],copied:string[]=[],written:any[]=[],opened:any[]=[],navigation:any[]=[];
+ let who='owner',pageDefinition:any,confirm=true,mutateOnWrite=false,failAvailabilitySave=false,exitAlert=false;const calls:any[]=[],errors:string[]=[],copied:string[]=[],written:any[]=[],opened:any[]=[],navigation:any[]=[],modals:any[]=[],scrolls:any[]=[];
  const gateway=createGatewayV2({repository:repo,appid:'app',bootstrapOpenid:'owner',maxExecutionMs:3000,now:()=>Date.parse('2026-09-23T00:00:00Z'),uuid:()=>`generated-${++sequence}`,photos:{async upload(){return '';},async urls(){return [];},async list(){return [];},async delete(){}}});
  const storage=new Map();g.Page=(p:any)=>pageDefinition=p;
- g.wx={env:{USER_DATA_PATH:'/synthetic'},getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:any)=>storage.set(k,v),removeStorageSync:(k:string)=>storage.delete(k),showToast(){},async showModal(o:any){if(o.showCancel===false){errors.push(o.content);return {confirm:false};}return {confirm,content:'核对'};},async setClipboardData({data}:any){copied.push(data);},openDocument(o:any){opened.push(o);},navigateTo(o:any){navigation.push(o.url);},getFileSystemManager(){return {writeFile(o:any){written.push(o);if(mutateOnWrite){const original=repo.workspace.bind(repo);repo.workspace=async()=>({...await original(),version:2});}o.success();o.complete();}};},cloud:{init(){},async callFunction({data}:any){calls.push(data);try{return {result:{ok:true,data:await gateway(data,{OPENID:who,APPID:'app'})}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
- const pages:any[]=[];const page=async(view:any,q:any={week:'1'})=>{registerCloudPage(view);const p={...pageDefinition,data:structuredClone(pageDefinition.data),setData(v:any){Object.assign(this.data,v);}};pages.push(p);p.onLoad(q);await p.load();assert.equal(p.data.error,'');return p;};
- try{await work({page,repo,calls,errors,copied,written,opened,navigation,semester,who:(v:string)=>who=v,confirm:(v:boolean)=>confirm=v,mutateOnWrite:()=>mutateOnWrite=true});}finally{pages.forEach(p=>p.onUnload());g.wx=oldWx;g.Page=oldPage;Object.assign(runtime,oldRuntime);}
+ g.wx={env:{USER_DATA_PATH:'/synthetic'},getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:any)=>storage.set(k,v),removeStorageSync:(k:string)=>storage.delete(k),showToast(){},enableAlertBeforeUnload(){exitAlert=true;},disableAlertBeforeUnload(){exitAlert=false;},pageScrollTo(o:any){scrolls.push(o);},async showModal(o:any){modals.push(o);if(o.showCancel===false){errors.push(o.content);return {confirm:false};}return {confirm,content:'核对'};},async setClipboardData({data}:any){copied.push(data);},openDocument(o:any){opened.push(o);},navigateTo(o:any){navigation.push(o.url);},getFileSystemManager(){return {writeFile(o:any){written.push(o);if(mutateOnWrite){const original=repo.workspace.bind(repo);repo.workspace=async()=>({...await original(),version:2});}o.success();o.complete();}};},cloud:{init(){},async callFunction({data}:any){calls.push(data);if(failAvailabilitySave && data.payload?.type==='availabilitySave')return {result:{ok:false,error:'合成保存失败'}};try{return {result:{ok:true,data:await gateway(data,{OPENID:who,APPID:'app'})}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
+ const pages:any[]=[];const page=async(view:any,q:any={week:'1'})=>{registerCloudPage(view);const p={...pageDefinition,data:structuredClone(pageDefinition.data),setData(v:any,callback?:()=>void){Object.assign(this.data,v);callback?.();}};pages.push(p);p.onLoad(q);await p.load();assert.equal(p.data.error,'');return p;};
+ try{await work({page,repo,calls,errors,copied,written,opened,navigation,modals,scrolls,exitAlert:()=>exitAlert,failAvailabilitySave:()=>failAvailabilitySave=true,semester,who:(v:string)=>who=v,confirm:(v:boolean)=>confirm=v,mutateOnWrite:()=>mutateOnWrite=true});}finally{pages.forEach(p=>p.onUnload());g.wx=oldWx;g.Page=oldPage;Object.assign(runtime,oldRuntime);}
 }
 test('V2前端：待审核提示用准确计数，搜索与全选不跨已加载范围',async()=>fixture(async f=>{
  const profile=await f.page('profile');assert.equal(profile.data.pendingLabel,'2 待审核');assert.equal(f.calls.length,1);assert.equal(f.calls[0].payload.page.view,'profile');
@@ -49,6 +49,40 @@ test('V2前端：复制上一周仅改本地时段与备注，不复制报名；
  const page=await f.page('availability',{week:'2'});assert.equal(page.data.optedIn,false);await page.copyAvailability();assert.deepEqual(page.data.selectedSlots,['1:1','1:2']);assert.equal(page.data.availabilityNote,'上一周备注');assert.equal(page.data.optedIn,false);assert.equal(page.data.dirty,true);assert.equal(f.calls.filter((c:any)=>c.operation==='command').length,0);
  f.confirm(false);await page.moveWeek(event({delta:'1'}));assert.equal(page.data.week,2);assert.equal(page.data.dirty,true);await page.saveAvailability();assert.equal(page.data.dirty,false);assert.equal((await f.repo.query('availability',{eq:{week:2}})).items[0].data.optedIn,false);
 }));
+test('无课时间：修改后启用原生返回提醒，离开可取消，保存成功解除提醒',async()=>fixture(async f=>{
+ const page=await f.page('availability',{week:'2'});assert.equal(f.exitAlert(),false);
+ page.toggleSlot(event({key:'1:1'}));assert.equal(f.exitAlert(),true);
+ page.availabilityNote(event({},'尚未保存备注'));await page.load();assert.equal(page.data.availabilityNote,'尚未保存备注');assert.equal(f.exitAlert(),true);
+ f.confirm(false);await page.navigate(event({target:'manage'}));assert.equal(f.navigation.length,0);assert.equal(page.data.dirty,true);assert.equal(f.exitAlert(),true);assert.equal(f.modals.at(-1).cancelText,'继续填写');
+ f.confirm(true);await page.navigate(event({target:'manage'}));assert.equal(f.navigation.length,1);assert.equal(f.exitAlert(),false);
+ page.onHide();await page.load();assert.equal(f.exitAlert(),false,'隐藏页迟到刷新不能给新页面启用提醒');
+ page.onShow();while(page.data.busy)await new Promise(r=>setImmediate(r));assert.equal(f.exitAlert(),true,'返回原页仍有未保存内容，应恢复提醒');
+ await page.saveAvailability();assert.equal(page.data.dirty,false);assert.equal(f.exitAlert(),false);
+ const before=f.modals.length;await page.navigate(event({target:'manage'}));assert.equal(f.modals.length,before,'保存后不再询问离开');
+}));
+test('无课时间：报名、复制和备注都启用提醒，保存失败仍保留内容及提醒',async()=>fixture(async f=>{
+ const page=await f.page('availability',{week:'2'});page.optIn(event({},true));assert.equal(f.exitAlert(),true);
+ await page.copyAvailability();assert.equal(f.exitAlert(),true);page.availabilityNote(event({},'请保留'));
+ f.failAvailabilitySave();await page.saveAvailability();assert.equal(page.data.dirty,true);assert.equal(page.data.availabilityNote,'请保留');assert.equal(f.exitAlert(),true);assert.match(f.errors.at(-1),/保存失败/);
+ page.onUnload();assert.equal(f.exitAlert(),false);
+}));
+test('管理工作台：长列表中打开维护表单，自动定位表单且保留列表',async()=>fixture(async f=>{
+ const page=await f.page('manage');const count=page.data.rows.length;await page.openForm('classSave');
+ assert.equal(page.data.formType,'classSave');assert.equal(page.data.rows.length,count);assert.equal(f.scrolls.at(-1).selector,'#v2-active-form');
+ await page.openForm('import');assert.equal(page.data.formType,'import');assert.equal(f.scrolls.at(-1).selector,'#v2-active-form');
+}));
+test('页面操作先于长内容：无课确认在时间表前，管理表单及清空在列表前，导入确认在预览前',()=>{
+ const template=readFileSync(new URL('../miniprogram/templates/cloud.wxml',import.meta.url),'utf8');
+ const form=readFileSync(new URL('../miniprogram/templates/cloud-form.wxml',import.meta.url),'utf8');
+ const demo=readFileSync(new URL('../miniprogram/pages/availability/availability.wxml',import.meta.url),'utf8');
+ const styles=readFileSync(new URL('../miniprogram/app.scss',import.meta.url),'utf8');
+ assert.ok(template.indexOf('bindtap="saveAvailability"')<template.indexOf('wx:for="{{availabilityRows}}"'));
+ assert.ok(demo.indexOf('bindtap="save"')<demo.indexOf('wx:for="{{rows}}"'));
+ assert.ok(template.indexOf('<block wx:if="{{view === \'manage\'}}"><include src="cloud-form.wxml"')<template.indexOf('wx:for="{{visibleRows}}"'));
+ assert.ok(template.indexOf('bindtap="clearBusiness">预览清空范围')<template.indexOf('wx:for="{{visibleRows}}"'));
+ assert.ok(form.indexOf('bindtap="saveForm"')<form.indexOf('wx:for="{{fields}}"'));assert.ok(form.indexOf('bindtap="saveForm"')<form.indexOf('wx:for="{{importPreview}}"'));
+ assert.match(styles,/\.v2-save-toolbar \{[^}]*position: sticky;[^}]*top: 0;/);
+});
 test('V2前端：安排默认下周、记录默认当前周，目标周传递和已取消任务过滤',async()=>fixture(async f=>{
  const current=boundedWeek(f.semester as Semester,new Date("2026-09-23T00:00:00Z"));const schedule=await f.page('schedule',{});assert.equal(schedule.data.week,Math.min(20,current+1));const records=await f.page('records',{});assert.equal(records.data.week,current);
  const first=await f.page('schedule',{week:'1',semesterId:'semester'});assert.equal(first.data.visibleTasks.length,2);first.search(event({},'待调整'));assert.equal(first.data.visibleTasks.length,1);assert.equal(first.data.visibleTasks[0].status,'pendingAdjustment');first.navigate(event({target:'availability'}));assert.match(f.navigation[0],/week=1&semesterId=semester/);

@@ -5,6 +5,7 @@ import { saveExport, openExport } from "../files";
 import { WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
 import { runtime } from "../../config/runtime";
 import { ImportPlan, planCourseImport } from "./import-batch";
+import { syncAvailabilityExitAlert } from "../availability-exit";
 
 import { boundedWeek, weekRange } from "../../domain/calendar";
 
@@ -87,6 +88,7 @@ export async function previewAuthorizedImages(urls: string[], index = 0): Promis
 
 export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
+  let availabilityVisible = true;
   Page({
     data: {
       metricFields: [] as Field[], nameFields: [] as Field[], feedbackFields: [] as Field[], recordContext: null as Row | null, uploadingPhoto: "",
@@ -111,9 +113,9 @@ export function registerCloudPage(view: View): void {
       impacts: [] as Row[], stats: [] as {grade:string;count:number;valid:number;rate:string}[], statsCount: 0, statsLoaded: false, clearProgress: "", slots: [] as { key: string; label: string; checked: boolean }[], selectedSlots: [] as string[], optedIn: false, availabilityNote: "",
     },
     onLoad(q: Record<string, string>) { this.setData({section: view === "manage" && q.section === "applications" ? "applications" : this.data.section, fixedSemester: q.semesterId || "", targetId: q.id || q.taskId || "", week: Number(q.week) || 1, weekInitialized: Number(q.week) > 0 }); },
-    onShow() { void this.load(); },
-    onHide() { if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
-    onUnload() { if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
+    onShow() { availabilityVisible = true; if (view === "availability") syncAvailabilityExitAlert(this.data.dirty); void this.load(); },
+    onHide() { availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
+    onUnload() { availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); if (view === "availability") syncAvailabilityExitAlert(false); },
     onPullDownRefresh() { void this.load().finally(() => wx.stopPullDownRefresh()); },
     async load(more = false): Promise<void> {
       if (this.data.busy) return;
@@ -235,10 +237,10 @@ export function registerCloudPage(view: View): void {
         this.filterRows();
       } catch (e) {
         const message = e instanceof Error ? e.message : "连接失败";
-        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
+        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
         this.setData({ error: message });
       }
-      finally { this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error }); }
+      finally { this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error }); if (view === "availability" && availabilityVisible) syncAvailabilityExitAlert(this.data.dirty); }
       if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats(true);
     },
     async more() { await this.load(true); },
@@ -293,6 +295,7 @@ export function registerCloudPage(view: View): void {
       const key = e.currentTarget.dataset.key;
       const selected = this.data.selectedSlots.includes(key) ? this.data.selectedSlots.filter(s => s !== key) : this.data.selectedSlots.concat(key);
       this.setData({dirty:true,selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
+      syncAvailabilityExitAlert(true);
     },
     toggleDay(e: UiEvent) {
       if(this.data.busy)return;
@@ -300,10 +303,15 @@ export function registerCloudPage(view: View): void {
       const all = keys.every(k => this.data.selectedSlots.includes(k));
       const selected = this.data.selectedSlots.filter(k => !keys.includes(k)).concat(all ? [] : keys);
       this.setData({dirty:true,selectedSlots:selected, ...availabilityGrid(this.data.slots, selected)});
+      syncAvailabilityExitAlert(true);
     },
     rules() { wx.showModal({title:"听课与提交说明",content:"1. 不能听自己班，每周最多一次。\n2. 无课时间按周保存，以正式安排为准。\n3. 按实际情况填写人数，缺失信息单独标记。\n4. 上传清晰、带有老师签字的听课表。",showCancel:false}); },
-    navigate(e: UiEvent) {
+    async navigate(e: UiEvent) {
       const target = e.currentTarget.dataset.target;
+      if (view === "availability" && this.data.dirty) {
+        if (!(await wx.showModal({title:"尚未保存",content:"无课时间还未保存，确定离开吗？",confirmText:"离开",cancelText:"继续填写"})).confirm) return;
+        syncAvailabilityExitAlert(false);
+      }
       if (["schedule", "reports", "profile", "index"].includes(target)) { wx.switchTab({url:"/pages/" + target + "/" + target}); return; }
       if (["manage", "courses", "availability", "join", "review"].includes(target)) {
         const params = target === "manage" && e.currentTarget.dataset.section ? "?section=" + encodeURIComponent(e.currentTarget.dataset.section) : target === "availability" && view === "schedule" ? "?week=" + this.data.week + "&semesterId=" + encodeURIComponent(this.data.semesterId) : target === "courses" ? "?semesterId=" + encodeURIComponent(this.data.semesterId) : "";
@@ -343,7 +351,9 @@ export function registerCloudPage(view: View): void {
         this.setData({ importPreview:importSource ? importSource.courses.slice(0,20).map((c,i)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`) : [],
           importReady:!!pending,importPending:!!pending || !!pendingError,importCount:importSource?.courses.length || 0,importClassCount:importSource?.classes?.length || 0,
           importProgress:pending ? `待续传：已完成 ${pending.next}/${pending.batches.length} 批` : pendingError,
-          formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] });
+          formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] }, () => {
+            if (view === "manage" && typeof wx.pageScrollTo === "function") wx.pageScrollTo({selector:"#v2-active-form",duration:200});
+          });
       } catch (e) { displayError(e); }
     },
     input(e: UiEvent) {
@@ -558,9 +568,9 @@ export function registerCloudPage(view: View): void {
           fields: [field("memberId", "承担成员", Math.max(0, members.findIndex(m => m.value === task?.memberId)), "select", members), field("occurrenceId", "上课日期与课程", Math.max(0, occurrences.findIndex(o => o.id === task?.data.occurrenceId)), "select", occurrences.map(o => ({ label: s(o.data.classLabel) + " · " + s(o.date || o.data.date) + " · " + s((o.data.course as Record<string, unknown>)?.name), value: o.id }))), field("cancel", "操作", "0", "select", [{ value: "false", label: task ? "转派" : "补排" }, ...(task ? [{ value: "true", label: "取消任务" }] : [])]), field("reason", "调整原因", "", "textarea")], formExtra: { taskId: task?.id || "", week: this.data.week } });
       } catch (e) { displayError(e); }
     },
-    slotsChange(e: WechatMiniprogram.CheckboxGroupChange) { this.setData({ selectedSlots: e.detail.value }); },
-    optIn(e: WechatMiniprogram.SwitchChange) { if(this.data.busy)return; this.setData({ dirty:true,optedIn: e.detail.value }); },
-    availabilityNote(e: UiEvent) { if(this.data.busy)return; this.setData({ dirty:true,availabilityNote: e.detail.value }); },
+    slotsChange(e: WechatMiniprogram.CheckboxGroupChange) { if(this.data.busy)return; this.setData({ dirty:true,selectedSlots: e.detail.value }); syncAvailabilityExitAlert(true); },
+    optIn(e: WechatMiniprogram.SwitchChange) { if(this.data.busy)return; this.setData({ dirty:true,optedIn: e.detail.value }); syncAvailabilityExitAlert(true); },
+    availabilityNote(e: UiEvent) { if(this.data.busy)return; this.setData({ dirty:true,availabilityNote: e.detail.value }); syncAvailabilityExitAlert(true); },
     async copyAvailability() {
       if(this.data.busy || this.data.week <= 1)return;
       this.setData({busy:true});
@@ -571,9 +581,10 @@ export function registerCloudPage(view: View): void {
         const available = new Set(this.data.slots.map(slot=>slot.key));
         const selected = (previous.data.slots as string[] || []).filter(key=>available.has(key));
         this.setData({selectedSlots:selected,availabilityNote:s(previous.data.note),dirty:true,...availabilityGrid(this.data.slots,selected)});
+        syncAvailabilityExitAlert(true);
       }catch(e){displayError(e);}finally{this.setData({busy:false});}
     },
-    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false,dirty:false}); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
+    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false,dirty:false}); syncAvailabilityExitAlert(false); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
     openRecordForm(target: Entity, editing = false) {
       const d = target.data, metrics = d.metrics as Record<string, number> | undefined;
       this.setData({recordContext:row(target),uploadingPhoto:""});

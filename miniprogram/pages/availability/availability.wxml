@@ -2,12 +2,13 @@
 <block wx:else>
 <view class="page"><view class="eyebrow">YOUR AVAILABILITY</view><view class="title">把空闲留给好学风</view><view class="subtitle">选中你可以参加听课的时段。</view>
  <view class="week-switch"><view class="week-arrow" data-delta="-1" bindtap="move">‹</view><view class="week-center"><view class="week-title">第 {{week}} 周 {{week === currentWeek ? '· 本周' : week === currentWeek+1 ? '· 下周' : ''}}</view><view class="week-dates">{{dates}}</view></view><view class="week-arrow" data-delta="1" bindtap="move">›</view></view>
+ <view class="v2-save-toolbar"><view class="muted small">{{dirty ? '有未保存修改' : saved ? '本周时间表已保存' : '尚未提交本周时间表'}}</view><view class="actions"><button class="plain" bindtap="copy" disabled="{{week === 1}}">复制上一周</button><button class="primary" bindtap="save">确认保存时间表</button></view></view>
  <view wx:if="{{volunteer}}" class="card row between"><view><view class="section-title">第 {{week}} 周我也听课</view><view class="muted small">仅对本周生效，保存后参加排班</view></view><switch checked="{{optedIn}}" color="#2468e8" bindchange="volunteer"/></view>
  <view class="card grid-card"><view class="row between"><view class="section-title">无课时间表</view><text class="pill {{dirty ? 'amber' : saved ? 'green' : 'gray'}}">{{dirty ? '未保存' : saved ? '已保存' : '未填写'}}</text></view><view class="muted small" style="margin:12rpx 0 24rpx">点击星期可整列切换 · 已选 {{slots.length}} 节</view>
  <view class="grid-row"><view class="grid-label"></view><view wx:for="{{days}}" wx:key="n" class="day-head" data-day="{{item.n}}" bindtap="day">{{item.name}}</view></view>
  <view wx:for="{{rows}}" wx:for-item="row" wx:key="n" class="grid-row"><view class="grid-label">{{row.n}}</view><view wx:for="{{row.cells}}" wx:key="key" class="time-cell {{item.selected ? 'selected' : ''}}" data-key="{{item.key}}" bindtap="toggle">{{item.selected ? '✓' : ''}}</view></view>
  <view class="row gap grid-legend"><view class="legend-square"></view><text>可听课</text><view class="legend-square off"></view><text>不可安排</text></view></view>
  <view class="card"><view class="field-label">备注 <text class="muted small">选填</text></view><textarea class="input" placeholder="例如：周三下午有临时活动" value="{{note}}" bindinput="note" maxlength="300"/></view>
- <view class="actions"><button class="plain" bindtap="copy" disabled="{{week === 1}}">复制上一周</button><button class="primary" bindtap="save">保存时间表</button></view><view class="footer-note">保存时间不等于已安排 · 正式任务以确认结果为准</view></view>
+ <view class="footer-note">保存时间不等于已安排 · 正式任务以确认结果为准</view></view>
 
 </block>

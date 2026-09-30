@@ -5,6 +5,7 @@ import { registerCloudPage } from '../miniprogram/services/v2/page';
 import { createGatewayV2 } from '../server/v2/gateway';
 import { MemoryRepository } from '../server/v2/memory';
 import { Entity, Workspace } from '../miniprogram/domain/v2/protocol';
+import { command } from '../miniprogram/services/v2/client';
 
 const e = (id: string, data: Record<string, unknown>, indexes = {}): Entity => ({ id, epoch: 'epoch-boundary', version: 1, data, ...indexes });
 const event = (dataset: Record<string, string> = {}) => ({ currentTarget: { dataset }, detail: { value: '' } });
@@ -150,7 +151,7 @@ test('首页启动合并：一次请求返回当前学期和周数据，刷新�
   assert.ok(member.data.weekData.records.every((record: Entity) => record.memberId === 'member'));
   const wx = (globalThis as any).wx;
   const legacy = await wx.cloud.callFunction({data:{protocolVersion:2,operation:'query',epoch:'epoch-boundary',semesterId:'semester',payload:{kind:'week',week:1}}});
-  assert.deepEqual(member.data.weekData, legacy.result.data.data, '复用原周查询结果，不改变权限和业务口径');
+  assert.deepEqual(member.data.weekData, {...legacy.result.data.data,occurrences:[]}, '首页省去课程实例，任务、记录与统计口径保持一致');
 }));
 
 test('首页启动合并：未入组与无启用学期不返回内部周数据', async () => fixture(async f => {
@@ -273,4 +274,96 @@ test('页面合并：旧轮次先更新身份上下文并丢弃旧选择，旧�
   const boot=await f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'old-epoch',payload:{page:{view:'records',semesterId:'deleted-semester'}}},{OPENID:'owner',APPID:'app'});
   assert.equal(boot.epoch,'epoch-boundary');assert.equal(boot.data.page,null);
   await assert.rejects(f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'old-epoch',payload:{page:{view:'records',semesterId:'deleted-semester',more:true}}},{OPENID:'owner',APPID:'app'}),/业务数据已变化/);
+}));
+
+test('加载加速：首页不读课程实例和已审核申请，刷新发送读取提示', async () => fixture(async f => {
+  const home = await f.page('home');
+  assert.equal(home.data.error, '');
+  assert.equal(home.data.taskCount, 1);
+  assert.equal(home.data.recordCount, 1);
+  assert.ok(!f.reads.some((r:any) => ['occurrences','applications'].includes(r.resource)));
+  await home.load();
+  assert.deepEqual(f.calls.at(-1).readHint, {memberId:'admin',semesterId:'semester'});
+}));
+
+test('加载加速：绑定、成员与学期并行读取，每项只取一次', async () => fixture(async f => {
+  const started: string[] = [];
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const query = f.repository.query.bind(f.repository), get = f.repository.get.bind(f.repository);
+  f.repository.query = async (resource:any, q:any) => {
+    if (resource === 'bindings') { started.push(resource); await gate; }
+    return query(resource,q);
+  };
+  f.repository.get = async (resource:any, id:any) => {
+    if (['members','semesters'].includes(resource)) { started.push(resource); await gate; }
+    return get(resource,id);
+  };
+  const pending = f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'epoch-boundary',readHint:{memberId:'admin',semesterId:'semester'},payload:{includeHome:true}},{OPENID:'owner',APPID:'app'});
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(started.sort(), ['bindings','members','semesters']);
+  } finally { release(); }
+  const response = await pending;
+  assert.equal(response.data.member.id,'admin');
+  assert.equal(started.length,3);
+}));
+
+test('加载加速：伪造成员提示、旧轮次提示和无绑定提示均不能提升权限', async () => fixture(async f => {
+  const invoke = (who:string, epoch='epoch-boundary', view='records') => f.gateway({protocolVersion:2,operation:'bootstrap',epoch,
+    readHint:{memberId:'admin',semesterId:'semester'},payload:{page:{view,section:'classes',week:1}}},{OPENID:who,APPID:'app'});
+  const member = await invoke('member-wechat');
+  assert.equal(member.data.member.id,'member');
+  assert.ok(member.data.page.list.items.every((r:Entity)=>r.memberId==='member'));
+  assert.equal(member.resourceVersions['members:admin'],undefined);
+  await assert.rejects(invoke('member-wechat','epoch-boundary','manage'), /权限/);
+  const unbound = await invoke('unbound');
+  assert.equal(unbound.data.member,null);assert.equal(unbound.data.page,null);
+  const stale = await invoke('member-wechat','old-epoch');
+  assert.equal(stale.data.member.id,'member');assert.equal(stale.data.page,null);
+}));
+
+test('加载加速：并行预读期间撤权仍由响应前权限版本检查拦截', async () => fixture(async f => {
+  const get = f.repository.get.bind(f.repository), workspace = f.repository.workspace.bind(f.repository);
+  let revoked = false;
+  f.repository.get = async (resource:any,id:any) => { const row=await get(resource,id); if(resource==='members')revoked=true; return row; };
+  f.repository.workspace = async () => {const w=await workspace();return revoked?{...w,permissionsVersion:w.permissionsVersion+1}:w;};
+  await assert.rejects(f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'epoch-boundary',readHint:{memberId:'admin',semesterId:'semester'},payload:{includeHome:true}},
+    {OPENID:'owner',APPID:'app'}),/权限已变化/);
+}));
+
+test('加载加速：短时返回不请求，手动刷新、到期、写入和身份变化会重新读取', async () => fixture(async f => {
+  const originalNow = Date.now;
+  let now = originalNow(); Date.now = () => now;
+  try {
+    const home = await f.page('home');
+    let before = f.calls.length;
+    await home.onShow();await home.onShow();
+    assert.equal(f.calls.length,before);
+    await home.load();assert.equal(f.calls.length,++before);
+    now += 15000;await home.onShow();assert.equal(f.calls.length,++before);
+    await command('availabilitySave',{week:1,slots:[],optedIn:false,note:'合成保存'},'semester',0);
+    before = f.calls.length;await home.onShow();assert.equal(f.calls.length,before+1);
+    f.who('member-wechat');await f.page('profile');
+    before=f.calls.length;await home.onShow();assert.equal(f.calls.length,before+1);
+    assert.equal(home.data.memberId,'member');assert.equal(home.data.admin,false);
+  } finally {Date.now=originalNow;}
+}));
+
+test('单次数据库首页：使用服务端汇总，精简记录仍可打开本人详情', async () => fixture(async f => {
+  const wx=(globalThis as any).wx,invoke=wx.cloud.callFunction;
+  wx.cloud.callFunction=async(args:any)=>{
+    const response=await invoke(args), data=response.result.data?.data;
+    if(args.data.payload?.includeHome && data?.home?.weekData) {
+      const w=data.home.weekData, owner=data.member.id;
+      data.home.summary={taskCount:87,recordCount:69,coverage:24};
+      w.tasks=w.tasks.filter((t:Entity)=>t.memberId===owner);
+      w.records=w.records.filter((r:Entity)=>r.memberId===owner).map((r:Entity)=>({id:r.id,epoch:r.epoch,version:r.version,taskId:'pending-task',memberId:r.memberId,data:{classLabel:r.data.classLabel}}));
+    }
+    return response;
+  };
+  f.who('member-wechat');const home=await f.page('home');
+  assert.equal(home.data.error,'');assert.equal(home.data.taskCount,87);assert.equal(home.data.recordCount,69);assert.equal(home.data.coverage,24);
+  assert.equal(home.data.homeTasks.find((t:any)=>t.id==='pending-task').recordId,'record');
+  assert.equal(f.calls.length,1);
 }));

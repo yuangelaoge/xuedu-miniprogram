@@ -68,6 +68,8 @@ interface Response<T> {
 
 ### 页面合并加载（2026-09-27，源码实现，尚未部署）
 
+安装 006 后，新客户端可发送 `payload.fastPage: true`，配合 `includeHome: true` 或下列 page 的 schedule / records / profile / courses / availability，启用服务端单次数据库 RPC。可信身份仍取云函数上下文。成功返回 `data.readPath: "single-rpc"`；其 resourceVersions 只需 workspace，各实体保留自己的 version。首页增加 `home.summary: { taskCount, recordCount, coverage }`，weekData.tasks/records 仅含本人任务和记录链接；首页必须用 summary 展示全组概览。旧客户端不带 fastPage 时返回原结构。详见 [加载优化](PAGE-LOAD-OPTIMIZATION.md)。
+
 `bootstrap` 新增可选 `payload.page`，类型见 `miniprogram/domain/v2/page-data.ts`：
 
 ```typescript

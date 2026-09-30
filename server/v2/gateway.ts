@@ -62,11 +62,29 @@ export function createGatewayV2(deps: DependenciesV2) {
     const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(input.operation)) fail("请更新小程序", "UPGRADE_REQUIRED");
     if (JSON.stringify(input).length > 1200000) fail("单次请求过大");
+    if (input.operation === "bootstrap" && input.payload?.fastPage === true && repo.bootstrapPage &&
+        (input.payload.includeHome === true || ["schedule","records","profile","courses","availability"].includes(String((input.payload.page as PageLoadRequest | undefined)?.view)))) {
+      const fast = await repo.bootstrapPage(context.OPENID, {...input.payload,epoch:input.epoch},context.OPENID === deps.bootstrapOpenid);
+      if (fast) return {...fast,data:{...fast.data,executionConfigured}};
+    }
     const identityKey = context.OPENID;
     const now = deps.now?.() ?? Date.now();
     const at = new Date(now).toISOString();
-    let workspace = await repo.workspace();
+    // Hints only move database reads earlier. They never establish identity or permission.
+    const readOnly = ["bootstrap", "query", "photoUrls", "clearPreview"].includes(input.operation);
+    const hintId = (value: unknown) => readOnly && typeof value === "string" && value.length <= 200 ? value : "";
+    const memberHint = hintId(input.readHint?.memberId);
     const p = input.payload || {};
+    // Read the permission fence BEFORE speculative rows, then check it again in response().
+    let workspace = await repo.workspace();
+    const pageRequest = p.page as PageLoadRequest | undefined;
+    const semesterHint = input.operation === "bootstrap" && (p.includeHome === true || p.page !== undefined)
+      ? hintId(input.readHint?.semesterId) || hintId(pageRequest?.semesterId) || workspace.activeSemesterId : "";
+    const [bindingAhead, memberAhead, semesterAhead] = await Promise.all([
+      repo.query("bindings", {eq:{identityKey,epoch:workspace.epoch},limit:1}),
+      memberHint ? repo.get("members", memberHint) : Promise.resolve(undefined),
+      semesterHint ? repo.get("semesters", semesterHint) : Promise.resolve(undefined),
+    ]);
     const reads = new Map<string, ReadVersion>();
     const changes = new Map<string, Change>();
     const resourceVersions: Record<string, number> = { workspace: workspace.version };
@@ -75,7 +93,8 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (!["bindings", "requests"].includes(resource)) resourceVersions[resource + ":" + row.id] = row.version; return row;
     };
     const get = async (resource: Resource, id: string, required = true): Promise<Entity | undefined> => {
-      const row = await repo.get(resource, id);
+      const row = resource === "semesters" && id === semesterHint && semesterAhead?.epoch === workspace.epoch
+        ? semesterAhead : await repo.get(resource, id);
       if ((!row || row.epoch !== workspace.epoch) && required) fail("对象不存在或已清空", "NOT_FOUND");
       return row && row.epoch === workspace.epoch ? track(resource, row) : undefined;
     };
@@ -88,8 +107,10 @@ export function createGatewayV2(deps: DependenciesV2) {
       do { const next = await page(resource, { ...query, after: cursor, limit: 100 }); rows.push(...next.items); cursor = next.cursor; } while (cursor);
       return rows;
     };
-    const binding = (await page("bindings", { eq: { identityKey }, limit: 1 })).items[0];
-    const actor = binding ? await get("members", binding.memberId || "", false) : undefined;
+    const binding = bindingAhead.items[0];
+    if (binding) track("bindings", binding);
+    const actor = binding ? memberAhead && memberAhead.id === binding.memberId && memberAhead.epoch === workspace.epoch
+      ? track("members", memberAhead) : await get("members", binding.memberId || "", false) : undefined;
     const validActor = actor?.data.active === true ? actor : undefined;
     const member = () => { if (!validActor) fail("请先申请并通过审核", "FORBIDDEN"); return validActor; };
     const manager = () => { const a = member(); if (!["admin", "leader"].includes(String(a.data.role))) fail("没有管理权限", "FORBIDDEN"); return a; };
@@ -173,10 +194,11 @@ export function createGatewayV2(deps: DependenciesV2) {
         return response(receipt.data.result as Record<string, unknown>);
       }
     }
-    const readWeek = async (semester: Entity, week: number) => {
+    const readWeek = async (semester: Entity, week: number, includeOccurrences = true) => {
       member();
       const filter: Query = { eq: { semesterId: semester.id, week } };
-      const [tasks, plans, availability, records, occurrences] = await Promise.all([all("tasks", filter), all("plans", filter), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", member().data.role === "member" ? { eq: { ...filter.eq, memberId: member().id } } : filter), all("occurrences", filter)]);
+      const visibleFilter = member().data.role === "member" ? {eq:{...filter.eq,memberId:member().id}} : filter;
+      const [tasks, plans, availability, records, occurrences] = await Promise.all([all("tasks", visibleFilter), all("plans", filter), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", visibleFilter), includeOccurrences ? all("occurrences", filter) : Promise.resolve([])]);
       return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => member().data.role !== "member" || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) };
     };
 
@@ -207,13 +229,13 @@ export function createGatewayV2(deps: DependenciesV2) {
       // Every initialized transaction is constrained to retain an effective admin.
       const hasAdministrator = workspace.version > 0;
       const status = !hasAdministrator ? "needsAdministrator" : !workspace.activeSemesterId ? "preparing" : "ready";
-      const application = (await page("applications", { eq: { identityKey }, limit: 1 })).items[0];
+      const application = validActor ? undefined : (await page("applications", { eq: { identityKey }, limit: 1 })).items[0];
       // Home uses the same permission-filtered week data, within this request's identity check.
       let home;
       if (p.includeHome === true) {
-        const semester = validActor && workspace.activeSemesterId ? await get("semesters", workspace.activeSemesterId) : undefined;
+        const semester = validActor && !workspace.maintenance && workspace.activeSemesterId ? await get("semesters", workspace.activeSemesterId) : undefined;
         const week = semester ? boundedWeek(semester.data as unknown as Semester, new Date(now)) : 1;
-        home = { semester: semester ? clean(semester) : null, week, weekData: semester ? await readWeek(semester, week) : null };
+        home = { semester: semester ? clean(semester) : null, week, weekData: semester ? await readWeek(semester, week, false) : null };
       }
       let pageData;
       if (p.page !== undefined) {

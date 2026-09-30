@@ -1,10 +1,24 @@
-import { Commit, Entity, PageResult, Query, Resource, Workspace } from "../../miniprogram/domain/v2/protocol";
+import { ApiResponse, Commit, Entity, PageResult, Query, Resource, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { PgRpc } from "../postgres";
 import { Repository } from "./repository";
 
 const publicErrors = new Set(["AUTO_APPROVAL_EXPIRED","VERSION_CONFLICT", "EPOCH_CHANGED", "MAINTENANCE", "MAINTENANCE_CHANGED", "IDENTITY_CHANGED", "LAST_ADMIN", "ALREADY_INITIALIZED", "UNIQUE_CONFLICT", "FORBIDDEN", "INVALID_QUERY", "INVALID_COMMIT", "INVALID_CHANGE", "INVALID_ENTITY", "INVALID_EPOCH", "INVALID_BINDING", "INVALID_ADMIN_CLASS", "UPDATE_REQUIRED", "LEGACY_MAINTENANCE_PENDING", "CUTOVER_REQUIRED"]);
 export class PostgresRepository implements Repository {
+  private pageRpcAvailable = true;
   constructor(private readonly db: PgRpc) {}
+  async bootstrapPage(identityKey: string, request: Record<string, unknown>, canInitialize: boolean): Promise<ApiResponse | null> {
+    if (!this.pageRpcAvailable) return null;
+    const result = await this.db.rpc("xuedu_v2_bootstrap_page", {p_identity_key:identityKey,p_request:request,p_can_initialize:canInitialize});
+    const error = result.error as {code?:string;message?:string} | null;
+    // A staged rollout can run on the prior schema. Only a missing function permits fallback.
+    if (error && ["42883","PGRST202"].includes(error.code || "")) { this.pageRpcAvailable=false; return null; }
+    if (error) {
+      if (["40001","40P01","55P03"].includes(error.code || "")) throw new Error("VERSION_CONFLICT");
+      const safe=(error.message || "").match(/[A-Z][A-Z_]+/g)?.find(s=>publicErrors.has(s));
+      throw new Error(safe || "DATABASE_UNAVAILABLE");
+    }
+    return result.data as ApiResponse;
+  }
   private async rpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
     const r = await this.db.rpc(name, args);
     if (r.error) {

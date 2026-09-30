@@ -4,7 +4,8 @@ import { PageData, PageLoadRequest, WeekData } from "../../domain/v2/page-data";
 export { WeekData } from "../../domain/v2/page-data";
 export interface Boot {
   page?: PageData | null;
-  home?: { semester: Entity | null; week: number; weekData: WeekData | null };
+  readPath?: "single-rpc";
+  home?: { semester: Entity | null; week: number; weekData: WeekData | null; summary?: {taskCount:number;recordCount:number;coverage:number} };
   workspace: Workspace; member: Entity | null; application?: Entity | null;
   status: "needsAdministrator" | "preparing" | "ready";
   canInitialize: boolean; removed?: boolean;
@@ -17,9 +18,14 @@ let workspaceVersion = -1;
 let bootstrapPending: Promise<Boot> | undefined;
 let bootstrapIncludesHome = false;
 let pageBootstrapPending: Promise<Boot> | undefined;
+let pageRevision = 0;
+// Page instances can briefly reuse rendered data; writes and rejected reads invalidate them.
+export function pageFreshnessKey(): string {
+  return [runtime.env, reviewActive(), generation, pageRevision, workspaceVersion, boot?.workspace.permissionsVersion, boot?.member?.id].join(":");
+}
 const reviewKey = () => "xuedu.review.active." + runtime.env;
 export function reviewActive(): boolean { return runtime.mode === "cloud" && wx.getStorageSync(reviewKey()) === true; }
-function resetCloudSession(): void { boot=undefined; epoch=""; generation++; workspaceVersion=-1; bootstrapPending=undefined; pageBootstrapPending=undefined; }
+function resetCloudSession(): void { boot=undefined; epoch=""; generation++; pageRevision++; workspaceVersion=-1; bootstrapPending=undefined; pageBootstrapPending=undefined; }
 export function leaveReviewLocally(): void { wx.removeStorageSync(reviewKey()); resetCloudSession(); }
 export async function reviewControl(operation: "reviewLogin" | "reviewStatus" | "reviewRole" | "reviewLogout", payload: Record<string,unknown> = {}): Promise<{role?:string;expiresAt?:string;ended?:boolean}> {
   if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
@@ -40,9 +46,12 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
   if (initializedEnv !== runtime.env) { wx.cloud.init({ env: runtime.env, traceUser: false }); initializedEnv = runtime.env; boot = undefined; epoch = ""; generation++; workspaceVersion = -1; }
   const startedGeneration = generation;
-  const response = await wx.cloud.callFunction({ name: runtime.functionName, data: { protocolVersion: 2, operation, epoch: epoch || undefined, review: reviewActive(), ...options } });
+  if (!["bootstrap", "query", "photoUrls", "clearPreview"].includes(operation)) pageRevision++;
+  const page = options.payload?.page as PageLoadRequest | undefined;
+  const readHint = boot?.member ? { memberId: boot.member.id, semesterId: options.semesterId || page?.semesterId || boot.workspace.activeSemesterId } : undefined;
+  const response = await wx.cloud.callFunction({ name: runtime.functionName, data: { protocolVersion: 2, operation, epoch: epoch || undefined, readHint, review: reviewActive(), ...options } });
   const result = response.result as unknown as { ok: boolean; data?: ApiResponse<T>; error?: string; code?: string };
-  if (!result?.ok || !result.data) { if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw new Error(result?.error || "云端请求失败，请刷新重试"); }
+  if (!result?.ok || !result.data) { pageRevision++; if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw new Error(result?.error || "云端请求失败，请刷新重试"); }
   if (result.data.protocolVersion !== 2) throw new Error("请更新小程序，云端协议不匹配");
   if (startedGeneration !== generation) throw new Error("业务数据轮次已变化，请刷新后重试");
   if (epoch && epoch !== result.data.epoch && operation !== "bootstrap" && operation !== "clearStep") throw new Error("业务数据轮次已变化，请刷新后重试");
@@ -62,7 +71,7 @@ export async function bootstrap(includeHome = false): Promise<Boot> {
   }
   if (!bootstrapPending) {
     bootstrapIncludesHome = includeHome;
-    bootstrapPending = call<Boot>("bootstrap", includeHome ? { payload: { includeHome: true } } : {}).then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
+    bootstrapPending = call<Boot>("bootstrap", includeHome ? { payload: { includeHome: true, fastPage: true } } : {}).then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
   }
   return bootstrapPending;
 }
@@ -74,7 +83,7 @@ export async function pageBootstrap(request: PageLoadRequest): Promise<Boot> {
   const usesView = !["availability", "profile", "join"].includes(request.view);
   const selected = request.semesterId || (usesView && previous ? viewSemester() : "");
   const selectionOwner = request.selectionOwner || (!request.semesterId ? previous?.member?.id : "");
-  const pending = call<Boot>("bootstrap", {payload:{page:{...request,semesterId:selected,selectionOwner}}}).then(response => { boot = response.data; return boot; });
+  const pending = call<Boot>("bootstrap", {payload:{fastPage:true,page:{...request,semesterId:selected,selectionOwner}}}).then(response => { boot = response.data; return boot; });
   pageBootstrapPending = pending;
   let result: Boot;
   try { result = await pending; }
@@ -91,8 +100,8 @@ export function viewSemester(): string {
   const saved = wx.getStorageSync(viewKey());
   return typeof saved === "string" && saved ? saved : currentBoot().workspace.activeSemesterId;
 }
-export function selectSemester(id: string): void { wx.setStorageSync(viewKey(), id); }
-export function resetView(): void { wx.removeStorageSync(viewKey()); }
+export function selectSemester(id: string): void { wx.setStorageSync(viewKey(), id); pageRevision++; }
+export function resetView(): void { wx.removeStorageSync(viewKey()); pageRevision++; }
 export async function query<T = { items: Entity[] }>(kind: string, semesterId = "", payload: Record<string, unknown> = {}, cursor = "", limit = 50): Promise<ApiResponse<T>> {
   return call<T>("query", { semesterId: semesterId || undefined, payload: { kind, ...payload }, cursor: cursor || undefined, limit });
 }

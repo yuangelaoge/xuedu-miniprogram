@@ -2,7 +2,7 @@ import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protoc
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
-import { WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive } from "./client";
+import { WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive, pageFreshnessKey } from "./client";
 import { runtime } from "../../config/runtime";
 import { ImportPlan, planCourseImport } from "./import-batch";
 import { syncAvailabilityExitAlert } from "../availability-exit";
@@ -89,6 +89,7 @@ export async function previewAuthorizedImages(urls: string[], index = 0): Promis
 export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   let availabilityVisible = true;
+  let loadedAt = 0, loadedKey = "";
   Page({
     data: {
       metricFields: [] as Field[], nameFields: [] as Field[], feedbackFields: [] as Field[], recordContext: null as Row | null, uploadingPhoto: "",
@@ -113,7 +114,15 @@ export function registerCloudPage(view: View): void {
       impacts: [] as Row[], stats: [] as {grade:string;count:number;valid:number;rate:string}[], statsCount: 0, statsLoaded: false, clearProgress: "", slots: [] as { key: string; label: string; checked: boolean }[], selectedSlots: [] as string[], optedIn: false, availabilityNote: "",
     },
     onLoad(q: Record<string, string>) { this.setData({section: view === "manage" && q.section === "applications" ? "applications" : this.data.section, fixedSemester: q.semesterId || "", targetId: q.id || q.taskId || "", week: Number(q.week) || 1, weekInitialized: Number(q.week) > 0 }); },
-    onShow() { availabilityVisible = true; if (view === "availability") syncAvailabilityExitAlert(this.data.dirty); void this.load(); },
+    onShow() {
+      availabilityVisible = true;
+      if (view === "availability") syncAvailabilityExitAlert(this.data.dirty);
+      // Only automatic tab re-entry may reuse data; explicit refresh and every write load afresh.
+      if (["home", "schedule", "records", "profile"].includes(view) && this.data.hasLoaded && this.data.memberId &&
+          !this.data.error && !this.data.maintenance && !reviewActive() && loadedKey === pageFreshnessKey() &&
+          Date.now() - loadedAt >= 0 && Date.now() - loadedAt < 15000) return;
+      return this.load();
+    },
     onHide() { availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
     onUnload() { availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); if (view === "availability") syncAvailabilityExitAlert(false); },
     onPullDownRefresh() { void this.load().finally(() => wx.stopPullDownRefresh()); },
@@ -214,7 +223,7 @@ export function registerCloudPage(view: View): void {
           const w = bundle?.weekData || home?.weekData || (await query<WeekData>("week", semesterId, { week: displayedWeek })).data;
           const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
           this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,
-            taskCount: visibleTasks.length, recordCount: (w.records || []).length, coverage: new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",
+            taskCount: home?.summary?.taskCount ?? visibleTasks.length, recordCount: home?.summary?.recordCount ?? (w.records || []).length, coverage: home?.summary?.coverage ?? new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",
             homeTasks: visibleTasks.filter(t => t.memberId === member.id).map(t => ({...row(t), classLabel:s(t.data.classLabel), course:(t.data.course || {}) as Record<string,unknown>, timeLabel:s(t.data.date || t.date) + " · 第" + s((t.data.course as Record<string,unknown>)?.start) + "–" + s((t.data.course as Record<string,unknown>)?.end) + "节", done:t.data.status === "submitted", recordId:(w.records || []).find(r => r.taskId === t.id)?.id || ""})) });
           if (view === "availability") {
             const days = Number(w.semester?.data.days || selectedSemester?.data.days || 5), periods = Number(w.semester?.data.periods || selectedSemester?.data.periods || 14);
@@ -240,7 +249,11 @@ export function registerCloudPage(view: View): void {
         if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
         this.setData({ error: message });
       }
-      finally { this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error }); if (view === "availability" && availabilityVisible) syncAvailabilityExitAlert(this.data.dirty); }
+      finally {
+        this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error });
+        if (view === "availability" && availabilityVisible) syncAvailabilityExitAlert(this.data.dirty);
+        if (!this.data.error) { loadedAt = Date.now(); loadedKey = pageFreshnessKey(); }
+      }
       if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats(true);
     },
     async more() { await this.load(true); },

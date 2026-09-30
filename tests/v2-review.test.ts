@@ -135,7 +135,7 @@ test('审核样例首页复用合并启动，普通成员只收到本人任务�
   const home=boot.data.home as any;
   assert.equal(home.semester.id,'review-semester');
   const week=await x.call('query',{review:true,epoch:boot.epoch,semesterId:home.semester.id,payload:{kind:'week',week:home.week}});
-  assert.deepEqual(home.weekData,week.data);
+  assert.deepEqual(home.weekData,{...week.data,occurrences:[]});
   assert.ok(home.weekData.tasks.every((task:any)=>task.memberId===(boot.data.member as any).id));
   assert.ok(home.weekData.records.every((record:any)=>record.memberId===(boot.data.member as any).id));
 });

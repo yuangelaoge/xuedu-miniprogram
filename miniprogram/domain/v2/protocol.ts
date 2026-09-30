@@ -33,6 +33,8 @@ export interface Commit {
   result: Record<string, unknown>;
 }
 export interface ApiRequest {
+  /** Read-ahead hints only; the server still verifies the live WeChat binding and role. */
+  readHint?: { memberId?: string; semesterId?: string };
   protocolVersion: 2; operation: string; epoch?: string; semesterId?: string;
   expectedVersion?: number; requestId?: string; cursor?: string; limit?: number;
   payload?: Record<string, unknown>;

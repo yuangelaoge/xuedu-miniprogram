@@ -5,6 +5,9 @@ import { MemoryRepository } from "./memory";
 import { Repository } from "./repository";
 import { makeReviewSeed, ReviewRole, ReviewSnapshot, REVIEW_ROLES, reviewIdentity } from "./review-seed";
 
+// The independently bundled review gateway has its own trusted error constructor.
+export { BusinessError };
+
 export interface ReviewSession { snapshot: ReviewSnapshot; version: number; role: ReviewRole; expiresAt: string; }
 export interface ReviewStore {
   login(digest: string, valid: boolean, seed: ReviewSnapshot, expiresAt: string): Promise<boolean>;

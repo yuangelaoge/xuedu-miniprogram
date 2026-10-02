@@ -4,7 +4,7 @@ const crypto = require("crypto");
 const { createGatewayV2, BusinessError } = require("./generated/v2/gateway.js");
 const { PostgresRepository } = require("./generated/v2/postgres.js");
 const { createPhotos } = require("./generated/v2/photos.js");
-const { createReviewGateway, PostgresReviewStore } = require("./generated/v2/review.js");
+const { createReviewGateway, PostgresReviewStore, BusinessError: ReviewBusinessError } = require("./generated/v2/review.js");
 const APPID = "wx5c7d4a458873c686";
 const ENVIRONMENT = "xuedu-trial-d2gs2dpnla9206eb3";
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
@@ -84,7 +84,7 @@ exports.main = async event => {
     }
     return { ok: true, data: await gateway(event, context) };
   } catch (error) {
-    if (error instanceof BusinessError) return { ok: false, code: error.code, error: error.message };
+    if (error instanceof BusinessError || error instanceof ReviewBusinessError) return { ok: false, code: error.code, error: error.message };
     const message = error && typeof error.message === "string" ? error.message : "";
     if (Object.prototype.hasOwnProperty.call(knownErrors, message)) return { ok: false, code: message, error: knownErrors[message] };
     // SDK, SQL, token and input fragments must never escape through raw Error.message.

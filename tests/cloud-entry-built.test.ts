@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import * as crypto from 'node:crypto';
 import { buildCloud } from '../scripts/build-cloud.mjs';
 import type { ApiResponse } from '../miniprogram/domain/v2/protocol';
@@ -29,7 +31,8 @@ test('实际独立构建包的审核错误可跨入口识别，未知异常仍�
     assert.notEqual(modules['./generated/v2/gateway.js'].BusinessError, modules['./generated/v2/review.js'].BusinessError);
     const source = readFileSync(new URL('../cloudfunctions/xueduTrial/index.js', import.meta.url), 'utf8');
 
-    function entry(overrides: Record<string, string> = {}, rpcFailure?: unknown, rpcError?: unknown) {
+    interface EntryOptions { readData?: unknown; }
+    function entry(overrides: Record<string, string> = {}, rpcFailure?: unknown, rpcError?: unknown, options: EntryOptions = {}) {
       let session: ReviewSession | null = null;
       const calls: string[] = [];
       const exports: { main?: (event: unknown) => Promise<Result> } = {};
@@ -42,7 +45,7 @@ test('实际独立构建包的审核错误可跨入口识别，未知异常仍�
           case 'xuedu_review_login':
             if (args.p_valid) session = { snapshot: args.p_snapshot as ReviewSnapshot, version: 1, role: 'admin', expiresAt: String(args.p_expires_at) };
             data = args.p_valid; break;
-          case 'xuedu_review_read': data = session; break;
+          case 'xuedu_review_read': data = Object.hasOwn(options, 'readData') ? options.readData : session; break;
           case 'xuedu_review_role':
             assert.ok(session); session.role = args.p_role as ReviewRole; data = ++session.version; break;
           case 'xuedu_v2_workspace':
@@ -92,6 +95,49 @@ test('实际独立构建包的审核错误可跨入口识别，未知异常仍�
         failure(await x.call('bootstrap'), 'REVIEW_EXPIRED', '审核体验已到期，请重新登录');
       }
       assert.ok(x.calls.every(name => name.startsWith('xuedu_review_')));
+    });
+    await t.test('SDK 空对象、缺失字段和非法会话结构均安全返回到期码', async () => {
+      const valid = entry(); assert.equal((await valid.login()).ok, true);
+      const seed = valid.session();
+      const invalid: unknown[] = [null, undefined, {}, [], false, '',
+        { ...seed, expiresAt: undefined }, { ...seed, expiresAt: '' }, { ...seed, expiresAt: 'not-a-date' },
+        { ...seed, expiresAt: 4070908800000 }, { ...seed, version: 0 }, { ...seed, version: '1' },
+        { ...seed, role: undefined }, { ...seed, role: 'invalid' },
+        { ...seed, snapshot: undefined }, { ...seed, snapshot: null }, { ...seed, snapshot: {} },
+        { ...seed, snapshot: { ...seed.snapshot, workspace: {} } },
+        { ...seed, snapshot: { ...seed.snapshot, workspace: { ...seed.snapshot.workspace, epoch: undefined } } },
+        { ...seed, snapshot: { ...seed.snapshot, workspace: { ...seed.snapshot.workspace, protocolVersion: 1 } } },
+        { ...seed, snapshot: { ...seed.snapshot, rows: undefined } },
+        { ...seed, snapshot: { ...seed.snapshot, rows: { members: {} } } },
+      ];
+      for (const readData of invalid) {
+        const x = entry({}, undefined, undefined, { readData });
+        failure(await x.call('bootstrap'), 'REVIEW_EXPIRED', '审核体验已到期，请重新登录');
+        assert.deepEqual(x.calls, ['xuedu_review_read']);
+      }
+    });
+    const sdkFile = new URL('../cloudfunctions/xueduTrial/node_modules/@cloudbase/js-sdk/dist/index.node.cjs.js', import.meta.url);
+    await t.test('真实 SDK 将 RPC null 转为 {} 后，构建包入口仍返回 REVIEW_EXPIRED', { skip: !existsSync(sdkFile) }, async () => {
+      // Isolate SDK background timers; replace its transport before creating rdb().
+      const probe = spawnSync(process.execPath, ['-e', `
+        const sdk = require(process.argv[1]);
+        const app = sdk.init({env:'synthetic-local-only',accessKey:'synthetic-no-network'});
+        let fetches = 0;
+        app.request.fetch = async () => {
+          fetches++;
+          return {statusCode:200,statusMessage:'OK',data:Promise.resolve(null),header:{}};
+        };
+        app.rdb().rpc('xuedu_review_read',{p_digest:'synthetic-digest'}).then(mapped => {
+          process.stdout.write(JSON.stringify({data:mapped.data,error:mapped.error,fetches}));
+          process.exit(0);
+        }).catch(() => process.exit(1));
+      `, fileURLToPath(sdkFile)], { encoding: 'utf8', timeout: 5000 });
+      assert.equal(probe.status, 0, probe.error?.message || probe.stderr);
+      const mapped = JSON.parse(probe.stdout);
+      assert.equal(mapped.error, null); assert.deepEqual(mapped.data, {});
+      const x = entry({}, undefined, undefined, { readData: mapped.data });
+      failure(await x.call('bootstrap', { payload: { includeHome: true, fastPage: true } }), 'REVIEW_EXPIRED', '审核体验已到期，请重新登录');
+      assert.equal(mapped.fetches, 1);
     });
     await t.test('体验总期限和配置错误仍拒绝访问', async () => {
       failure(await entry({ REVIEW_ACCESS_UNTIL: '2000-01-01T00:00:00.000Z' }).call('bootstrap'), 'REVIEW_EXPIRED', '审核体验已到期');

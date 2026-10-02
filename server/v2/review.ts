@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { ApiRequest, ApiResponse, Commit } from "../../miniprogram/domain/v2/protocol";
+import { ApiRequest, ApiResponse, Commit, RESOURCES } from "../../miniprogram/domain/v2/protocol";
 import { BusinessError, createGatewayV2 } from "./gateway";
 import { MemoryRepository } from "./memory";
 import { Repository } from "./repository";
@@ -23,6 +23,21 @@ export interface ReviewDependencies {
 export interface ReviewRequest extends ApiRequest { review?: boolean; }
 const fail = (code: string, message: string): never => { throw new BusinessError(code, message); };
 const text = (v: unknown) => typeof v === "string" ? v : "";
+const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const version = (v: unknown) => typeof v === "number" && Number.isSafeInteger(v) && v >= 1;
+
+function validSession(value: unknown): value is ReviewSession {
+  if (!object(value) || !version(value.version) || !REVIEW_ROLES.includes(value.role as ReviewRole) ||
+      typeof value.expiresAt !== "string" || !Number.isFinite(Date.parse(value.expiresAt)) || !object(value.snapshot)) return false;
+  const { workspace, rows } = value.snapshot;
+  if (!object(workspace) || workspace.id !== "review" || typeof workspace.epoch !== "string" ||
+      !workspace.epoch.startsWith("review-") || workspace.epoch.length <= 7 || workspace.protocolVersion !== 2 ||
+      !version(workspace.version) || !version(workspace.permissionsVersion) || typeof workspace.activeSemesterId !== "string" ||
+      typeof workspace.maintenance !== "string" || typeof workspace.maxExecutionMs !== "number" ||
+      !Number.isInteger(workspace.maxExecutionMs) || workspace.maxExecutionMs < 1000 || workspace.maxExecutionMs > 900000 || !object(rows)) return false;
+  return Object.entries(rows).every(([resource, items]) => RESOURCES.some(r => r === resource) && Array.isArray(items) &&
+    items.every(row => object(row) && typeof row.id === "string" && row.id.length > 0 && row.epoch === workspace.epoch && version(row.version) && object(row.data)));
+}
 
 /** The only account credential is a scrypt digest supplied by the function configuration. */
 export function verifyReviewPassword(password: unknown, encoded: string): boolean {
@@ -56,7 +71,7 @@ export function createReviewGateway(deps: ReviewDependencies) {
       return response({snapshot:seed,version:1,role:"admin",expiresAt}, {role:"admin",expiresAt});
     }
     const session = await deps.store.read(digest);
-    if (!session || Date.parse(session.expiresAt) <= now || session.snapshot.workspace.id !== "review" || !session.snapshot.workspace.epoch.startsWith("review-")) throw new BusinessError("REVIEW_EXPIRED", "审核体验已到期，请重新登录");
+    if (!validSession(session) || Date.parse(session.expiresAt) <= now) throw new BusinessError("REVIEW_EXPIRED", "审核体验已到期，请重新登录");
     if (input.operation === "reviewStatus") return response(session, {role:session.role,expiresAt:session.expiresAt});
     if (input.operation === "reviewLogout") { await deps.store.logout(digest); return response(session, {ended:true}); }
     if (input.operation === "reviewRole") {
@@ -98,7 +113,11 @@ export class PostgresReviewStore implements ReviewStore {
     return result.data as T;
   }
   login(digest:string,valid:boolean,seed:ReviewSnapshot,expiresAt:string) { return this.rpc<boolean>("xuedu_review_login",{p_digest:digest,p_valid:valid,p_snapshot:seed,p_expires_at:expiresAt}); }
-  read(digest:string) { return this.rpc<ReviewSession|null>("xuedu_review_read",{p_digest:digest}); }
+  async read(digest:string): Promise<ReviewSession|null> {
+    // SDK 3.10.0 turns a successful RPC null into {}; neither is a usable session.
+    const session = await this.rpc<unknown>("xuedu_review_read",{p_digest:digest});
+    return validSession(session) ? session : null;
+  }
   save(digest:string,expectedVersion:number,snapshot:ReviewSnapshot) { return this.rpc<number>("xuedu_review_save",{p_digest:digest,p_expected_version:expectedVersion,p_snapshot:snapshot}); }
   role(digest:string,expectedVersion:number,role:ReviewRole) { return this.rpc<number>("xuedu_review_role",{p_digest:digest,p_expected_version:expectedVersion,p_role:role}); }
   logout(digest:string) { return this.rpc<void>("xuedu_review_logout",{p_digest:digest}); }

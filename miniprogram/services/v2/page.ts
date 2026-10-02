@@ -1,3 +1,6 @@
+import { isManager, canCoordinate, participatesByDefault } from "../../domain/capabilities";
+import { SummaryReport } from "../../domain/v2/summary-report";
+import { exportSummaryXlsx, summaryGradeStats } from "../../domain/summary-xlsx";
 import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protocol";
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
@@ -103,7 +106,7 @@ export function registerCloudPage(view: View): void {
       recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
       eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
       cloudMode: true, reviewMode: reviewActive(), title: titles[view], view, busy: false, refreshing: false, loadingInitial: ["home", "schedule", "records", "profile"].includes(view), hasLoaded: false, error: "", status: "", canInitialize: false, removed: false,
-      admin: false, manager: false, memberName: "", memberId: "", role: "", maintenance: "",
+      admin: false, manager: false, coordinator:false, officer:false, statusRows:[] as {id:string;name:string;className:string;availability:string;record:string;assigned:number;submitted:number}[], statusCursor:"", statusVersion:0, statusLoaded:false, memberName: "", memberId: "", role: "", maintenance: "",
       autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
       selectedApplications: [] as string[], section: view === "manage" ? "members" : view === "records" ? "records" : "", rows: [] as Row[], cursor: "",
       sections: [{ id: "members", label: "成员" }, { id: "applications", label: "入组申请" }, { id: "autoApproved", label: "自动通过人员" }, { id: "rebindings", label: "换绑申请" }, { id: "classes", label: "班级" }, { id: "semesters", label: "学期" }, { id: "courses", label: "课表" }, { id: "audit", label: "操作记录" }],
@@ -138,11 +141,12 @@ export function registerCloudPage(view: View): void {
         const member = boot.member, bundle = view === "home" ? undefined : boot.page;
         const identityChanged = !!this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role);
         const home = view === "home" ? boot.home : undefined;
-        const admin = member?.data.role === "admin", manager = !!member && member.data.role !== "member";
+        const admin = member?.data.role === "admin", manager = isManager(member?.data.role);
         if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
+        this.setData({coordinator:canCoordinate(member?.data.role),officer:member?.data.role === "officer",statusRows:[],statusCursor:"",statusLoaded:false});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
-        this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
+        this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : member?.data.role === "officer" ? "信息部干事" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
           this.setData({ stats:[],statsLoaded:false,dirty:false,pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],fields: [], formType: "" });
           if (boot.status !== "needsAdministrator") {
@@ -246,7 +250,7 @@ export function registerCloudPage(view: View): void {
         this.filterRows();
       } catch (e) {
         const message = e instanceof Error ? e.message : "连接失败";
-        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
+        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,coordinator:false,officer:false,statusRows:[],statusLoaded:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
         this.setData({ error: message });
       }
       finally {
@@ -540,12 +544,12 @@ export function registerCloudPage(view: View): void {
       if (action === "participants") { await this.openForm("semesterParticipants", target); return; }
       if (action === "exception") { await this.openForm("exceptionSave", target); return; }
       try {
-        const labels: Record<string, string> = { admin: "授予管理员", member: "降为普通成员", leader: "设为组部长", remove: "停用成员", restore: "恢复成员", approve: "通过申请", reject: "驳回申请", rebind: "确认微信换绑（已线下核实）", activate: "启用学期", disable: "停用", enable: "启用" };
+        const labels: Record<string, string> = { admin: "授予管理员", member: "降为普通成员", leader: "设为组部长", officer: "设为信息部干事", remove: "停用成员", restore: "恢复成员", approve: "通过申请", reject: "驳回申请", rebind: "确认微信换绑（已线下核实）", activate: "启用学期", disable: "停用", enable: "启用" };
         const r = await wx.showModal({ title: labels[action], content: `对象：${target.label}。请核对并填写操作原因；角色变更立即影响权限。`, editable: true });
         if (!r.confirm) return;
         if (!r.content?.trim()) throw new Error("请填写原因");
         let type = "", payload: Record<string, unknown> = { id, reason: r.content, confirmed: true };
-        if (["admin", "leader", "member"].includes(action)) { type = "roleChange"; payload.role = action; }
+        if (["admin", "leader", "member", "officer"].includes(action)) { type = "roleChange"; payload.role = action; }
         else if (action === "remove") { type = target.role === "member" ? "memberRemove" : "memberStatus"; payload.active = false; }
         else if (action === "restore") { type = target.role === "member" ? "memberRestore" : "memberStatus"; payload.active = true; }
         else if (["approve", "reject"].includes(action)) { type = "applicationReview"; payload.approved = action === "approve"; }
@@ -597,7 +601,7 @@ export function registerCloudPage(view: View): void {
         syncAvailabilityExitAlert(true);
       }catch(e){displayError(e);}finally{this.setData({busy:false});}
     },
-    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: this.data.role === "member" || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false,dirty:false}); syncAvailabilityExitAlert(false); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
+    async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: participatesByDefault(this.data.role) || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false,dirty:false}); syncAvailabilityExitAlert(false); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
     openRecordForm(target: Entity, editing = false) {
       const d = target.data, metrics = d.metrics as Record<string, number> | undefined;
       this.setData({recordContext:row(target),uploadingPhoto:""});
@@ -667,10 +671,25 @@ export function registerCloudPage(view: View): void {
     },
     async history() { try { if (!this.data.record) return; if (this.data.versions.length && !this.data.versionCursor) return; const r = await query("recordVersions", this.data.semesterId, { id: this.data.record.id }, this.data.versionCursor); this.setData({ versions: this.data.versions.concat(r.data.items.map(row)), versionCursor: r.cursor || "" }); } catch (e) { displayError(e); } },
     async versionPhotos(e: UiEvent) { try { const r = await call<{ urls: string[] }>("photoUrls", { semesterId: this.data.semesterId, payload: { recordId: this.data.targetId, versionId: e.currentTarget.dataset.id } }); await previewAuthorizedImages(r.data.urls); } catch (e) { displayError(e); } },
+    async submissionStatus(e?:UiEvent) {
+      if(this.data.busy || !this.data.coordinator || !this.data.semesterId)return;
+      const more=e?.currentTarget.dataset.more === "true";
+      this.setData({busy:true});
+      try {
+        const r=await query<{items:{id:string;name:string;className:string;availability:string;record:string;assigned:number;submitted:number}[];version:number}>("submissionStatus",this.data.semesterId,{week:this.data.week,...(more?{version:this.data.statusVersion}:{})},more?this.data.statusCursor:"");
+        this.setData({statusRows:(more?this.data.statusRows:[]).concat(r.data.items),statusCursor:r.cursor || "",statusVersion:r.data.version,statusLoaded:true});
+      } catch(e){this.setData({statusRows:[],statusCursor:"",statusLoaded:false});displayError(e);}finally{this.setData({busy:false});}
+    },
     async showStats(preserve = false) {
-      if(this.data.busy || !this.data.manager)return;
+      if(this.data.busy || !this.data.coordinator)return;
       this.setData({busy:true,statsLoaded:preserve && this.data.statsLoaded,recordTab:"stats"});
       try {
+        if(this.data.officer) {
+          const r=await query<{summary:SummaryReport;version:number}>("summaryReport",this.data.semesterId,{week:this.data.week});
+          await query("reportCheck",this.data.semesterId,{week:this.data.week,version:r.data.version});
+          this.setData({stats:summaryGradeStats(r.data.summary).map(g=>({...g,rate:g.rate===null?"信息缺失":(g.rate*100).toFixed(1)+"%"})),statsCount:r.data.summary.rows.reduce((n,r)=>n+r.count,0),statsLoaded:true});
+          return;
+        }
         const r = await query<{state: AppState; version:number}>("report", this.data.semesterId, {week:this.data.week});
         await query("reportCheck", this.data.semesterId, {week:this.data.week,version:r.data.version});
         this.setData({stats: gradeStats(r.data.state,this.data.week).map(g => ({...g,rate:g.rate === null ? "信息缺失" : (g.rate * 100).toFixed(1) + "%"})),statsCount:r.data.state.records.length,statsLoaded:true});
@@ -679,12 +698,13 @@ export function registerCloudPage(view: View): void {
     async copyReport() { await this.exportReport({currentTarget:{dataset:{kind:"copy"}},detail:{value:""}} as UiEvent); },
     openReport() { if(this.data.filePath && this.data.fileOwner === currentBoot().workspace.epoch + ":" + this.data.memberId)openExport(this.data.filePath); },
     async exportReport(e: UiEvent) {
-      if(this.data.busy || !this.data.manager || !this.data.semesterId)return;
+      if(this.data.busy || !this.data.coordinator || !this.data.semesterId)return;
+      if(this.data.officer && e.currentTarget.dataset.kind!=="xlsx")return;
       this.setData({busy:true,filePath:"",filename:""});
       const semesterId=this.data.semesterId,week=this.data.week;
       try {
-        const r = await query<{ state: AppState; version: number }>("report", semesterId, { week });
-        const kind=e.currentTarget.dataset.kind,xlsx=kind === "xlsx",content=xlsx ? exportXlsx(r.data.state,week) : exportTxt(r.data.state,week);
+        const r = await query<{ state: AppState; summary:SummaryReport; version: number }>(this.data.officer ? "summaryReport" : "report", semesterId, { week });
+        const kind=e.currentTarget.dataset.kind,xlsx=kind === "xlsx",content=this.data.officer ? exportSummaryXlsx(r.data.summary) : xlsx ? exportXlsx(r.data.state,week) : exportTxt(r.data.state,week);
         await query("reportCheck", semesterId, {week,version:r.data.version});
         if(kind === "copy") { await wx.setClipboardData({data:content as string}); return; }
         const filename=semesterId + "-第" + week + "周-" + Date.now() + (xlsx ? "-听课汇总.xlsx" : "-请假旷课名单.txt");

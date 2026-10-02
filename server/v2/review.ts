@@ -77,6 +77,7 @@ export function createReviewGateway(deps: ReviewDependencies) {
     if (input.operation === "reviewRole") {
       const role = input.payload?.role;
       if (!REVIEW_ROLES.includes(role as ReviewRole)) fail("INVALID_REQUEST", "体验角色无效");
+      if (role === "officer" && !session.snapshot.rows.bindings?.some(b=>b.identityKey===reviewIdentity(digest,"officer"))) fail("REVIEW_EXPIRED", "审核样例已更新，请重新登录体验新角色");
       await deps.store.role(digest, session.version, role as ReviewRole);
       return response(session, {role,expiresAt:session.expiresAt});
     }

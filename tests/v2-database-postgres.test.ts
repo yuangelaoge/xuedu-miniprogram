@@ -139,3 +139,10 @@ pgtest('real PostgreSQL: timed auto admission rechecks server policy, creates or
  await call('autoApprovalSet',{enabled:true,expiresAt:new Date(Date.now()+600000).toISOString()});const w=await repo.workspace();const tampered={...intercepted!,requestId:'tampered-role',workspaceVersion:w.version,permissionsVersion:w.permissionsVersion};tampered.changes.find(c=>c.resource==='members')!.value!.data.role='admin';await assert.rejects(commit(tampered),/FORBIDDEN/);
  await call('autoApprovalSet',{enabled:false});const pending=await call('join',{name:'待审核',studentNo:'pending-student',classId:'c'},'pending-wx');assert.equal(pending.data.automaticallyApproved,false);assert.equal((await repo.get('members',member.id))!.data.active,true);
 });
+pgtest('real PostgreSQL: 007 accepts officer, retains last-admin guard and private execution',async()=>{
+ if(raw("SELECT position('officer' in pg_get_functiondef('public.xuedu_v2_commit(jsonb)'::regprocedure))")==='0')return;
+ const c=await base({changes:[{resource:'members',id:'information-officer',expectedVersion:0,value:row('information-officer',{name:'合成信息部干事',role:'officer',active:true,classId:'c'},{studentNo:'officer'})}]});
+ await repo.commit(c);assert.equal((await repo.get('members','information-officer'))!.data.role,'officer');
+ for(const name of ['anon','authenticated'])assert.throws(()=>raw(role(name)+"SELECT public.xuedu_v2_commit('{}'::jsonb)"),/Command failed/);
+ assert.equal(raw("SELECT position('officer' in pg_get_constraintdef(oid))>0 FROM pg_constraint WHERE conname='sessions_role_check' AND conrelid='xuedu_review.sessions'::regclass"),'t');
+});

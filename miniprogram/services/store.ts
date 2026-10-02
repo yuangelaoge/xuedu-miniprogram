@@ -31,7 +31,7 @@ export function context() {
     user,
     semester,
     week: boundedWeek(semester),
-    manager: user.role !== "member",
+    manager: ["admin", "leader"].includes(user.role),
   };
 }
 export function published(state: AppState, week: number): Plan | undefined {

@@ -1,4 +1,4 @@
-export type Role = "admin" | "leader" | "member";
+export type Role = "admin" | "leader" | "member" | "officer";
 export interface Semester {
   id: string;
   name: string;
@@ -141,6 +141,7 @@ export interface UiEvent {
   detail: { value: string };
 }
 export const ROLE_NAMES: Record<Role, string> = {
+  officer: "信息部干事",
   admin: "管理员",
   leader: "组部长",
   member: "普通成员",

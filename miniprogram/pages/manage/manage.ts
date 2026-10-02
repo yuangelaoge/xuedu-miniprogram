@@ -11,7 +11,7 @@ import { actor } from "../../domain/actions";
 // Management remains usable after clearing every semester.
 function context() {
   const state = readState(), user = actor(state);
-  return { state, user, manager: user.role !== "member", semester: state.semesters.find(s => s.id === state.activeSemesterId) };
+  return { state, user, manager: ["admin", "leader"].includes(user.role), semester: state.semesters.find(s => s.id === state.activeSemesterId) };
 }
 if (cloudEnabled()) registerCloudPage("manage"); else memberPage({
   data: {

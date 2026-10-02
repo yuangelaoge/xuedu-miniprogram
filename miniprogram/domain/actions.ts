@@ -31,7 +31,7 @@ function editableWeek(state: AppState, week: number): void {
     );
 }
 export function generate(state: AppState, week: number): void {
-  requireRole(state, ["admin", "leader"]);
+  requireRole(state, ["admin", "leader", "officer"]);
   editableWeek(state, week);
   const draft = generatePlan(
     state,

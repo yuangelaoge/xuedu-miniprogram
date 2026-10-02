@@ -20,7 +20,7 @@ if (cloudEnabled()) registerCloudPage("record"); else memberPage({
       const { state, user } = context();
       const record = state.records.find((r) => r.id === query.id);
       if (!record) throw new Error("记录不存在");
-      if (user.role === "member" && record.memberId !== user.id)
+      if (!["admin", "leader"].includes(user.role) && record.memberId !== user.id)
         throw new Error("体验版暂仅允许查看自己的明细与照片");
       this.setData({
         record,

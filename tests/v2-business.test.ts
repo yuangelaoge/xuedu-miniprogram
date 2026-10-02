@@ -278,3 +278,35 @@ test("V2 cancellation drafts expose uncovered classes and reasons while complete
   const completionDraft = (created.data.changed as Entity[]).find(e => e.data.status === "draft" && !e.data.occurrenceId)!;
   assert.equal((completionDraft.data.uncovered as { label: string }[]).some(item => item.label === "25计科1班"), false);
 });
+
+function officerFixture() {
+ return fixture({members:[row('admin',{name:'管理员',studentNo:'001',classId:'c1',role:'admin',active:true},{studentNo:'001'}),row('member',{name:'成员',studentNo:'002',classId:'c1',role:'member',active:true},{studentNo:'002'}),row('officer',{name:'信息部干事',studentNo:'003',classId:'c1',role:'officer',active:true},{studentNo:'003'})],bindings:[row('ba',{},{identityKey:'oa',memberId:'admin'}),row('bm',{},{identityKey:'om',memberId:'member'}),row('bo',{},{identityKey:'oo',memberId:'officer'})]});
+}
+test('officer receives statuses and aggregate export but never other records, photos, availability or management',async()=>{
+ const f=officerFixture(),record=await submit(f);
+ const status=await f.call('query',{kind:'submissionStatus',week:2},{who:'oo'});
+ const person=(status.data.items as any[]).find(v=>v.id==='member');
+ assert.equal(person.availability,'已提交');assert.equal(person.record,'已提交');
+ assert.deepEqual(Object.keys(person).sort(),['assigned','availability','className','id','name','record','submitted']);
+ const report=await f.call('query',{kind:'summaryReport',week:2},{who:'oo'});
+ assert.equal((report.data.summary as any).rows[0].actual,29);
+ assert.doesNotMatch(JSON.stringify(report.data),/studentNo|memberName|photos|suggestion|slots|identityKey|firstSubmittedAt/);
+ assert.equal((await f.call('query',{kind:'records',week:2},{who:'oo'})).data.items.length,0);
+ const week=await f.call('query',{kind:'week',week:2},{who:'oo'});assert.equal(week.data.availability,null);assert.equal(week.data.records.length,0);
+ for(const payload of [{kind:'record',id:record.id},{kind:'recordVersions',id:record.id},{kind:'task',id:'t1'},{kind:'members'},{kind:'applications'},{kind:'report',week:2}])await assert.rejects(f.call('query',payload,{who:'oo'}),/权限|不可|管理/);
+ await assert.rejects(f.call('photoUrls',{recordId:record.id},{who:'oo'}),/不可/);
+ for(const type of ['planConfirm','taskAdjust','roleChange','applicationReview','memberRemove'])await assert.rejects(f.call('command',{type,id:'member',week:2,reason:'越权验证',confirmed:true},{who:'oo',expectedVersion:1}),/管理|管理员/);
+ await assert.rejects(f.call('query',{kind:'submissionStatus',week:2},{who:'om'}),/协作/);
+ await assert.rejects(f.call('query',{kind:'summaryReport',week:2},{who:'om'}),/协作/);
+ await assert.rejects(f.call('query',{kind:'reportCheck',version:0},{who:'oo'}),/变化/);
+});
+test('officer can generate draft, cannot confirm, and is eligible without manager opt-in',async()=>{
+ const f=officerFixture();
+ const w=await f.repository.workspace();await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'oa',actorId:'admin',requestId:'remove-availability',reads:[],changes:[{resource:'availability',id:'av1',expectedVersion:1,value:null}],result:{}});
+ await f.call('command',{type:'availabilitySave',week:2,slots:['1:1','1:2'],optedIn:false},{who:'oo',expectedVersion:0});
+ const generated=await f.call('command',{type:'planGenerate',week:2},{who:'oo',expectedVersion:0});
+ const changed=generated.data.changed as Entity[];
+ const plan=changed.find(e=>e.data.status==='draft'&&!e.memberId)!;
+ assert.ok(plan);await assert.rejects(f.call('command',{type:'planConfirm',id:plan.id},{who:'oo',expectedVersion:1}),/管理/);
+ assert.ok(changed.some(e=>e.memberId==='officer'&&e.data.status==='draft'));
+});

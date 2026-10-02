@@ -71,7 +71,7 @@ test('审核样例照片不保存原图；角色切换和写入仅更新对应�
 });
 test('审核样例创建只含合成资料',()=>{
   const seed=makeReviewSeed('f'.repeat(64),'seed',timestamp,3000);
-  assert.equal(seed.workspace.id,'review'); assert.equal(seed.rows.members?.length,3);
+  assert.equal(seed.workspace.id,'review'); assert.equal(seed.rows.members?.length,4);
   assert.ok(JSON.stringify(seed).length<524288);
 });
 test('审核样例可读取课程、历史记录与报表，并生成下一周排班草稿', async()=>{

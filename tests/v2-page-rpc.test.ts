@@ -42,7 +42,7 @@ pgtest('page RPC: empty database remains read-only and only trusted initializer 
  seed('semesters','s',{name:'合成学期',weeks:18,startDate:start,status:'active'});
  seed('semesters','historical',{name:'合成历史学期',weeks:18,startDate:'2020-09-07',status:'archived'});
  seed('classes','c',{name:'合成班级'});
- for(const [id,roleName] of [['admin','admin'],['member','member'],['leader','leader'],['removed','member']]) {
+ for(const [id,roleName] of [['admin','admin'],['member','member'],['leader','leader'],['officer','officer'],['removed','member']]) {
   seed('members',id,{name:id,role:roleName,active:id!=='removed',classId:'c',identityKey:'never-expose'});
   seed('bindings','b-'+id,{},{memberId:id,identityKey:'wx-'+id});
  }
@@ -62,7 +62,7 @@ pgtest('page RPC: empty database remains read-only and only trusted initializer 
  seed('courses','course',{course:{name:'合成课程'}},{semesterId:'s'});
 });
 pgtest('page RPC: all six page paths use exactly one database request; page shapes match existing gateway',async()=>{
- for(const who of ['wx-admin','wx-leader','wx-member']) for(const view of ['schedule','records','profile','courses','availability']) {
+ for(const who of ['wx-admin','wx-leader','wx-member','wx-officer']) for(const view of ['schedule','records','profile','courses','availability']) {
   const extra={week:1}; calls.length=0;
   const fast=await call(view,extra,who); assert.deepEqual(calls,['xuedu_v2_bootstrap_page']);
   const old=await call(view,extra,who,false);
@@ -74,7 +74,7 @@ pgtest('page RPC: all six page paths use exactly one database request; page shap
  const historical=await call('availability',{semesterId:'historical',week:1},'wx-member');assert.equal(historical.data.page.weekData.availability.id,'old-av');
 });
 pgtest('page RPC: home returns own links and aggregate counters instead of all observation data',async()=>{
- for(const who of ['wx-admin','wx-leader','wx-member']) {
+ for(const who of ['wx-admin','wx-leader','wx-member','wx-officer']) {
   calls.length=0;const fast=await call('home',{},who);assert.deepEqual(calls,['xuedu_v2_bootstrap_page']);
   calls.length=0;const old=await call('home',{},who,false), h=fast.data.home, w=old.data.home.weekData;
   if(who==='wx-admin') console.log('Home database round trips:',calls.length,'-> 1');

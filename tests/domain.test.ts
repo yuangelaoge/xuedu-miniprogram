@@ -333,7 +333,7 @@ test("XLSX 包含动态工作表、公式、中文和真实图表关系", () => 
     (files.get("xl/workbook.xml")!.match(/<sheet /g) || []).length,
     13,
   );
-  assert.match(files.get("xl/worksheets/sheet1.xml")!, /<f>IF\(OR\(E/);
+  assert.match(files.get("xl/worksheets/sheet1.xml")!, /<f>IF\(OR\(COUNT\(E/);
   assert.match(files.get("xl/worksheets/sheet1.xml")!, /未提交/);
   assert.ok([...files.keys()].some((k) => k.startsWith("xl/charts/")));
 });

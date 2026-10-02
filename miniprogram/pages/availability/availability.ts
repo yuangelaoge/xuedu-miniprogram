@@ -50,7 +50,7 @@ if (cloudEnabled()) registerCloudPage("availability"); else memberPage({
       slots: value?.slots || [],
       note: value?.note || "",
       optedIn: value?.optedIn || false,
-      volunteer: user.role !== "member",
+      volunteer: ["admin", "leader"].includes(user.role),
       dirty: false,
       saved: !!value,
     });

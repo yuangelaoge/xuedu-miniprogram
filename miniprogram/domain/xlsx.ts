@@ -4,9 +4,13 @@ export interface SheetData {
   rows: Cell[][];
   chart?: boolean;
   raw?: boolean;
+  groupHeaders?: boolean;
+  chartPercent?: boolean;
+  percentColumns?: number[];
 }
 export type Cell =
   string | number | null | { formula: string; value: string | number };
+const cached = (cell: Cell): string | number | null => typeof cell === "object" && cell !== null ? cell.value : cell;
 const xml = (v: unknown) =>
   String(v)
     .replace(/&/g, "&amp;")
@@ -145,7 +149,7 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
             '"/>',
         )
         .join("") +
-      '</sheets><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>',
+      '</sheets><definedNames>' + sheets.map((s,i)=>s.chart && s.rows.length>3 ? '<definedName localSheetId="'+i+'" name="ChartLabels'+(i+1)+'">'+xml("OFFSET('"+s.name.replace(/'/g,"''")+"'!$A$4,0,0,MAX(1,COUNT('"+s.name.replace(/'/g,"''")+"'!$B$4:$B$"+s.rows.length+")),1)")+'</definedName><definedName localSheetId="'+i+'" name="ChartValues'+(i+1)+'">'+xml("OFFSET('"+s.name.replace(/'/g,"''")+"'!$B$4,0,0,MAX(1,COUNT('"+s.name.replace(/'/g,"''")+"'!$B$4:$B$"+s.rows.length+")),1)")+'</definedName>' : '').join('') + '</definedNames><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>',
     spreadsheetType + "sheet.main+xml",
   );
   add(
@@ -191,9 +195,9 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
           row
             .map((c, ci) => {
               const address = col(ci) + (ri + 1),
-                rate = s.raw
+                rate = s.percentColumns ? s.percentColumns.includes(ci) : s.raw
                   ? [7, 9, 11, 13, 15, 17, 19, 22].includes(ci)
-                  : ci === 1 && !s.name.includes("迟到人数");
+                  : ci === 1 && (s.chartPercent ?? !s.name.includes("迟到人数"));
               const style =
                 ri === 0 ? 2 : ri === 2 ? 1 : rate && ri > 2 ? 3 : 0;
               if (c === null) return "";
@@ -247,11 +251,9 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
         '</sheetData><autoFilter ref="A3:' +
         last +
         s.rows.length +
-        '"/><mergeCells count="2"><mergeCell ref="A1:' +
+        '"/><mergeCells count="'+(s.groupHeaders?5:2)+'"><mergeCell ref="A1:' +
         (s.raw ? "AA" : "F") +
-        '1"/><mergeCell ref="A2:' +
-        (s.raw ? "AA" : "F") +
-        '2"/></mergeCells>' +
+        '1"/>' + (s.groupHeaders ? '<mergeCell ref="A2:D2"/><mergeCell ref="E2:L2"/><mergeCell ref="M2:T2"/><mergeCell ref="U2:Z2"/>' : '<mergeCell ref="A2:'+(s.raw ? 'AA' : 'F')+'2"/>') + '</mergeCells>' +
         (chart ? '<drawing r:id="drawing"/>' : "") +
         "</worksheet>",
       spreadsheetType + "worksheet+xml",
@@ -286,9 +288,8 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
           id +
           '.xml"/></Relationships>',
       );
-      const sheetName = "'" + s.name.replace(/'/g, "''") + "'",
-        data = s.rows.slice(3),
-        fmt = s.name.includes("人数") ? "0" : "0.0%";
+      const data = s.rows.slice(3).filter(r=>typeof cached(r[1]) === "number"),
+        fmt = s.chartPercent === false || s.name.includes("人数") ? "0" : "0.0%";
       add(
         "xl/charts/chart" + id + ".xml",
         '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>' +
@@ -296,18 +297,18 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
           '</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>' +
           xml(s.name) +
           "</c:v></c:tx><c:cat><c:strRef><c:f>" +
-          xml(sheetName + "!$A$4:$A$" + s.rows.length) +
+          xml("'"+s.name.replace(/'/g,"''")+"'!ChartLabels"+id) +
           '</c:f><c:strCache><c:ptCount val="' +
           data.length +
           '"/>' +
           data
             .map(
               (r, j) =>
-                '<c:pt idx="' + j + '"><c:v>' + xml(r[0]) + "</c:v></c:pt>",
+                '<c:pt idx="' + j + '"><c:v>' + xml(cached(r[0])) + "</c:v></c:pt>",
             )
             .join("") +
           "</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>" +
-          xml(sheetName + "!$B$4:$B$" + s.rows.length) +
+          xml("'"+s.name.replace(/'/g,"''")+"'!ChartValues"+id) +
           "</c:f><c:numCache><c:formatCode>" +
           fmt +
           '</c:formatCode><c:ptCount val="' +
@@ -315,12 +316,12 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
           '"/>' +
           data
             .map(
-              (r, j) => '<c:pt idx="' + j + '"><c:v>' + r[1] + "</c:v></c:pt>",
+              (r, j) => '<c:pt idx="' + j + '"><c:v>' + cached(r[1]) + "</c:v></c:pt>",
             )
             .join("") +
           '</c:numCache></c:numRef></c:val></c:ser><c:axId val="10"/><c:axId val="20"/></c:barChart><c:catAx><c:axId val="10"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="b"/><c:tickLblPos val="nextTo"/><c:crossAx val="20"/><c:crosses val="autoZero"/></c:catAx><c:valAx><c:axId val="20"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="l"/><c:numFmt formatCode="' +
           fmt +
-          '" sourceLinked="0"/><c:tickLblPos val="nextTo"/><c:crossAx val="10"/><c:crosses val="autoZero"/></c:valAx></c:plotArea><c:plotVisOnly val="1"/></c:chart></c:chartSpace>',
+          '" sourceLinked="0"/><c:tickLblPos val="nextTo"/><c:crossAx val="10"/><c:crosses val="autoZero"/></c:valAx></c:plotArea><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>',
         "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
       );
     }

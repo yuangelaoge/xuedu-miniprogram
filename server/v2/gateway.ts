@@ -1,3 +1,5 @@
+import { isManager, canCoordinate, participatesByDefault } from "../../miniprogram/domain/capabilities";
+import { summarizeEntities } from "./summary-report";
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { Repository } from "./repository";
 import { readPageData } from "./page-load";
@@ -49,7 +51,7 @@ function clean(entity: Entity): Entity {
   delete result.identityKey; delete result.data.identityKey;
   return result;
 }
-const ROLE = ["member", "leader", "admin"];
+const ROLE = ["member", "leader", "admin", "officer"];
 const DAY = 86400000;
 const OBSERVATION_FIELDS = ["absentNames", "leaveNames", "otherDescription", "evaluation", "feedback", "suggestion"];
 export function createGatewayV2(deps: DependenciesV2) {
@@ -114,6 +116,7 @@ export function createGatewayV2(deps: DependenciesV2) {
     const validActor = actor?.data.active === true ? actor : undefined;
     const member = () => { if (!validActor) fail("请先申请并通过审核", "FORBIDDEN"); return validActor; };
     const manager = () => { const a = member(); if (!["admin", "leader"].includes(String(a.data.role))) fail("没有管理权限", "FORBIDDEN"); return a; };
+    const coordinator = () => { const a = member(); if (!canCoordinate(a.data.role)) fail("没有协作权限", "FORBIDDEN"); return a; };
     const admin = () => { const a = member(); if (a.data.role !== "admin") fail("仅管理员可操作", "FORBIDDEN"); return a; };
     const epoch = () => { if (input.epoch !== workspace.epoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT"); };
     const mutable = () => { epoch(); if (workspace.maintenance) fail("业务数据正在维护，请稍后再试", "MAINTENANCE"); };
@@ -197,9 +200,9 @@ export function createGatewayV2(deps: DependenciesV2) {
     const readWeek = async (semester: Entity, week: number, includeOccurrences = true) => {
       member();
       const filter: Query = { eq: { semesterId: semester.id, week } };
-      const visibleFilter = member().data.role === "member" ? {eq:{...filter.eq,memberId:member().id}} : filter;
+      const visibleFilter = !isManager(member().data.role) ? {eq:{...filter.eq,memberId:member().id}} : filter;
       const [tasks, plans, availability, records, occurrences] = await Promise.all([all("tasks", visibleFilter), all("plans", filter), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", visibleFilter), includeOccurrences ? all("occurrences", filter) : Promise.resolve([])]);
-      return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => member().data.role !== "member" || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) };
+      return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => isManager(member().data.role) || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) };
     };
 
     const paginated: Record<string, Resource> = { autoApproved: "applications", semesters: "semesters", classes: "classes", courses: "courses", members: "members", applications: "applications", rebindings: "rebindings", audit: "audit", records: "records", recordVersions: "record_versions" };
@@ -213,12 +216,12 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (["courses", "records", "recordVersions"].includes(kind)) { if (!knownSemester) await get("semesters", text(request.semesterId, "学期标识", 200)); query.eq = { semesterId: request.semesterId }; }
       if (kind === "records") {
         if (request.week !== undefined) query.eq!.week = integer(request.week, "周次", 1, 60);
-        if (member().data.role === "member") query.eq!.memberId = member().id;
+        if (!isManager(member().data.role)) query.eq!.memberId = member().id;
       }
       if (kind === "recordVersions") {
         const record = (await get("records", text(request.id, "记录标识")))!;
         if (record.semesterId !== request.semesterId) fail("学期不匹配");
-        if (member().data.role === "member" && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         query.eq!.recordId = record.id;
       }
       const result = await page(paginated[kind], query);
@@ -290,18 +293,48 @@ export function createGatewayV2(deps: DependenciesV2) {
       }
       if (kind === "task") {
         member(); await requireSemester(); const task = (await get("tasks", text(p.id, "任务标识")))!;
-        if (task.semesterId !== input.semesterId || member().data.role === "member" && task.memberId !== member().id) fail("不可查看他人任务", "FORBIDDEN");
+        if (task.semesterId !== input.semesterId || !isManager(member().data.role) && task.memberId !== member().id) fail("不可查看他人任务", "FORBIDDEN");
         return response({ task: clean(task) });
       }
+      if (kind === "submissionStatus") {
+        coordinator(); const semester = await requireSemester(), week = requireWeek(semester);
+        if (p.version !== undefined && p.version !== workspace.version) fail("名单已变化，请刷新", "VERSION_CONFLICT");
+        const people = await page("members", {after:input.cursor || "",limit:integer(input.limit ?? 50,"每页条数",1,100)});
+        const filter: Query = {eq:{semesterId:semester.id,week}};
+        const [availability,tasks,records,plans,classes] = await Promise.all([
+          all("availability",filter),all("tasks",filter),all("records",filter),all("plans",filter),
+          all("classes",{in:{id:Array.from(new Set(people.items.map(m=>String(m.data.classId || ""))))}}),
+        ]);
+        const skipped = plans.some(plan=>plan.data.status === "skipped");
+        const items = people.items.map(m=>{
+          const av=availability.find(v=>v.memberId===m.id);
+          const assigned=tasks.filter(t=>t.memberId===m.id && ["confirmed","submitted","pendingAdjustment"].includes(String(t.data.status)));
+          const submitted=assigned.filter(t=>records.some(r=>r.taskId===t.id)).length;
+          const required=m.data.active===true && (participatesByDefault(m.data.role) || av?.data.optedIn===true);
+          return {id:m.id,name:String(m.data.name || ""),className:String(classes.find(c=>c.id===m.data.classId)?.data.name || ""),
+            availability:skipped?"已跳过":av?"已提交":required?"未提交":"无需提交",
+            record:skipped?"已跳过":!assigned.length?"无任务":submitted===assigned.length?"已提交":"未提交",
+            assigned:skipped?0:assigned.length,submitted:skipped?0:submitted};
+        });
+        if ((await repo.workspace()).version !== workspace.version) fail("名单已变化，请刷新", "VERSION_CONFLICT");
+        return response({items,version:workspace.version},people.cursor);
+      }
+      if (kind === "summaryReport") {
+        coordinator(); const semester = await requireSemester(),week = requireWeek(semester);
+        const filter: Query = {eq:{semesterId:semester.id,week}};
+        const [records,plans] = await Promise.all([all("records",filter),all("plans",filter)]);
+        if ((await repo.workspace()).version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
+        return response({summary:summarizeEntities(semester,week,records,plans.some(v=>v.data.status==='skipped')),version:workspace.version});
+      }
       if (kind === "reportCheck") {
-        manager(); await requireSemester();
+        coordinator(); await requireSemester();
         if (p.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({ valid: true, version: workspace.version });
       }
       if (kind === "record") {
         member(); await requireSemester(); const record = (await get("records", text(p.id, "记录标识")))!;
         if (record.semesterId !== input.semesterId) fail("学期不匹配");
-        if (member().data.role === "member" && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         return response({ record: clean(record), canEdit: member().data.role === "admin" || record.memberId === member().id && now - Date.parse(String(record.data.firstSubmittedAt)) < DAY });
       }
       if (kind === "week" || kind === "report") {
@@ -349,7 +382,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       let ids: string[];
       if (p.recordId) {
         const record = (await get("records", text(p.recordId, "记录标识")))!;
-        if (record.semesterId !== input.semesterId || member().data.role === "member" && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
+        if (record.semesterId !== input.semesterId || !isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
         let source = record;
         if (p.versionId) { source = (await get("record_versions", text(p.versionId, "版本标识")))!; if (source.recordId !== record.id) fail("版本归属不匹配", "FORBIDDEN"); }
         ids = strings(source.data.photos, "照片", 3);
@@ -360,7 +393,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (!input.semesterId || photo.semesterId !== input.semesterId) fail("照片学期不匹配");
         if (photo.recordId) {
           const record = (await get("records", photo.recordId))!;
-          if (member().data.role === "member" && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
+          if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
         } else if (photo.memberId !== member().id) fail("不可查看他人未提交照片", "FORBIDDEN");
         storageIds.push(String(photo.data.storageId));
       }
@@ -584,7 +617,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (!m.data.active || !m.data.classId || course.classIds.includes(String(m.data.classId))) fail("成员不能听本人班级且必须有效");
       if (used.has(who)) fail("每人每周至多一次，已完成任务也计入");
       const av = (await page("availability", { eq: { semesterId: semester.id, week, memberId: who }, limit: 1 })).items[0];
-      if (!av || !Array.isArray(av.data.slots) || !slotsFor(course).every(slot => (av.data.slots as string[]).includes(slot)) || m.data.role !== "member" && !av.data.optedIn) fail("成员未申报完整可用时段或未自愿参加");
+      if (!av || !Array.isArray(av.data.slots) || !slotsFor(course).every(slot => (av.data.slots as string[]).includes(slot)) || !participatesByDefault(m.data.role) && !av.data.optedIn) fail("成员未申报完整可用时段或未自愿参加");
       if (occurrence.data.status !== "active" || occurrence.semesterId !== semester.id || occurrence.week !== week) fail("上课实例已失效或周次不匹配");
       used.add(who); return m;
     };
@@ -764,7 +797,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       return commit();
     }
     if (["planGenerate", "taskAdjust", "planConfirm", "planSkip"].includes(type)) {
-      if (type === "planSkip") admin(); else manager();
+      if (type === "planSkip") admin(); else if (type === "planGenerate") coordinator(); else manager();
       if (type === "planConfirm") {
         const plan = (await get("plans", text(p.id, "草稿标识")))!; expected(plan);
         if (plan.semesterId !== semester.id || plan.data.status !== "draft") fail("草稿不存在或已失效");

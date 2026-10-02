@@ -1,3 +1,4 @@
+import { participatesByDefault } from "./capabilities";
 import { AppState, Course, Plan, Task } from "./types";
 import { slotsFor } from "./calendar";
 
@@ -24,7 +25,7 @@ export function eligible(
     !!member.classId &&
     !!av &&
     !course.classIds.includes(member.classId) &&
-    (member.role === "member" || av.optedIn) &&
+    (participatesByDefault(member.role) || av.optedIn) &&
     slotsFor(course).every((slot) => av.slots.includes(slot))
   );
 }

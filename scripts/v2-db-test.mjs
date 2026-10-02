@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 // Disposable local Docker database only. No connection string or cloud credential accepted.
 const pagesOnly = process.argv.includes('--pages');
+const officer = process.argv.includes('--officer');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const container = 'xuedu-v2-test-' + process.pid;
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] });
@@ -20,7 +21,9 @@ try {
   execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: sql, stdio: ['pipe','ignore','inherit'] });
   execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/003-v2-resources.sql')), stdio:['pipe','ignore','inherit'] });
   execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/004-auto-approval.sql')), stdio:['pipe','ignore','inherit'] });
-  if (pagesOnly) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/006-page-bootstrap.sql')), stdio:['pipe','ignore','inherit'] });
+  if (officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/005-review-sandbox.sql')), stdio:['pipe','ignore','inherit'] });
+  if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/006-page-bootstrap.sql')), stdio:['pipe','ignore','inherit'] });
+  if (officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/007-information-officer.sql')), stdio:['pipe','ignore','inherit'] });
   const result = spawnSync(process.execPath, ['--import','tsx','--test',pagesOnly ? 'tests/v2-page-rpc.test.ts' : 'tests/v2-database-postgres.test.ts'], { cwd:root, env:{...process.env,XUEDU_LOCAL_PG_CONTAINER:container},stdio:'inherit' });
   process.exitCode = result.status === 0 ? 0 : 1;
 } catch (e) { console.error('Local PostgreSQL test failed:', e.message); process.exitCode=1; }

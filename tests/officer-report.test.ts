@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { summarizeEntities } from '../server/v2/summary-report';
+import { summarySheets,summaryGradeStats } from '../miniprogram/domain/summary-xlsx';
+import { linkedCharts,cellValue } from '../miniprogram/domain/report-charts';
+import { Entity } from '../miniprogram/domain/v2/protocol';
+const entity=(id:string,data:Record<string,unknown>):Entity=>({id,data,epoch:'e',version:1});
+test('summary counts repeated classes and mixed-grade groups once, excludes missing and zero denominators',()=>{
+ const semester=entity('s',{name:'合成学期',edition:'合成届次',grades:['25','26']});
+ const record=(id:string,grade:string[],actual:number,expected:number,late:number)=>entity(id,{classes:grade.map((g,i)=>({id:g+'-'+i,grade:g})),classLabel:grade.join('/'),metrics:{expected,actual,late,early:0,sleep:0,phone:0,talk:0,other:0},photos:['secret-photo'],memberName:'secret-member'});
+ const summary=summarizeEntities(semester,2,[record('a',['25'],20,40,0),record('b',['25'],30,30,3),record('c',['25'],0,0,-1),record('d',['25'],5,-1,1),record('combined',['25','26'],40,50,2)],false);
+ const row=summary.rows.find(r=>r.grade==='25')!;assert.equal(row.count,4);assert.equal(row.expected,70);assert.equal(row.actual,50);assert.equal(row.late,4);
+ assert.equal(summaryGradeStats(summary).find(r=>r.grade==='25')!.rate,50/70);
+ assert.equal(summaryGradeStats(summary).find(r=>r.grade==='26')!.count,0);
+ assert.equal(summary.rows.find(r=>r.grade==='25/26')!.count,1);
+ assert.doesNotMatch(JSON.stringify(summary),/secret-|photos|memberName/);
+ const sheets=summarySheets(summary),source=sheets[0],allLate=sheets.find(s=>s.name==='各班级迟到情况')!;
+ assert.equal(cellValue(source.rows[3][14]),50/70);
+ assert.equal(allLate.chartPercent,false);assert.equal(cellValue(allLate.rows[3][1]),4);
+ assert.match((allLate.rows[3][1] as any).formula,/INDEX/);
+ assert.match((allLate.rows[3][14] as any).formula,/COUNTIF/);
+});
+test('chart sorting preserves zero and ties, drops missing metrics, remains linked to source edits',()=>{
+ const source={name:'合成来源',rows:[['title'],['note'],['年级','班级','值'],['25','甲',0],['25','乙',-1],['26','丙',2],['25','丁',2]]};
+ const charts=linkedCharts(source,['25','26'],1,['C','C','C'],'C');
+ const all=charts[0];assert.deepEqual(all.rows.slice(3).map(r=>cellValue(r[0])),['丙','丁','甲','']);
+ assert.deepEqual(all.rows.slice(3).map(r=>cellValue(r[1])),[2,2,0,'']);
+ assert.match((all.rows[3][13] as any).formula,/'合成来源'!C4/);
+ const empty=summarySheets({semester:{name:'空周',edition:'合成',grades:['25']},week:1,skipped:true,rows:[]});assert.equal(empty[0].rows.length,3);
+});

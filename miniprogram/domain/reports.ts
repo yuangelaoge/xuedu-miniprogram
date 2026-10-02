@@ -1,3 +1,4 @@
+import { linkedCharts } from "./report-charts";
 import { AppState, Metrics, Observation } from "./types";
 import { classLabel } from "./scheduler";
 import { discipline, missingMetrics, ratio } from "./metrics";
@@ -50,11 +51,7 @@ export function gradeStats(state: AppState, week: number) {
     (s) => s.id === state.activeSemesterId,
   )!;
   return semester.grades.map((grade) => {
-    const records = weekRecords(state, week).filter((r) =>
-      r.course.classIds.some(
-        (id) => (r.classes || state.classes).find((c) => c.id === id)?.grade === grade,
-      ),
-    );
+    const records = weekRecords(state, week).filter((r) => Array.from(new Set(r.course.classIds.map(id=>(r.classes || state.classes).find(c=>c.id===id)?.grade || ""))).sort().join("/") === grade);
     const valid = records.filter(
       (r) => r.metrics.expected > 0 && r.metrics.actual >= 0,
     );
@@ -113,8 +110,8 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
     "最近更正时间",
   ];
   const raw: Cell[][] = [
-    [semester.name + " 第" + week + "周入班听课汇总表"],
-    ["-1 表示信息缺失；违纪暂按行为人次；缺失指标不进入图表；统计仅代表实际听课观测"],
+    [semester.edition + " " + semester.name + " 第" + week + "周入班听课汇总表"],
+    ["基本信息",null,null,null,"考勤信息",null,null,null,null,null,null,null,"上课状态",null,null,null,null,null,null,null,"其他"],
     headers,
   ];
   if (plan?.status === "skipped") raw.push(["本周已跳过", plan.reason || ""]);
@@ -188,7 +185,7 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
           d = discipline(m),
           calc = (n: number, den: number, a: string, b: string): Cell =>
             f(
-              "IF(OR(" +
+              "IF(OR(COUNT("+a+r+","+b+r+")<2," +
                 a +
                 r +
                 "<0," +
@@ -211,7 +208,7 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
           m.expected,
           m.actual,
           f(
-            "IF(OR(E" + r + "<0,F" + r + "<0),-1,E" + r + "-F" + r + ")",
+            "IF(OR(COUNT(E"+r+",F"+r+")<2,E" + r + "<0,F" + r + "<0),-1,E" + r + "-F" + r + ")",
             m.expected < 0 || m.actual < 0 ? -1 : m.expected - m.actual,
           ),
           calc(m.actual, m.expected, "F", "E"),
@@ -226,7 +223,7 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
           m.talk,
           calc(m.talk, m.actual, "Q", "F"),
           f(
-            "IF(OR(M" +
+            "IF(OR(COUNT(M"+r+",O"+r+",Q"+r+")<3,M" +
               r +
               "<0,O" +
               r +
@@ -253,74 +250,36 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
         ]);
       });
   }
-  const sheets: SheetData[] = [{ name: "原始数据", rows: raw, raw: true }];
-  const groups = [
-    { name: "各班级", records },
-    ...semester.grades.map((g) => ({
-      name: g + "级",
-      records: records.filter((r) =>
-        r.course.classIds.some(
-          (id) => state.classes.find((c) => c.id === id)?.grade === g,
-        ),
-      ),
-    })),
-  ];
-  groups.forEach((g, gi) => {
-    const specs = [
-      {
-        name: "出勤情况",
-        label: "出勤率",
-        value: (r: Observation) => ratio(r.metrics.actual, r.metrics.expected),
-      },
-      {
-        name: "违纪情况",
-        label: "违纪率（行为人次）",
-        value: (r: Observation) =>
-          ratio(discipline(r.metrics), r.metrics.actual),
-      },
-      {
-        name: gi === 0 ? "迟到人数" : "迟到情况",
-        label: gi === 0 ? "迟到人数" : "迟到率",
-        value: (r: Observation) =>
-          gi === 0
-            ? r.metrics.late < 0
-              ? null
-              : r.metrics.late
-            : ratio(r.metrics.late, r.metrics.actual),
-      },
-    ];
-    specs.forEach((spec) => {
-      const rows = g.records
-        .map((r) => ({
-          label: r.classLabel + " · " + r.course.name,
-          value: spec.value(r),
-        }))
-        .filter((x) => x.value !== null)
-        .sort(
-          (a, b) =>
-            (b.value as number) - (a.value as number) ||
-            a.label.localeCompare(b.label),
-        );
-      sheets.push({
-        name: g.name + spec.name,
-        chart: true,
-        rows: [
-          [g.name + spec.name],
-          [
-            "第" +
-              week +
-              "周 · 有效记录 " +
-              rows.length +
-              " / " +
-              g.records.length +
-              "；此页为导出时快照",
-          ],
-          ["听课班级 / 课程", spec.label],
-          ...rows.map((r) => [r.label, r.value] as Cell[]),
-        ],
-      });
-    });
+  // Spare editable rows allow local additions without fixed template class counts.
+  // Duplicate records remain separate observations; combined classes remain one row.
+  const sourceEnd=raw.length;
+  for(let i=0;i<20;i++) {
+    const r=raw.length+1;
+    raw.push(['','','','',-1,-1,f(`IF(OR(COUNT(E${r},F${r})<2,E${r}<0,F${r}<0),-1,E${r}-F${r})`,-1),
+      f(`IF(AND(COUNT(E${r},F${r})=2,E${r}>0,F${r}>=0),F${r}/E${r},"信息缺失")`,'信息缺失'),-1,
+      f(`IF(AND(COUNT(I${r},F${r})=2,I${r}>=0,F${r}>0),I${r}/F${r},"信息缺失")`,'信息缺失'),-1,
+      f(`IF(AND(COUNT(K${r},E${r})=2,K${r}>=0,E${r}>0),K${r}/E${r},"信息缺失")`,'信息缺失'),-1,
+      f(`IF(AND(COUNT(M${r},F${r})=2,M${r}>=0,F${r}>0),M${r}/F${r},"信息缺失")`,'信息缺失'),-1,
+      f(`IF(AND(COUNT(O${r},F${r})=2,O${r}>=0,F${r}>0),O${r}/F${r},"信息缺失")`,'信息缺失'),-1,
+      f(`IF(AND(COUNT(Q${r},F${r})=2,Q${r}>=0,F${r}>0),Q${r}/F${r},"信息缺失")`,'信息缺失'),
+      f(`IF(OR(COUNT(M${r},O${r},Q${r})<3,MIN(M${r},O${r},Q${r})<0),-1,SUM(M${r},O${r},Q${r}))`,-1),
+      f(`IF(AND(S${r}>=0,F${r}>0),S${r}/F${r},"信息缺失")`,'信息缺失'),'',-1,
+      f(`IF(AND(COUNT(V${r},F${r})=2,V${r}>=0,F${r}>0),V${r}/F${r},"信息缺失")`,'信息缺失'),'','','','未提交','']);
+  }
+  // Late count is also gated by submission, so an unsubmitted row cannot become a zero observation.
+  raw[2].push('统计标签','统计迟到人数');
+  raw.slice(3).forEach((row,i)=>{
+    const r=i+4,submitted=row[26]==='已提交';
+    for(const ci of [7,9,11,13,15,17,19,22]) {
+      const cell=row[ci]; if(cell && typeof cell==='object') row[ci]=f(`IF(AA${r}="已提交",${cell.formula},"信息缺失")`,submitted?cell.value:'信息缺失');
+    }
+    row[28]=f(`IF(B${r}="","",B${r}&" · "&C${r}&" · 第"&(ROW()-3)&"次观测")`,row[1]?String(row[1])+' · '+String(row[2]||'')+' · 第'+(i+1)+'次观测':'');
+    row[29]=f(`IF(AND(AA${r}="已提交",ISNUMBER(I${r}),I${r}>=0),I${r},"")`,submitted?Number(row[8])>=0?Number(row[8]):'':'');
   });
+  const source:SheetData={name:'原始数据',rows:raw,raw:true,groupHeaders:true};
+  const grades=Array.from(new Set([...semester.grades,...raw.slice(3,sourceEnd).map(r=>String(r[0]||''))])).filter(Boolean);
+  const sheets=[source,...linkedCharts(source,grades,week,['H','T','J'],'AD','A','AC')];
+
   return sheets;
 }
 export function exportXlsx(state: AppState, week: number): ArrayBuffer {

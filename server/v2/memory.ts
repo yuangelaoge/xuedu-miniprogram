@@ -20,7 +20,7 @@ export function validateCommit(c: Commit) {
   for (const ch of c.changes) {
     if (!RESOURCES.includes(ch.resource) || (ch.resource === "requests" && (!c.maintenanceId || ch.value !== null)) || !(ch.resource === "requests" ? typeof ch.id === "string" && ch.id.length <= 1024 : token(ch.id)) || !Number.isSafeInteger(ch.expectedVersion) || ch.expectedVersion < 0 || seen.has(ch.resource + ":" + ch.id)) fail("INVALID_CHANGE");
     seen.add(ch.resource + ":" + ch.id);
-    if (ch.resource === "members" && ch.value && (typeof ch.value.data.active !== "boolean" || !["admin", "leader", "member"].includes(String(ch.value.data.role)))) fail("INVALID_ENTITY");
+    if (ch.resource === "members" && ch.value && (typeof ch.value.data.active !== "boolean" || !["admin", "leader", "member", "officer"].includes(String(ch.value.data.role)))) fail("INVALID_ENTITY");
     if (ch.value && (ch.value.id !== ch.id || !token(ch.value.epoch) || JSON.stringify(ch.value.data).length > 131072 || ch.value.data === null || Array.isArray(ch.value.data))) fail("INVALID_ENTITY");
   }
 }

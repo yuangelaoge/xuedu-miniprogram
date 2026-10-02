@@ -25,7 +25,7 @@ if (cloudEnabled()) registerCloudPage("home"); else Page({
     if (!member) return;
     if (run(() => changeDemoActor(member.id), "体验身份已切换")) {
       const actor = readState().members.find((m) => m.id === member.id)!;
-      wx.reLaunch({ url: actor.role === "member"
+      wx.reLaunch({ url: !["admin", "leader"].includes(actor.role)
         ? "/pages/index/index"
         : "/pages/manage/manage?tab=members" });
     }

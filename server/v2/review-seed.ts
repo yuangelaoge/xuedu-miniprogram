@@ -5,7 +5,7 @@ export interface ReviewSnapshot {
   rows: Partial<Record<Resource, Entity[]>>;
 }
 
-export const REVIEW_ROLES = ["admin", "leader", "member", "applicant"] as const;
+export const REVIEW_ROLES = ["admin", "leader", "member", "officer", "applicant"] as const;
 export type ReviewRole = typeof REVIEW_ROLES[number];
 export const reviewIdentity = (digest: string, role: ReviewRole) => `review:${digest}:${role}`;
 
@@ -24,6 +24,7 @@ export function makeReviewSeed(digest: string, uuid: string, now: number, maxExe
   const admin = entity("review-admin", { name: "样例管理员", studentNo: "REVIEW-A", classId: classA.id, role: "admin", active: true }, { studentNo: "REVIEW-A" });
   const leader = entity("review-leader", { name: "样例组部长", studentNo: "REVIEW-L", classId: classB.id, role: "leader", active: true }, { studentNo: "REVIEW-L" });
   const member = entity("review-member", { name: "样例成员", studentNo: "REVIEW-M", classId: classA.id, role: "member", active: true }, { studentNo: "REVIEW-M" });
+  const officer = entity("review-officer", { name:"样例信息部干事",studentNo:"REVIEW-O",classId:classA.id,role:"officer",active:true }, {studentNo:"REVIEW-O"});
   const courseA = { id: "review-course-a", name: "样例高等数学", teacher: "样例教师甲", nature: "必修", classIds: [classA.id], weekday: 1, start: 1, end: 2, classroom: "样例楼101", weeks: [1,2,3,4], expected: 30 };
   const courseB = { ...courseA, id: "review-course-b", name: "样例程序设计", teacher: "样例教师乙", classIds: [classB.id], start: 3, end: 4, classroom: "样例楼202", expected: 32 };
   const classInfo = (klass: Entity) => ({ id: klass.id, ...klass.data });
@@ -37,8 +38,8 @@ export function makeReviewSeed(digest: string, uuid: string, now: number, maxExe
   const recordData = { memberName: leader.data.name, classLabel: classA.data.name, classes: occA1.data.classes, course: courseA, date: occA1.date, metrics: { expected: 30, actual: 28, late: 1, early: 0, sleep: 0, phone: 1, talk: 0, other: 0 }, absentNames: "样例同学甲", leaveNames: "无", evaluation: "样例课堂秩序良好", feedback: "审核演示资料", suggestion: "", otherDescription: "", photos: [samplePhoto.id], firstSubmittedAt: new Date(now).toISOString(), revision: 1 };
   const record = entity("review-record", recordData, { semesterId, week: 1, memberId: leader.id, taskId: leaderTask.id });
   const rows: ReviewSnapshot["rows"] = {
-    classes: [classA, classB], members: [admin, leader, member],
-    bindings: (["admin", "leader", "member"] as const).map((role, index) => entity(`review-binding-${role}`, {}, { identityKey: reviewIdentity(digest, role), memberId: [admin, leader, member][index].id })),
+    classes: [classA, classB], members: [admin, leader, member, officer],
+    bindings: (["admin", "leader", "member", "officer"] as const).map((role, index) => entity(`review-binding-${role}`, {}, { identityKey: reviewIdentity(digest, role), memberId: [admin, leader, member, officer][index].id })),
     semesters: [entity(semesterId, { name: "审核样例学期", startDate: monday, weeks: 4, days: 5, periods: 14, grades: ["26"], edition: "审核样例", status: "active" })],
     semester_classes: [entity("review-link-a", {}, { semesterId, parentId: classA.id }), entity("review-link-b", {}, { semesterId, parentId: classB.id })],
     courses: [entity(courseA.id, { name: courseA.name, course: courseA, active: true }, { semesterId }), entity(courseB.id, { name: courseB.name, course: courseB, active: true }, { semesterId })],

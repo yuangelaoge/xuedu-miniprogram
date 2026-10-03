@@ -98,6 +98,23 @@ pgtest('page RPC: pagination remains 50 rows and does not recompute metadata on 
  assert.equal(new Set([...first.list.items,...next.list.items].map((r:Entity)=>r.id)).size,57);
  assert.equal((await call('records',{week:1},'wx-member')).data.page.summary.submitted,56);
 });
+pgtest('page RPC: officer sees every record but only own availability and no management metadata',async()=>{
+ const first=(await call('records',{week:1},'wx-officer')).data.page;
+ assert.equal(first.list.items.length,50);assert.equal(first.summary.submitted,57);assert.equal(first.summary.total,58);
+ const next=(await call('records',{week:1,more:true,cursor:first.list.cursor,selectionOwner:'officer'},'wx-officer')).data.page;
+ assert.equal(next.list.items.length,7);assert.equal(next.list.cursor,'');
+ assert.equal(new Set([...first.list.items,...next.list.items].map((r:Entity)=>r.id)).size,57);
+ assert.doesNotMatch(JSON.stringify([first,next]),/slots|identityKey/);
+ const other=(await call('availability',{week:2,memberId:'member'},'wx-officer')).data.page;assert.equal(other.weekData.availability,null);
+ seed('availability','officer-av',{slots:['3:3'],note:'own-only'},{semesterId:'s',week:2,memberId:'officer'});
+ const own=(await call('availability',{week:2,memberId:'member'},'wx-officer')).data.page;assert.deepEqual(own.weekData.availability.data.slots,['3:3']);
+ const profile=(await call('profile',{},'wx-officer')).data.page;assert.equal(profile.profile.pendingCount,0);
+ raw("UPDATE xuedu_v2.members SET data=data||'{\"role\":\"member\"}' WHERE id='officer'");
+ assert.equal((await call('records',{week:1},'wx-officer')).data.page.list.items.length,0);
+ raw("UPDATE xuedu_v2.members SET data=data||'{\"role\":\"officer\",\"active\":false}' WHERE id='officer'");
+ assert.equal((await call('records',{week:1},'wx-officer')).data.page,null);
+ raw("UPDATE xuedu_v2.members SET data=data||'{\"active\":true}' WHERE id='officer'");
+});
 pgtest('page RPC: rejects malformed selections, stale pagination and mixed identities',async()=>{
  for(const extra of [{week:0},{week:61},{week:1.5},{week:'1'},{cursor:123},{semesterId:[]},{more:'yes'},{more:true,selectionOwner:'other'}]) {
   await assert.rejects(call('records',extra),/INVALID_QUERY|IDENTITY_CHANGED/);

@@ -10,7 +10,7 @@ export function weekRecords(state: AppState, week: number): Observation[] {
   );
 }
 export function exportTxt(state: AppState, week: number): string {
-  requireRole(state, ["admin", "leader"]);
+  requireRole(state, ["admin"]);
   const semester = state.semesters.find(
       (s) => s.id === state.activeSemesterId,
     )!,
@@ -71,7 +71,7 @@ function f(formula: string, value: string | number): Cell {
   return { formula, value };
 }
 export function reportSheets(state: AppState, week: number): SheetData[] {
-  requireRole(state, ["admin", "leader"]);
+  requireRole(state, ["admin", "officer"]);
   const semester = state.semesters.find(
       (s) => s.id === state.activeSemesterId,
     )!,

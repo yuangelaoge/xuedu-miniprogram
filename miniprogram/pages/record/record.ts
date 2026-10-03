@@ -1,3 +1,4 @@
+import { canViewAllRecords } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, run } from "../../services/store";
@@ -20,7 +21,7 @@ if (cloudEnabled()) registerCloudPage("record"); else memberPage({
       const { state, user } = context();
       const record = state.records.find((r) => r.id === query.id);
       if (!record) throw new Error("记录不存在");
-      if (!["admin", "leader"].includes(user.role) && record.memberId !== user.id)
+      if (!canViewAllRecords(user.role) && record.memberId !== user.id)
         throw new Error("体验版暂仅允许查看自己的明细与照片");
       this.setData({
         record,

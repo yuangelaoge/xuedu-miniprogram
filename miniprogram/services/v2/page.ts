@@ -1,6 +1,6 @@
-import { isManager, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, canAdjustTasks, canExportNames, participatesByDefault } from "../../domain/capabilities";
+import { isManager, canViewAllRecords, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, canAdjustTasks, canExportNames, participatesByDefault } from "../../domain/capabilities";
 import { SummaryReport } from "../../domain/v2/summary-report";
-import { exportSummaryXlsx, summaryGradeStats } from "../../domain/summary-xlsx";
+import { summaryGradeStats } from "../../domain/summary-xlsx";
 import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protocol";
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
@@ -106,7 +106,7 @@ export function registerCloudPage(view: View): void {
       recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
       eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
       cloudMode: true, reviewMode: reviewActive(), title: titles[view], view, busy: false, refreshing: false, loadingInitial: ["home", "schedule", "records", "profile"].includes(view), hasLoaded: false, error: "", status: "", canInitialize: false, removed: false,
-      admin: false, manager: false, coordinator:false, canGenerate:false, canConfirm:false, canExportExcel:false, canAdjust:false, canExportNames:false, officer:false, statusRows:[] as {id:string;name:string;className:string;availability:string;record:string;assigned:number;submitted:number}[], statusCursor:"", statusVersion:0, statusLoaded:false, memberName: "", memberId: "", role: "", maintenance: "",
+      admin: false, manager: false, canViewRecords:false, coordinator:false, canGenerate:false, canConfirm:false, canExportExcel:false, canAdjust:false, canExportNames:false, officer:false, statusRows:[] as {id:string;name:string;className:string;availability:string;record:string;assigned:number;submitted:number}[], statusCursor:"", statusVersion:0, statusLoaded:false, memberName: "", memberId: "", role: "", maintenance: "",
       autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
       selectedApplications: [] as string[], section: view === "manage" ? "members" : view === "records" ? "records" : "", rows: [] as Row[], cursor: "",
       sections: [{ id: "members", label: "成员" }, { id: "applications", label: "入组申请" }, { id: "autoApproved", label: "自动通过人员" }, { id: "rebindings", label: "换绑申请" }, { id: "classes", label: "班级" }, { id: "semesters", label: "学期" }, { id: "courses", label: "课表" }, { id: "audit", label: "操作记录" }],
@@ -143,8 +143,8 @@ export function registerCloudPage(view: View): void {
         const home = view === "home" ? boot.home : undefined;
         const admin = member?.data.role === "admin", manager = isManager(member?.data.role);
         if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
-        if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
-        this.setData({coordinator:canCoordinate(member?.data.role),canAdjust:canAdjustTasks(member?.data.role),canExportNames:canExportNames(member?.data.role),canGenerate:canGeneratePlan(member?.data.role),canConfirm:canConfirmPlan(member?.data.role),canExportExcel:canExportFullXlsx(member?.data.role) || member?.data.role === "officer",officer:member?.data.role === "officer",statusRows:[],statusCursor:"",statusLoaded:false});
+        if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:canViewAllRecords(member?.data.role) ? "all" : "mine"});
+        this.setData({coordinator:canCoordinate(member?.data.role),canAdjust:canAdjustTasks(member?.data.role),canExportNames:canExportNames(member?.data.role),canGenerate:canGeneratePlan(member?.data.role),canConfirm:canConfirmPlan(member?.data.role),canExportExcel:canExportFullXlsx(member?.data.role),canViewRecords:canViewAllRecords(member?.data.role),officer:member?.data.role === "officer",statusRows:[],statusCursor:"",statusLoaded:false});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
         this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : member?.data.role === "officer" ? "信息部干事" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
@@ -250,7 +250,7 @@ export function registerCloudPage(view: View): void {
         this.filterRows();
       } catch (e) {
         const message = e instanceof Error ? e.message : "连接失败";
-        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,coordinator:false,canGenerate:false,canConfirm:false,canExportExcel:false,canAdjust:false,canExportNames:false,officer:false,statusRows:[],statusLoaded:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
+        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,coordinator:false,canGenerate:false,canConfirm:false,canExportExcel:false,canAdjust:false,canExportNames:false,officer:false,statusRows:[],statusLoaded:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,canViewRecords:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
         // A failed refresh cannot authorize actions from a previously rendered identity.
         this.setData({ error: message, canGenerate:false, canConfirm:false, canExportExcel:false, canAdjust:false, canExportNames:false });
       }
@@ -706,18 +706,18 @@ export function registerCloudPage(view: View): void {
       const kind=e.currentTarget.dataset.kind, xlsx=kind === "xlsx";
       if (!["txt", "xlsx", "copy"].includes(kind)) return;
       const role=currentBoot().member?.data.role;
-      if (xlsx ? !(canExportFullXlsx(role) || role === "officer") : !canExportNames(role)) return;
+      if (xlsx ? !canExportFullXlsx(role) : !canExportNames(role)) return;
       this.setData({busy:true,filePath:"",filename:""});
       const semesterId=this.data.semesterId,week=this.data.week;
       try {
-        const r = await query<{ state: AppState; summary:SummaryReport; version: number }>(this.data.officer ? "summaryReport" : xlsx ? "excelReport" : "namesReport", semesterId, { week });
-        const content=this.data.officer ? exportSummaryXlsx(r.data.summary) : xlsx ? exportXlsx(r.data.state,week) : exportTxt(r.data.state,week);
-        await query("reportCheck", semesterId, {week,version:r.data.version,...(!this.data.officer ? {format:xlsx ? "xlsx" : "txt"} : {})});
+        const r = await query<{ state: AppState; summary:SummaryReport; version: number }>(xlsx ? "excelReport" : "namesReport", semesterId, { week });
+        const content=xlsx ? exportXlsx(r.data.state,week) : exportTxt(r.data.state,week);
+        await query("reportCheck", semesterId, {week,version:r.data.version,format:xlsx ? "xlsx" : "txt"});
         if(kind === "copy") { await wx.setClipboardData({data:content as string}); return; }
         const filename=semesterId + "-第" + week + "周-" + Date.now() + (xlsx ? "-听课汇总.xlsx" : "-请假旷课名单.txt");
         const path=await new Promise<string>(resolve=>saveExport(filename,xlsx ? content : "\ufeff" + content,resolve,()=>resolve("")));
         if(!path)return;
-        await query("reportCheck",semesterId,{week,version:r.data.version,...(!this.data.officer ? {format:xlsx ? "xlsx" : "txt"} : {})});
+        await query("reportCheck",semesterId,{week,version:r.data.version,format:xlsx ? "xlsx" : "txt"});
         this.setData({filename,filePath:path,fileOwner:currentBoot().workspace.epoch + ":" + this.data.memberId});
         wx.showToast({title:"文件已保存",icon:"success"});
       } catch (e) { displayError(e); }finally{this.setData({busy:false});}

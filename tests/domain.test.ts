@@ -337,6 +337,16 @@ test("XLSX 包含动态工作表、公式、中文和真实图表关系", () => 
   assert.match(files.get("xl/worksheets/sheet1.xml")!, /<f>IF\(OR\(COUNT\(E/);
   assert.match(files.get("xl/worksheets/sheet1.xml")!, /未提交/);
   assert.ok([...files.keys()].some((k) => k.startsWith("xl/charts/")));
+  // Keep business columns visible and hide only the chart calculation helpers.
+  assert.doesNotMatch(files.get("xl/worksheets/sheet1.xml")!, /<col [^>]*hidden="1"/);
+  for (let id = 2; id <= 13; id++) {
+    const sheet = files.get(`xl/worksheets/sheet${id}.xml`)!;
+    const hidden = [...sheet.matchAll(/<col min="(\d+)"[^>]*hidden="1"/g)].map(m => Number(m[1]));
+    assert.deepEqual(hidden, [13, 14, 15]);
+    assert.match(sheet, /INDEX\(\$M\$4:/);
+    assert.match(sheet, /INDEX\(\$N\$4:/);
+    assert.match(sheet, /<drawing r:id="drawing"/);
+  }
 });
 test("XLSX 字符串以 inlineStr 输出，名单中的公式文本不执行", () => {
   const s = state(),

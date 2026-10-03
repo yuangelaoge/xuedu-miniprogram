@@ -7,6 +7,8 @@ export interface SheetData {
   groupHeaders?: boolean;
   chartPercent?: boolean;
   percentColumns?: number[];
+  /** Zero-based columns retained for formulas but hidden in the exported workbook. */
+  hiddenColumns?: number[];
 }
 export type Cell =
   string | number | null | { formula: string; value: string | number };
@@ -184,6 +186,10 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
     const id = i + 1,
       chart = !!s.chart && s.rows.length > 3,
       last = col(Math.max(...s.rows.map((r) => r.length)) - 1);
+    const columns = Array.from({ length: Math.max(27, ...s.rows.map(r => r.length)) }, (_, ci) => {
+      const width = ci === 0 ? (s.raw ? 9 : 30) : ci === 1 ? 24 : ci < 4 ? 22 : ci < 23 ? 12 : 34;
+      return `<col min="${ci + 1}" max="${ci + 1}" width="${width}" customWidth="1"${s.hiddenColumns?.includes(ci) ? ' hidden="1"' : ''}/>`;
+    }).join("");
     const rows = s.rows
       .map(
         (row, ri) =>
@@ -244,9 +250,9 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
         '"><dimension ref="A1:' +
         last +
         s.rows.length +
-        '"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="24"/><cols><col min="1" max="1" width="' +
-        (s.raw ? 9 : 30) +
-        '" customWidth="1"/><col min="2" max="2" width="24" customWidth="1"/><col min="3" max="4" width="22" customWidth="1"/><col min="5" max="23" width="12" customWidth="1"/><col min="24" max="27" width="34" customWidth="1"/></cols><sheetData>' +
+        '"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="3" topLeftCell="A4" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="24"/><cols>' +
+        columns +
+        '</cols><sheetData>' +
         rows +
         '</sheetData><autoFilter ref="A3:' +
         last +

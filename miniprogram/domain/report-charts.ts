@@ -29,6 +29,6 @@ export function linkedCharts(source:SheetData,grades:string[],week:number,metric
         formula(`IF(ISNUMBER(N${r}),COUNTIF($N$4:$N$${end},">"&N${r})+COUNTIF($N$4:N${r},N${r}),"")`,rank),
       ]);
     }
-    return {name:group.name+name,chart:true,chartPercent:pct,rows};
+    return {name:group.name+name,chart:true,chartPercent:pct,hiddenColumns:[12,13,14],rows};
   }));
 }

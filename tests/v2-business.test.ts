@@ -311,21 +311,24 @@ test('officer can generate draft, cannot confirm, and is eligible without manage
  assert.ok(changed.some(e=>e.memberId==='officer'&&e.data.status==='draft'));
 });
 
-test('leader cannot generate, confirm or request Excel; retains reports, photos and adjustment drafts',async()=>{
+test('leader cannot generate, adjust, confirm or export files; retains records, photos and statistics',async()=>{
  const f=fixture(),record=await submit(f);
  await f.call('command',{type:'roleChange',id:'member',role:'leader',reason:'合成权限测试',confirmed:true},{expectedVersion:1});
  const before=(await f.repository.workspace()).version;
- for(const type of ['planGenerate','planConfirm']) await assert.rejects(f.call('command',{type,week:2,id:'forged',confirmed:true},{who:'om',expectedVersion:0}),/无权|仅管理员/);
- for(const payload of [{kind:'excelReport',week:2},{kind:'report',week:2,format:'xlsx'},{kind:'reportCheck',format:'xlsx',version:before}]) await assert.rejects(f.call('query',payload,{who:'om'}),/仅管理员/);
+ for(const type of ['planGenerate','planConfirm','taskAdjust']) await assert.rejects(f.call('command',{type,week:2,id:'forged',confirmed:true},{who:'om',expectedVersion:0}),/无权|仅管理员/);
+ for(const payload of [{kind:'excelReport',week:2},{kind:'report',week:2,format:'xlsx'},{kind:'reportCheck',format:'xlsx',version:before},{kind:'namesReport',week:2},{kind:'report',week:2,format:'txt'},{kind:'report',week:2,format:'copy'},{kind:'reportCheck',format:'txt',version:before}]) await assert.rejects(f.call('query',payload,{who:'om'}),/仅管理员/);
  assert.equal((await f.repository.workspace()).version,before);
  assert.equal((await f.call('query',{kind:'report',week:2},{who:'om'})).data.records.length,1);
  assert.ok((await f.call('query',{kind:'record',id:record.id},{who:'om'})).data.record);
  await f.call('photoUrls',{recordId:record.id},{who:'om'});
  await f.call('query',{kind:'reportCheck',version:before},{who:'om'});
  assert.ok((await f.call('query',{kind:'excelReport',week:2})).data.state);
- // Adjustment drafts remain available, but only admin can make even a cancellation effective.
+ assert.ok((await f.call('query',{kind:'namesReport',week:2})).data.state);
+ // Neither leader nor officer may create adjustment drafts. Admin retains cancellation.
  const fresh=fixture();await fresh.call('command',{type:'roleChange',id:'member',role:'leader',reason:'合成权限测试',confirmed:true},{expectedVersion:1});
- const adjusted=await fresh.call('command',{type:'taskAdjust',week:2,reason:'合成取消',changes:[{taskId:'t1',cancel:true}]},{who:'om',expectedVersion:0});
+ for(const changes of [[{taskId:'t1',cancel:true}],[{taskId:'t1',memberId:'member',occurrenceId:'course1:2026-09-14'}],[{memberId:'member',occurrenceId:'course1:2026-09-14'}]]) await assert.rejects(fresh.call('command',{type:'taskAdjust',week:2,reason:'越权调整',changes},{who:'om',expectedVersion:0}),/仅管理员/);
+ assert.equal((await fresh.repository.query('plans',{})).items.length,0);
+ const adjusted=await fresh.call('command',{type:'taskAdjust',week:2,reason:'合成取消',changes:[{taskId:'t1',cancel:true}]},{expectedVersion:0});
  const draft=(adjusted.data.changed as Entity[]).find(e=>e.data.status==='draft'&&!e.memberId)!;
  assert.equal((await fresh.repository.get('tasks','t1'))!.data.status,'confirmed');
  await assert.rejects(fresh.call('command',{type:'planConfirm',id:draft.id},{who:'om',expectedVersion:1}),/仅管理员/);

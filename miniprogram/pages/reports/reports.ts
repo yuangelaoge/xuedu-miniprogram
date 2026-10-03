@@ -1,4 +1,4 @@
-import { canExportFullXlsx } from "../../domain/capabilities";
+import { canExportFullXlsx, canExportNames } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, published, run } from "../../services/store";
@@ -19,7 +19,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     maxWeek: 20,
     dates: "",
     manager: false,
-    canExportExcel:false,
+    canExportExcel:false, canExportNames:false,
     tab: "mine",
     records: [] as {
       id: string;
@@ -69,7 +69,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
       week,
       maxWeek: semester.weeks,
       dates: weekRange(semester, week),
-      manager, canExportExcel:canExportFullXlsx(user.role),
+      manager, canExportExcel:canExportFullXlsx(user.role), canExportNames:canExportNames(user.role),
       records: records
         .filter((r) => this.data.tab !== "mine" || r.memberId === user.id)
         .map((r) => ({
@@ -110,13 +110,15 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     });
   },
   copy() {
+    if (!canExportNames(context().user.role)) return;
     run(() =>
       wx.setClipboardData({ data: exportTxt(context().state, this.data.week) }),
     );
   },
   export(e: UiEvent) {
     if (this.data.busy || !["txt", "xlsx"].includes(e.currentTarget.dataset.kind)) return;
-    if (e.currentTarget.dataset.kind === "xlsx" && !canExportFullXlsx(context().user.role)) return;
+    const role=context().user.role;
+    if (e.currentTarget.dataset.kind === "xlsx" ? !canExportFullXlsx(role) : !canExportNames(role)) return;
     run(() => {
       const { state, semester } = context(),
         kind = e.currentTarget.dataset.kind,
@@ -138,6 +140,6 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     });
   },
   open() {
-    if (this.data.filePath) openExport(this.data.filePath);
+    if ((canExportFullXlsx(context().user.role) || canExportNames(context().user.role)) && this.data.filePath) openExport(this.data.filePath);
   },
 });

@@ -1,4 +1,4 @@
-import { isManager, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, participatesByDefault } from "../../domain/capabilities";
+import { isManager, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, canAdjustTasks, canExportNames, participatesByDefault } from "../../domain/capabilities";
 import { SummaryReport } from "../../domain/v2/summary-report";
 import { exportSummaryXlsx, summaryGradeStats } from "../../domain/summary-xlsx";
 import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protocol";
@@ -106,7 +106,7 @@ export function registerCloudPage(view: View): void {
       recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
       eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
       cloudMode: true, reviewMode: reviewActive(), title: titles[view], view, busy: false, refreshing: false, loadingInitial: ["home", "schedule", "records", "profile"].includes(view), hasLoaded: false, error: "", status: "", canInitialize: false, removed: false,
-      admin: false, manager: false, coordinator:false, canGenerate:false, canConfirm:false, canExportExcel:false, officer:false, statusRows:[] as {id:string;name:string;className:string;availability:string;record:string;assigned:number;submitted:number}[], statusCursor:"", statusVersion:0, statusLoaded:false, memberName: "", memberId: "", role: "", maintenance: "",
+      admin: false, manager: false, coordinator:false, canGenerate:false, canConfirm:false, canExportExcel:false, canAdjust:false, canExportNames:false, officer:false, statusRows:[] as {id:string;name:string;className:string;availability:string;record:string;assigned:number;submitted:number}[], statusCursor:"", statusVersion:0, statusLoaded:false, memberName: "", memberId: "", role: "", maintenance: "",
       autoApprovalActive: false, autoApprovalExpired: false, autoApprovalDeadline: "", autoApprovalUpdated: "", autoApprovalVersion: 0,
       selectedApplications: [] as string[], section: view === "manage" ? "members" : view === "records" ? "records" : "", rows: [] as Row[], cursor: "",
       sections: [{ id: "members", label: "成员" }, { id: "applications", label: "入组申请" }, { id: "autoApproved", label: "自动通过人员" }, { id: "rebindings", label: "换绑申请" }, { id: "classes", label: "班级" }, { id: "semesters", label: "学期" }, { id: "courses", label: "课表" }, { id: "audit", label: "操作记录" }],
@@ -144,7 +144,7 @@ export function registerCloudPage(view: View): void {
         const admin = member?.data.role === "admin", manager = isManager(member?.data.role);
         if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:manager ? "all" : "mine"});
-        this.setData({coordinator:canCoordinate(member?.data.role),canGenerate:canGeneratePlan(member?.data.role),canConfirm:canConfirmPlan(member?.data.role),canExportExcel:canExportFullXlsx(member?.data.role) || member?.data.role === "officer",officer:member?.data.role === "officer",statusRows:[],statusCursor:"",statusLoaded:false});
+        this.setData({coordinator:canCoordinate(member?.data.role),canAdjust:canAdjustTasks(member?.data.role),canExportNames:canExportNames(member?.data.role),canGenerate:canGeneratePlan(member?.data.role),canConfirm:canConfirmPlan(member?.data.role),canExportExcel:canExportFullXlsx(member?.data.role) || member?.data.role === "officer",officer:member?.data.role === "officer",statusRows:[],statusCursor:"",statusLoaded:false});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
         this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : member?.data.role === "officer" ? "信息部干事" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
@@ -250,8 +250,9 @@ export function registerCloudPage(view: View): void {
         this.filterRows();
       } catch (e) {
         const message = e instanceof Error ? e.message : "连接失败";
-        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,coordinator:false,canGenerate:false,canConfirm:false,canExportExcel:false,officer:false,statusRows:[],statusLoaded:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
-        this.setData({ error: message });
+        if (/权限|身份|登录|未授权|无权|资格|未审核|AUTH|PERMISSION|DENIED|FORBIDDEN|UNAUTHORIZED/i.test(message)) this.setData({dirty:false,coordinator:false,canGenerate:false,canConfirm:false,canExportExcel:false,canAdjust:false,canExportNames:false,officer:false,statusRows:[],statusLoaded:false,memberId:"",memberName:"",studentNo:"",className:"",initial:"",role:"",roleLabel:"",admin:false,manager:false,semesters:[],semesterOptions:[],semesterId:"",rows:[],visibleRows:[],tasks:[],visibleTasks:[],homeTasks:[],record:null,recordFields:[],versions:[],photoUrls:[],formPhotos:[],photoIds:[],fields:[],formType:"",stats:[],statsLoaded:false,hasLoaded:false});
+        // A failed refresh cannot authorize actions from a previously rendered identity.
+        this.setData({ error: message, canGenerate:false, canConfirm:false, canExportExcel:false, canAdjust:false, canExportNames:false });
       }
       finally {
         this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error });
@@ -459,6 +460,7 @@ export function registerCloudPage(view: View): void {
     cancelForm() { if(this.data.busy)return; this.setData({ formType: "", photoIds: [], formPhotos: [],uploadingPhoto:"",recordContext:null }); },
     async saveForm() {
       if (this.data.busy) return;
+      if (this.data.formType === "taskAdjust" && (this.data.error || !this.data.canAdjust || !canAdjustTasks(currentBoot().member?.data.role))) return;
       let admitted = false;
       this.setData({ busy: true });
       try {
@@ -570,14 +572,15 @@ export function registerCloudPage(view: View): void {
         await this.load();
       } catch (e) { displayError(e); }
     },
-    async generate() { if (!canGeneratePlan(currentBoot().member?.data.role)) return; try { await command("planGenerate", { week: this.data.week }, this.data.semesterId, this.data.weekData.plan?.version || 0); await this.load(); } catch (e) { displayError(e); } },
+    async generate() { if (this.data.busy || this.data.error || !this.data.canGenerate || !canGeneratePlan(currentBoot().member?.data.role)) return; try { await command("planGenerate", { week: this.data.week }, this.data.semesterId, this.data.weekData.plan?.version || 0); await this.load(); } catch (e) { displayError(e); } },
     async confirmPlan() {
-      if (!canConfirmPlan(currentBoot().member?.data.role)) return;
+      if (this.data.busy || this.data.error || !this.data.canConfirm || !canConfirmPlan(currentBoot().member?.data.role)) return;
       try { const draft = this.data.weekData.draft; if (!draft) return; const r = await wx.showModal({ title: "确认排班调整", content: "请核对下方草稿任务和未覆盖班级。确认后生效，已完成任务保留。", editable: true, placeholderText: "确认原因" }); if (!r.confirm) return;
         await command("planConfirm", { id: draft.id, reason: r.content || "人工确认" }, this.data.semesterId, draft.version); await this.load();
       } catch (e) { displayError(e); }
     },
     async adjust(e: UiEvent) {
+      if (this.data.busy || this.data.error || !this.data.canAdjust || !canAdjustTasks(currentBoot().member?.data.role)) return;
       try {
         const task = this.data.tasks.find(t => t.id === e.currentTarget.dataset.id);
         const members = await optionsFor("members");
@@ -697,24 +700,24 @@ export function registerCloudPage(view: View): void {
       } catch(e) {displayError(e);}finally{this.setData({busy:false});}
     },
     async copyReport() { await this.exportReport({currentTarget:{dataset:{kind:"copy"}},detail:{value:""}} as UiEvent); },
-    openReport() { if(this.data.filePath && this.data.fileOwner === currentBoot().workspace.epoch + ":" + this.data.memberId)openExport(this.data.filePath); },
+    openReport() { if((this.data.canExportExcel || this.data.canExportNames) && !this.data.error && this.data.filePath && this.data.fileOwner === currentBoot().workspace.epoch + ":" + this.data.memberId)openExport(this.data.filePath); },
     async exportReport(e: UiEvent) {
-      if(this.data.busy || !this.data.coordinator || !this.data.semesterId)return;
+      if(this.data.busy || this.data.error || !this.data.coordinator || !this.data.semesterId)return;
       const kind=e.currentTarget.dataset.kind, xlsx=kind === "xlsx";
       if (!["txt", "xlsx", "copy"].includes(kind)) return;
       const role=currentBoot().member?.data.role;
-      if (xlsx ? !(canExportFullXlsx(role) || role === "officer") : !isManager(role)) return;
+      if (xlsx ? !(canExportFullXlsx(role) || role === "officer") : !canExportNames(role)) return;
       this.setData({busy:true,filePath:"",filename:""});
       const semesterId=this.data.semesterId,week=this.data.week;
       try {
-        const r = await query<{ state: AppState; summary:SummaryReport; version: number }>(this.data.officer ? "summaryReport" : xlsx ? "excelReport" : "report", semesterId, { week });
+        const r = await query<{ state: AppState; summary:SummaryReport; version: number }>(this.data.officer ? "summaryReport" : xlsx ? "excelReport" : "namesReport", semesterId, { week });
         const content=this.data.officer ? exportSummaryXlsx(r.data.summary) : xlsx ? exportXlsx(r.data.state,week) : exportTxt(r.data.state,week);
-        await query("reportCheck", semesterId, {week,version:r.data.version,...(xlsx && !this.data.officer ? {format:"xlsx"} : {})});
+        await query("reportCheck", semesterId, {week,version:r.data.version,...(!this.data.officer ? {format:xlsx ? "xlsx" : "txt"} : {})});
         if(kind === "copy") { await wx.setClipboardData({data:content as string}); return; }
         const filename=semesterId + "-第" + week + "周-" + Date.now() + (xlsx ? "-听课汇总.xlsx" : "-请假旷课名单.txt");
         const path=await new Promise<string>(resolve=>saveExport(filename,xlsx ? content : "\ufeff" + content,resolve,()=>resolve("")));
         if(!path)return;
-        await query("reportCheck",semesterId,{week,version:r.data.version,...(xlsx && !this.data.officer ? {format:"xlsx"} : {})});
+        await query("reportCheck",semesterId,{week,version:r.data.version,...(!this.data.officer ? {format:xlsx ? "xlsx" : "txt"} : {})});
         this.setData({filename,filePath:path,fileOwner:currentBoot().workspace.epoch + ":" + this.data.memberId});
         wx.showToast({title:"文件已保存",icon:"success"});
       } catch (e) { displayError(e); }finally{this.setData({busy:false});}

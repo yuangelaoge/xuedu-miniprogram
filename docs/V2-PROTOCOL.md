@@ -151,9 +151,9 @@ payload必须含type。下表其他字段也在payload，epoch/requestId/semeste
 | courseDisable | id,effectiveDate | 课程；管理员，必须semesterId，新增停用版本 |
 | exceptionSave | courseId,date,kind=`cancel/move/extra`,reason；非cancel可newDate/start/end/classroom | **课程**版本；管理员，必须semesterId |
 | availabilitySave | week,slots,optedIn,note | 本人该周无课时间或新建0；有效成员，必须semesterId |
-| planGenerate | week | 该周当前confirmed或skipped plan版本；没有则0；管理员/部长 |
+| planGenerate | week | 该周当前confirmed或skipped plan版本；没有则0；管理员/信息部干事 |
 | taskAdjust | week,reason,changes | 同上当前正式计划版本；管理员/部长 |
-| planConfirm | id=草稿计划ID | 草稿plan版本；管理员/部长 |
+| planConfirm | id=草稿计划ID | 草稿plan版本；仅管理员（包括调整、取消、跳过草稿） |
 | planSkip | week,reason | 当前confirmed或skipped plan版本；没有则0；仅管理员 |
 | recordSubmit | taskId,metrics,photos及观察字段 | **任务**版本；任务本人，必须semesterId |
 | recordEdit | id=记录ID,reason,metrics,photos及观察字段 | **记录**版本；本人不足24小时或管理员，必须semesterId |
@@ -189,3 +189,12 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 本地领域、入口、分页容量、离线切换及PG集成已有阶段验证；最终完整运行结果见本轮交付。线上迁移/照片/真机/跨设备尚未在本轮执行。服务端prepare/open迁移接口和敏感离线材料严格不在小程序operation白名单，详见 [V2-CUTOVER.md](V2-CUTOVER.md)。
 
 `planSkip` 生成 `data.skip=true` 的取消草稿，原任务继续生效；须再调用 `planConfirm` 才取消未完成任务并将计划设为 `skipped`。创建草稿及确认时均检查本周无已提交记录；已有记录只能调整剩余任务，不能整周跳过。`week.plan` 和报表包含 skipped 状态，导出显示跳过原因。跳过后可用 `planGenerate` 或 `taskAdjust`（expectedVersion 为 skipped 计划版本）重新生成草稿，人工确认后恢复 confirmed。
+
+## 2026-10-03 组部长权限调整（本地源码，未部署）
+
+- `excelReport` 查询与 `report` 携带 `format=xlsx` 仅管理员可调用；新版完整 Excel 导出使用 `excelReport`，并在两次 `reportCheck` 中携带 `format=xlsx`。
+- 普通 `report`、不带 Excel 格式的 `reportCheck` 保留管理员/组部长所需明细查询、统计与 TXT 导出；信息部干事继续使用 `summaryReport`。
+- 组部长保留 `taskAdjust`，仅生成草稿，由管理员 `planConfirm` 后生效。
+- 006 快速页面 RPC 只提供原有阅读范围，不执行生成、确认或导出；无需 SQL 迁移。
+- 取消的是系统完整 Excel 导出功能；组部长仍可按已有业务权限读取明细并自行整理，旧前端也可能用通用 `report` 在本机生成文件，所以需同时更新前端和后端。
+- 详情与验证见 [组部长权限调整](LEADER-PERMISSIONS.md)。

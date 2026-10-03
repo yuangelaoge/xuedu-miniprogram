@@ -152,3 +152,18 @@ test('审核样例各页面合并请求仍按所选角色隔离数据', async()=
   await assert.rejects(page('manage'),/管理权限/);
   await assert.rejects(page('record',{targetId:'review-record'}),/无权查看/);
 });
+
+test('审核体验 leader 禁止生成确认与 Excel，保留 TXT 数据和统计；officer 仅汇总导出',async()=>{
+ const x=setup();await x.call('reviewLogin',{payload:{username:'审核老师辛苦了',password}});
+ const boot=await x.call('bootstrap',{review:true});const base={review:true,epoch:boot.epoch,semesterId:'review-semester'};
+ await x.call('reviewRole',{payload:{role:'leader'}});
+ for(const type of ['planGenerate','planConfirm']) await assert.rejects(x.call('command',{...base,requestId:type,expectedVersion:0,payload:{type,week:2,id:'fake'}}),/无权|仅管理员/);
+ await assert.rejects(x.call('query',{...base,payload:{kind:'excelReport',week:1}}),/仅管理员/);
+ const report=await x.call('query',{...base,payload:{kind:'report',week:1}});assert.match(exportTxt(report.data.state as any,1),/审核样例/);
+ const page=await x.call('bootstrap',{review:true,payload:{fastPage:true,page:{view:'records',week:1}}});assert.equal((page.data.member as any).data.role,'leader');assert.equal((page.data.page as any).list.items.length,1);
+ await x.call('reviewRole',{payload:{role:'officer'}});
+ await assert.rejects(x.call('query',{...base,payload:{kind:'excelReport',week:1}}),/仅管理员/);
+ assert.ok((await x.call('query',{...base,payload:{kind:'summaryReport',week:1}})).data.summary);
+ await x.call('reviewRole',{payload:{role:'admin'}});
+ assert.ok((await x.call('query',{...base,payload:{kind:'excelReport',week:1}})).data.state);
+});

@@ -1,3 +1,4 @@
+import { canExportFullXlsx } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, published, run } from "../../services/store";
@@ -18,6 +19,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     maxWeek: 20,
     dates: "",
     manager: false,
+    canExportExcel:false,
     tab: "mine",
     records: [] as {
       id: string;
@@ -67,7 +69,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
       week,
       maxWeek: semester.weeks,
       dates: weekRange(semester, week),
-      manager,
+      manager, canExportExcel:canExportFullXlsx(user.role),
       records: records
         .filter((r) => this.data.tab !== "mine" || r.memberId === user.id)
         .map((r) => ({
@@ -113,7 +115,8 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     );
   },
   export(e: UiEvent) {
-    if (this.data.busy) return;
+    if (this.data.busy || !["txt", "xlsx"].includes(e.currentTarget.dataset.kind)) return;
+    if (e.currentTarget.dataset.kind === "xlsx" && !canExportFullXlsx(context().user.role)) return;
     run(() => {
       const { state, semester } = context(),
         kind = e.currentTarget.dataset.kind,

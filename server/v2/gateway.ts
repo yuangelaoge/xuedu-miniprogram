@@ -1,4 +1,4 @@
-import { isManager, canCoordinate, participatesByDefault } from "../../miniprogram/domain/capabilities";
+import { isManager, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
 import { summarizeEntities } from "./summary-report";
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { Repository } from "./repository";
@@ -327,7 +327,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         return response({summary:summarizeEntities(semester,week,records,plans.some(v=>v.data.status==='skipped')),version:workspace.version});
       }
       if (kind === "reportCheck") {
-        coordinator(); await requireSemester();
+        coordinator(); if (p.format === "xlsx") admin(); await requireSemester();
         if (p.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({ valid: true, version: workspace.version });
       }
@@ -337,10 +337,11 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         return response({ record: clean(record), canEdit: member().data.role === "admin" || record.memberId === member().id && now - Date.parse(String(record.data.firstSubmittedAt)) < DAY });
       }
-      if (kind === "week" || kind === "report") {
+      if (kind === "week" || kind === "report" || kind === "excelReport") {
         member(); const semester = await requireSemester(); const week = requireWeek(semester);
         const filter: Query = { eq: { semesterId: semester.id, week } };
-        if (kind === "report") {
+        if (kind === "report" || kind === "excelReport") {
+          if (kind === "excelReport" || p.format === "xlsx") admin();
           manager(); if (p.reportVersion !== undefined && p.reportVersion !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
           const records = await all("records", filter);
           const latest = await repo.workspace(); if (latest.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
@@ -797,7 +798,9 @@ export function createGatewayV2(deps: DependenciesV2) {
       return commit();
     }
     if (["planGenerate", "taskAdjust", "planConfirm", "planSkip"].includes(type)) {
-      if (type === "planSkip") admin(); else if (type === "planGenerate") coordinator(); else manager();
+      if (type === "planSkip" || type === "planConfirm") admin();
+      else if (type === "planGenerate") { if (!canGeneratePlan(member().data.role)) fail("无权生成排班草稿", "FORBIDDEN"); }
+      else manager();
       if (type === "planConfirm") {
         const plan = (await get("plans", text(p.id, "草稿标识")))!; expected(plan);
         if (plan.semesterId !== semester.id || plan.data.status !== "draft") fail("草稿不存在或已失效");

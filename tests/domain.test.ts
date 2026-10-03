@@ -125,9 +125,8 @@ test("合班含本班不允许，交叉合班暂拒绝生成", () => {
   s.courses[0] = c;
   assert.throws(() => generatePlan(s, s.activeSemesterId, 2, 1), /交叉合班/);
 });
-test("草稿不成为正式任务，重新生成必须重新确认", () => {
+test("草稿不成为正式任务，重新生成必须由管理员重新确认", () => {
   const s = state();
-  s.actorId = "m6";
   generate(s, 2);
   const first = s.drafts[0].revision;
   assert.equal(s.plans.length, 0);
@@ -152,6 +151,8 @@ test("普通成员不能管理排班，部长不能跳过", () => {
   s.actorId = "m0";
   assert.throws(() => generate(s, 2), /无权/);
   s.actorId = "m6";
+  assert.throws(() => generate(s, 2), /无权/);
+  assert.throws(() => confirm(s, 2, 1), /无权/);
   assert.throws(() => skip(s, 2, "假期"), /无权/);
 });
 test("跳过周可重新生成，但必须确认才能替换跳过状态", () => {

@@ -31,7 +31,7 @@ function editableWeek(state: AppState, week: number): void {
     );
 }
 export function generate(state: AppState, week: number): void {
-  requireRole(state, ["admin", "leader", "officer"]);
+  requireRole(state, ["admin", "officer"]);
   editableWeek(state, week);
   const draft = generatePlan(
     state,
@@ -45,7 +45,7 @@ export function generate(state: AppState, week: number): void {
   audit(state, "生成排班草稿", "第" + week + "周 · v" + draft.revision);
 }
 export function confirm(state: AppState, week: number, revision: number): void {
-  requireRole(state, ["admin", "leader"]);
+  requireRole(state, ["admin"]);
   editableWeek(state, week);
   const draft = state.drafts.find(
     (p) => p.semesterId === state.activeSemesterId && p.week === week,

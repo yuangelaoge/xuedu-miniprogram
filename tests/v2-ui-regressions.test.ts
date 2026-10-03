@@ -123,3 +123,15 @@ test('V2记录页：有记录使用课程快照卡和轻量详情入口',async()
  const template=readFileSync(new URL('../miniprogram/templates/cloud.wxml',import.meta.url),'utf8');const recordsCard=template.split("<block wx:if=\"{{view === 'records'}}\"><view class=\"row between v2-record-head\">")[1]?.split('</block>\n        <block wx:else>')[0] || '';
  assert.match(recordsCard,/item.data.memberName/);assert.match(recordsCard,/item.data.date/);assert.match(recordsCard,/item.data.classLabel/);assert.match(recordsCard,/item.data.course.start/);assert.match(recordsCard,/data-id="\{\{item.id\}\}" bindtap="open"/);assert.doesNotMatch(recordsCard,/<button|item.detail|item.statusLabel/);
 }));
+
+test('组部长前端关闭生成确认和 Excel handler，但保留 TXT、统计和管理入口',async()=>fixture(async f=>{
+ const manage=await f.page('manage');await manage.rowAction(event({id:'member',action:'leader'}));f.who('member');
+ const schedule=await f.page('schedule');assert.equal(schedule.data.manager,true);assert.equal(schedule.data.canGenerate,false);assert.equal(schedule.data.canConfirm,false);
+ const before=f.calls.length;await schedule.generate();await schedule.confirmPlan();assert.equal(f.calls.length,before);
+ const reports=await f.page('records');assert.equal(reports.data.canExportExcel,false);assert.equal(reports.data.rows.length,1);
+ const count=f.calls.length;await reports.exportReport(event({kind:'xlsx'}));assert.equal(f.calls.length,count);assert.equal(f.written.length,0);
+ await reports.copyReport();assert.equal(f.copied.length,1);await reports.exportReport(event({kind:'txt'}));assert.equal(f.written.length,1);
+ await reports.showStats();assert.equal(reports.data.statsLoaded,true);
+ f.who('owner');await reports.load();assert.equal(reports.data.canExportExcel,true);
+ await reports.exportReport(event({kind:'xlsx'}));assert.equal(f.written.length,2);assert.ok(f.calls.some((c:any)=>c.payload?.kind==='excelReport'));
+}));

@@ -1,3 +1,4 @@
+import { canGeneratePlan, canConfirmPlan } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, published, command, runAsync } from "../../services/store";
@@ -11,6 +12,7 @@ if (cloudEnabled()) registerCloudPage("schedule"); else memberPage({
     maxWeek: 20,
     dates: "",
     manager: false,
+    canGenerate: false, canConfirm: false,
     admin: false,
     status: "",
     statusLabel: "",
@@ -37,7 +39,7 @@ if (cloudEnabled()) registerCloudPage("schedule"); else memberPage({
     const { state, semester, user, manager } = context(),
       week = Math.min(this.data.week, semester.weeks),
       active = published(state, week);
-    const draft = manager
+    const draft = manager || canGeneratePlan(user.role)
         ? state.drafts.find(
             (p) => p.semesterId === semester.id && p.week === week,
           )
@@ -48,7 +50,7 @@ if (cloudEnabled()) registerCloudPage("schedule"); else memberPage({
       week,
       maxWeek: semester.weeks,
       dates: weekRange(semester, week),
-      manager,
+      manager, canGenerate:canGeneratePlan(user.role), canConfirm:canConfirmPlan(user.role),
       admin: user.role === "admin",
       status: plan?.status || "empty",
       statusLabel: draft

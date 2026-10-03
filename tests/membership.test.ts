@@ -77,7 +77,8 @@ test("删除组员取消未完成任务并留档，不修改已提交记录与�
     date: weekDate(s.semesters[0], 1, target.course.weekday), metrics: missingMetrics(), absentNames: "无", leaveNames: "无",
     photos: ["saved-signature.jpg"], otherDescription: "", evaluation: "", feedback: "", suggestion: "", createdAt: "" });
   const history = JSON.stringify(s.records);
-  s.actorId = "m6"; generate(s, 3);
+  s.actorId = "m7"; generate(s, 3);
+  s.actorId = "m6";
   removeMember(s, target.memberId);
   assert.equal(JSON.stringify(s.records), history);
   assert.equal(s.members.find(m => m.id === target.memberId)!.active, false);
@@ -85,6 +86,7 @@ test("删除组员取消未完成任务并留档，不修改已提交记录与�
   assert.ok(!plan.tasks.some(t => t.id === target.id));
   assert.ok(plan.uncovered.some(u => u.label === target.classLabel));
   assert.equal(s.drafts.length, 0);
+  s.actorId = "m7";
   generate(s, 3);
   assert.ok(s.drafts[0].tasks.every(t => t.memberId !== target.memberId));
   s.actorId = target.memberId; assert.throws(() => actor(s));

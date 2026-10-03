@@ -124,14 +124,30 @@ test('V2记录页：有记录使用课程快照卡和轻量详情入口',async()
  assert.match(recordsCard,/item.data.memberName/);assert.match(recordsCard,/item.data.date/);assert.match(recordsCard,/item.data.classLabel/);assert.match(recordsCard,/item.data.course.start/);assert.match(recordsCard,/data-id="\{\{item.id\}\}" bindtap="open"/);assert.doesNotMatch(recordsCard,/<button|item.detail|item.statusLabel/);
 }));
 
-test('组部长前端关闭生成确认和 Excel handler，但保留 TXT、统计和管理入口',async()=>fixture(async f=>{
+test('组部长所有名单导出与调整 handler 均关闭，统计和管理查看保留',async()=>fixture(async f=>{
  const manage=await f.page('manage');await manage.rowAction(event({id:'member',action:'leader'}));f.who('member');
  const schedule=await f.page('schedule');assert.equal(schedule.data.manager,true);assert.equal(schedule.data.canGenerate,false);assert.equal(schedule.data.canConfirm,false);
- const before=f.calls.length;await schedule.generate();await schedule.confirmPlan();assert.equal(f.calls.length,before);
+ const before=f.calls.length;await schedule.generate();await schedule.confirmPlan();await schedule.adjust(event({}));assert.equal(schedule.data.formType,'');
+ schedule.setData({formType:'taskAdjust'});await schedule.saveForm();assert.equal(f.calls.length,before);
  const reports=await f.page('records');assert.equal(reports.data.canExportExcel,false);assert.equal(reports.data.rows.length,1);
  const count=f.calls.length;await reports.exportReport(event({kind:'xlsx'}));assert.equal(f.calls.length,count);assert.equal(f.written.length,0);
- await reports.copyReport();assert.equal(f.copied.length,1);await reports.exportReport(event({kind:'txt'}));assert.equal(f.written.length,1);
+ await reports.copyReport();await reports.exportReport(event({kind:'txt'}));assert.equal(f.copied.length,0);assert.equal(f.written.length,0);assert.equal(f.calls.length,count);
  await reports.showStats();assert.equal(reports.data.statsLoaded,true);
  f.who('owner');await reports.load();assert.equal(reports.data.canExportExcel,true);
- await reports.exportReport(event({kind:'xlsx'}));assert.equal(f.written.length,2);assert.ok(f.calls.some((c:any)=>c.payload?.kind==='excelReport'));
+ await reports.exportReport(event({kind:'xlsx'}));assert.equal(f.written.length,1);
+ await reports.copyReport();await reports.exportReport(event({kind:'txt'}));assert.equal(f.copied.length,1);assert.equal(f.written.length,2);assert.ok(f.calls.some((c:any)=>c.payload?.kind==='excelReport'));
+}));
+
+test('刷新失败或审核全局到期后，旧管理员页面不得保留生成确认和 Excel 操作',async()=>fixture(async f=>{
+ const schedule=await f.page('schedule'),reports=await f.page('records');
+ assert.equal(schedule.data.canGenerate,true);assert.equal(reports.data.canExportExcel,true);
+ const wx=(globalThis as any).wx,original=wx.cloud.callFunction;
+ wx.setStorageSync('xuedu.review.active.'+runtime.env,true);
+ wx.cloud.callFunction=async()=>({result:{ok:false,code:'REVIEW_EXPIRED',error:'审核体验已到期'}});
+ await schedule.load();await reports.load();
+ assert.equal(schedule.data.canGenerate,false);assert.equal(schedule.data.canConfirm,false);assert.equal(reports.data.canExportExcel,false);assert.equal(reports.data.canExportNames,false);assert.equal(schedule.data.canAdjust,false);
+ const before=f.calls.length;await schedule.generate();await schedule.confirmPlan();await reports.exportReport(event({kind:'xlsx'}));assert.equal(f.calls.length,before);
+ assert.equal(wx.getStorageSync('xuedu.review.active.'+runtime.env),undefined);
+ wx.cloud.callFunction=original;
+ await reports.load();assert.equal(reports.data.error,'');assert.equal(reports.data.canExportExcel,true);
 }));

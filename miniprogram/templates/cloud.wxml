@@ -5,7 +5,7 @@
   <block wx:if="{{view !== 'home' && view !== 'profile'}}"><view class="eyebrow">{{eyebrow}}</view><view class="title">{{view === 'records' ? '每一份记录，都算数' : view === 'availability' ? '把空闲留给好学风' : title}}</view></block>
   <view wx:if="{{error}}" class="v2-load-error" bindtap="refreshWeek" role="button">加载失败，点击重试</view>
   <view wx:if="{{refreshing}}" class="v2-refresh-note">更新中…</view>
-  <view wx:if="{{reviewMode}}" class="notice">审核样例体验：此处是隔离的模拟资料，所选照片只显示样例图，不保存原图。</view>
+  <view wx:if="{{reviewMode}}" class="notice"><view>审核样例体验 · {{roleLabel || "身份验证中"}}</view><view>此处是隔离的模拟资料，所选照片只显示样例图，不保存原图。</view><view class="link" data-target="review" bindtap="navigate">查看体验身份 / 切换 / 退出 ›</view></view>
   <view wx:if="{{busy && !refreshing}}" class="v2-note">正在处理，请稍候…</view>
   <view wx:if="{{maintenance}}" class="v2-card">
     <view class="v2-title">业务数据维护中</view><view>写入已冻结，管理员可在清空入口继续处理同一任务。</view>
@@ -45,7 +45,7 @@
       <button wx:if="{{statusCursor}}" disabled="{{busy}}" data-more="true" bindtap="submissionStatus">继续加载名单</button>
     </view>
     <block wx:if="{{view === 'schedule'}}">
-      <view wx:if="{{coordinator && semesterId}}" class="card"><view class="section-title">排班工作台</view><view class="subtitle small">非本班 · 每人至多一次 · 人工确认后生效</view><view class="v2-actions"><button wx:if="{{canGenerate}}" disabled="{{busy}}" bindtap="generate">{{weekData.plan || weekData.draft ? "重新生成草稿" : "生成排班草稿"}}</button><button wx:if="{{manager}}" disabled="{{busy}}" bindtap="adjust">补排任务</button><button wx:if="{{admin}}" disabled="{{busy}}" bindtap="skipWeek">跳过本周</button></view></view>
+      <view wx:if="{{(canGenerate || canAdjust) && semesterId}}" class="card"><view class="section-title">排班工作台</view><view class="subtitle small">非本班 · 每人至多一次 · 人工确认后生效</view><view class="v2-actions"><button wx:if="{{canGenerate}}" disabled="{{busy}}" bindtap="generate">{{weekData.plan || weekData.draft ? "重新生成草稿" : "生成排班草稿"}}</button><button wx:if="{{canAdjust}}" disabled="{{busy}}" bindtap="adjust">补排任务</button><button wx:if="{{admin}}" disabled="{{busy}}" bindtap="skipWeek">跳过本周</button></view></view>
       <view wx:if="{{weekData.draft}}" class="v2-card">
         <view class="v2-title">待人工确认的调整草稿</view><view class="notice warn">草稿尚未生效{{weekData.plan ? "，原正式安排仍保留" : ""}}。由管理员核对并确认生效。</view><view>{{weekData.draft.data.reason}}</view>
         <view wx:for="{{tasks}}" wx:key="id" wx:if="{{item.status === 'draft' && item.parentId === weekData.draft.id}}" class="v2-row"><view>{{item.label}}</view><view>{{item.detail}}</view><view>{{item.cancel ? '取消原任务' : '拟安排'}}{{item.replaces ? '（替换原任务）' : ''}}</view></view>
@@ -56,7 +56,7 @@
       <view wx:for="{{visibleTasks}}" wx:key="id" class="v2-card">
         <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view><view>{{item.status === 'pendingAdjustment' ? '待调整：原课表已失效，暂不能提交' : item.status === 'submitted' ? '已提交' : '已确认'}}</view>
         <button wx:if="{{item.status === 'confirmed' && item.memberId === memberId}}" data-id="{{item.id}}" bindtap="open">填写听课记录</button>
-        <button wx:if="{{manager && item.status !== 'submitted'}}" data-id="{{item.id}}" bindtap="adjust">转派／取消</button>
+        <button wx:if="{{canAdjust && item.status !== 'submitted'}}" data-id="{{item.id}}" bindtap="adjust">转派／取消</button>
       </view>
       <view wx:if="{{manager && !weekData.draft && weekData.plan.data.uncovered.length}}" class="card"><view class="section-title">未覆盖教学班</view><view wx:for="{{weekData.plan.data.uncovered}}" wx:key="label" class="v2-row">{{item.label}} · {{item.reason}}</view></view>
       <view wx:if="{{!visibleTasks.length && !busy}}" class="empty"><view class="empty-icon">▦</view><view class="empty-title">{{searchText ? "没有匹配任务" : weekData.draft ? "请先确认草稿" : weekData.plan ? "本周暂无正式任务" : "本周安排尚未发布"}}</view><view class="muted">{{semesterId ? "填写无课时间，等待管理人员确认。" : "启用学期后，在这里查看每周安排。"}}</view></view>
@@ -118,7 +118,7 @@
       <view wx:if="{{view !== 'records' && !visibleRows.length && !busy}}" class="empty"><view class="empty-icon">▤</view><view class="empty-title">{{searchText || applicationFilter === 'pending' && section === 'applications' ? '当前已加载资料没有匹配项' : '暂无资料'}}</view><view class="muted">{{view === 'courses' || section === 'courses' ? '配置真实课表后，在这里查看课程。' : '新增或提交后，会显示在这里。'}}</view></view>
       <view wx:if="{{cursor}}" class="muted small">还有资料未加载，搜索和筛选仅作用于已加载范围。</view><button wx:if="{{cursor}}" disabled="{{busy}}" bindtap="more">再加载50条</button>
     </block>
-    <view wx:if="{{view === 'records' && coordinator && semesterId}}" class="card v2-record-export"><view class="section-title">本周汇总导出</view><view class="muted small">{{officer ? "仅导出班级汇总，不含个人明细或备注。" : "名单与原始数据分开导出；更正后请重新生成。"}}</view><view class="v2-report-actions"><button wx:if="{{manager}}" disabled="{{busy}}" data-kind="txt" bindtap="exportReport">名单 TXT</button><button wx:if="{{canExportExcel}}" type="primary" disabled="{{busy}}" data-kind="xlsx" bindtap="exportReport">汇总 Excel</button></view><view wx:if="{{manager}}" class="link small v2-copy-report" bindtap="copyReport">直接复制请假／旷课名单</view><view wx:if="{{filePath}}" class="notice v2-report-file"><view class="muted small">已保存：{{filename}}</view><view class="link" bindtap="openReport">打开／分享文件 ›</view></view></view>
+    <view wx:if="{{view === 'records' && (canExportExcel || canExportNames) && semesterId}}" class="card v2-record-export"><view class="section-title">本周汇总导出</view><view class="muted small">{{officer ? "仅导出班级汇总，不含个人明细或备注。" : "名单与原始数据分开导出；更正后请重新生成。"}}</view><view class="v2-report-actions"><button wx:if="{{canExportNames}}" disabled="{{busy}}" data-kind="txt" bindtap="exportReport">名单 TXT</button><button wx:if="{{canExportExcel}}" type="primary" disabled="{{busy}}" data-kind="xlsx" bindtap="exportReport">汇总 Excel</button></view><view wx:if="{{canExportNames}}" class="link small v2-copy-report" bindtap="copyReport">直接复制请假／旷课名单</view><view wx:if="{{filePath}}" class="notice v2-report-file"><view class="muted small">已保存：{{filename}}</view><view class="link" bindtap="openReport">打开／分享文件 ›</view></view></view>
     <view wx:if="{{view === 'record' && record}}" class="v2-card">
       <view class="v2-title">{{record.data.classLabel}}</view><view>{{record.data.memberName}} · {{record.data.date}}</view><view>{{record.data.course.name}}</view>
       <view wx:for="{{recordFields}}" wx:key="label">{{item.label}}：{{item.value}}</view>

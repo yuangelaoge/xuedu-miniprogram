@@ -6,3 +6,5 @@ export const participatesByDefault = (role: unknown): boolean => role === 'membe
 export const canGeneratePlan = (role: unknown): boolean => role === 'admin' || role === 'officer';
 export const canConfirmPlan = (role: unknown): boolean => role === 'admin';
 export const canExportFullXlsx = (role: unknown): boolean => role === 'admin';
+export const canAdjustTasks = (role: unknown): boolean => role === 'admin';
+export const canExportNames = (role: unknown): boolean => role === 'admin';

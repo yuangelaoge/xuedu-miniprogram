@@ -119,8 +119,9 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 | task | 必须，id | 本人或管理人员；`{ task }` |
 | record | 必须，id | `{ record, canEdit }`；成员仅本人 |
 | week | 必须，week | 目标周的semester/plan/draft/uncovered/tasks/plans/availability/records/occurrences；成员任务和记录限本人 |
-| report | 必须，week，reportVersion可选 | 管理人员；目标周记录、学期、reportVersion、以及供现有导出器用的仅该周state |
-| reportCheck | 必须，version | 管理人员；导出结束前核对版本，返回valid或冲突 |
+| report | 必须，week，reportVersion可选 | 管理员/组部长读取目标周记录、学期、reportVersion及仅该周state；显式format=xlsx/txt/copy仅管理员 |
+| excelReport / namesReport | 必须，week | 仅管理员；分别提供完整Excel、TXT/复制名单所需目标周数据 |
+| reportCheck | 必须，version，format可选 | 管理人员核对版本；显式format=xlsx/txt/copy仅管理员，返回valid或冲突 |
 
 autoApproval 的 setting 保存 enabled、expiresAt、updatedBy、updatedByName、updatedAt。到期不需要后台任务修改该行，active 始终按服务器时间计算，客户端不可只读 enabled 判断。非管理员 bootstrap 不返回该配置。自动入组 SQL 还用数据库时钟检查截止，并校验成员、绑定、申请与审计四项的关系；到期或冲突全事务回滚。详见 [限时入组说明](AUTO-APPROVAL.md)。
 
@@ -152,7 +153,7 @@ payload必须含type。下表其他字段也在payload，epoch/requestId/semeste
 | exceptionSave | courseId,date,kind=`cancel/move/extra`,reason；非cancel可newDate/start/end/classroom | **课程**版本；管理员，必须semesterId |
 | availabilitySave | week,slots,optedIn,note | 本人该周无课时间或新建0；有效成员，必须semesterId |
 | planGenerate | week | 该周当前confirmed或skipped plan版本；没有则0；管理员/信息部干事 |
-| taskAdjust | week,reason,changes | 同上当前正式计划版本；管理员/部长 |
+| taskAdjust | week,reason,changes | 同上当前正式计划版本；仅管理员 |
 | planConfirm | id=草稿计划ID | 草稿plan版本；仅管理员（包括调整、取消、跳过草稿） |
 | planSkip | week,reason | 当前confirmed或skipped plan版本；没有则0；仅管理员 |
 | recordSubmit | taskId,metrics,photos及观察字段 | **任务**版本；任务本人，必须semesterId |
@@ -190,11 +191,12 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 
 `planSkip` 生成 `data.skip=true` 的取消草稿，原任务继续生效；须再调用 `planConfirm` 才取消未完成任务并将计划设为 `skipped`。创建草稿及确认时均检查本周无已提交记录；已有记录只能调整剩余任务，不能整周跳过。`week.plan` 和报表包含 skipped 状态，导出显示跳过原因。跳过后可用 `planGenerate` 或 `taskAdjust`（expectedVersion 为 skipped 计划版本）重新生成草稿，人工确认后恢复 confirmed。
 
-## 2026-10-03 组部长权限调整（本地源码，未部署）
+## 2026-10-03 组部长权限最新调整（补充收权本地未部署）
 
-- `excelReport` 查询与 `report` 携带 `format=xlsx` 仅管理员可调用；新版完整 Excel 导出使用 `excelReport`，并在两次 `reportCheck` 中携带 `format=xlsx`。
-- 普通 `report`、不带 Excel 格式的 `reportCheck` 保留管理员/组部长所需明细查询、统计与 TXT 导出；信息部干事继续使用 `summaryReport`。
-- 组部长保留 `taskAdjust`，仅生成草稿，由管理员 `planConfirm` 后生效。
-- 006 快速页面 RPC 只提供原有阅读范围，不执行生成、确认或导出；无需 SQL 迁移。
-- 取消的是系统完整 Excel 导出功能；组部长仍可按已有业务权限读取明细并自行整理，旧前端也可能用通用 `report` 在本机生成文件，所以需同时更新前端和后端。
+- `excelReport` 与 `namesReport` 分别服务完整 Excel、TXT/复制名单，仅管理员可调用；`report` 显式携带 `format=xlsx|txt|copy` 也仅管理员可调用。
+- 新版文件/名单输出用各自专用查询，并在 `reportCheck` 携带 `format=xlsx|txt` 再核对管理员身份与版本。复制名单在写剪贴板前检查；文件导出在生成前后检查。
+- 普通 `report`、不带导出格式的 `reportCheck` 保留管理员/组部长合法明细查询与统计；信息部干事继续使用 `summaryReport`，不获得原始名单与记录输出。
+- `taskAdjust`、`planConfirm` 仅管理员；`planGenerate` 仅管理员/信息部干事。组部长不能生成或确认任何排班/调整草稿。
+- 006 快速页面 RPC 与普通 page-load 保留原有阅读范围，不执行生成、确认或专门导出；无需 SQL 迁移。
+- 组部长仍可按已有业务权限读取明细并自行整理；旧前端也可能用通用 `report` 在本机生成文件，所以需同步更新前后端。
 - 详情与验证见 [组部长权限调整](LEADER-PERMISSIONS.md)。

@@ -435,6 +435,7 @@ textarea.input {
 /* 记录页以列表／统计为主；原生 button 在弹性容器中必须显式占格。 */
 .v2-page .v2-actions button { flex: 1 1 220rpx; min-width: 0; margin: 0; white-space: normal; }
 .v2-page .v2-actions button[size=mini] { flex: 0 1 auto; }
+.v2-page .v2-submission-status-button { display: flex; align-items: center; justify-content: center; width: 100%; min-height: 84rpx; margin: 0; padding: 20rpx 24rpx; text-align: center; }
 .v2-semester-compact { display: flex; align-items: center; flex-wrap: wrap; gap: 12rpx; padding: 12rpx 20rpx; margin: 10rpx 0 0; }
 .v2-semester-compact .v2-label { flex: 0 0 auto; margin: 0; font-size: 24rpx; }
 .v2-semester-compact picker { flex: 1 1 260rpx; min-width: 0; }

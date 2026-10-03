@@ -1,4 +1,4 @@
-import { isManager, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
+import { isManager, canViewAllRecords, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
 import { summarizeEntities } from "./summary-report";
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { Repository } from "./repository";
@@ -117,6 +117,8 @@ export function createGatewayV2(deps: DependenciesV2) {
     const member = () => { if (!validActor) fail("请先申请并通过审核", "FORBIDDEN"); return validActor; };
     const manager = () => { const a = member(); if (!["admin", "leader"].includes(String(a.data.role))) fail("没有管理权限", "FORBIDDEN"); return a; };
     const coordinator = () => { const a = member(); if (!canCoordinate(a.data.role)) fail("没有协作权限", "FORBIDDEN"); return a; };
+    const recordReader = () => { const a = member(); if (!canViewAllRecords(a.data.role)) fail("没有全组记录查看权限", "FORBIDDEN"); return a; };
+    const excelExporter = () => { const a = member(); if (!canExportFullXlsx(a.data.role)) fail("仅管理员或信息部干事可导出完整Excel", "FORBIDDEN"); return a; };
     const admin = () => { const a = member(); if (a.data.role !== "admin") fail("仅管理员可操作", "FORBIDDEN"); return a; };
     const epoch = () => { if (input.epoch !== workspace.epoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT"); };
     const mutable = () => { epoch(); if (workspace.maintenance) fail("业务数据正在维护，请稍后再试", "MAINTENANCE"); };
@@ -216,12 +218,12 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (["courses", "records", "recordVersions"].includes(kind)) { if (!knownSemester) await get("semesters", text(request.semesterId, "学期标识", 200)); query.eq = { semesterId: request.semesterId }; }
       if (kind === "records") {
         if (request.week !== undefined) query.eq!.week = integer(request.week, "周次", 1, 60);
-        if (!isManager(member().data.role)) query.eq!.memberId = member().id;
+        if (!canViewAllRecords(member().data.role)) query.eq!.memberId = member().id;
       }
       if (kind === "recordVersions") {
         const record = (await get("records", text(request.id, "记录标识")))!;
         if (record.semesterId !== request.semesterId) fail("学期不匹配");
-        if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         query.eq!.recordId = record.id;
       }
       const result = await page(paginated[kind], query);
@@ -327,22 +329,23 @@ export function createGatewayV2(deps: DependenciesV2) {
         return response({summary:summarizeEntities(semester,week,records,plans.some(v=>v.data.status==='skipped')),version:workspace.version});
       }
       if (kind === "reportCheck") {
-        coordinator(); if (["xlsx", "txt", "copy"].includes(String(p.format))) admin(); await requireSemester();
+        coordinator(); if (p.format === "xlsx") excelExporter(); else if (["txt", "copy"].includes(String(p.format))) admin(); await requireSemester();
         if (p.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({ valid: true, version: workspace.version });
       }
       if (kind === "record") {
         member(); await requireSemester(); const record = (await get("records", text(p.id, "记录标识")))!;
         if (record.semesterId !== input.semesterId) fail("学期不匹配");
-        if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         return response({ record: clean(record), canEdit: member().data.role === "admin" || record.memberId === member().id && now - Date.parse(String(record.data.firstSubmittedAt)) < DAY });
       }
       if (kind === "week" || kind === "report" || kind === "excelReport" || kind === "namesReport") {
         member(); const semester = await requireSemester(); const week = requireWeek(semester);
         const filter: Query = { eq: { semesterId: semester.id, week } };
         if (kind === "report" || kind === "excelReport" || kind === "namesReport") {
-          if (kind === "excelReport" || kind === "namesReport" || ["xlsx", "txt", "copy"].includes(String(p.format))) admin();
-          manager(); if (p.reportVersion !== undefined && p.reportVersion !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
+          if (kind === "namesReport" || ["txt", "copy"].includes(String(p.format))) admin();
+          else if (kind === "excelReport" || p.format === "xlsx") excelExporter();
+          recordReader(); if (p.reportVersion !== undefined && p.reportVersion !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
           const records = await all("records", filter);
           const latest = await repo.workspace(); if (latest.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
           const recordsData = records.map(r => ({ ...r.data, id: r.id, semesterId: r.semesterId, week: r.week, memberId: r.memberId, taskId: r.taskId })) as any[];
@@ -383,7 +386,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       let ids: string[];
       if (p.recordId) {
         const record = (await get("records", text(p.recordId, "记录标识")))!;
-        if (record.semesterId !== input.semesterId || !isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
+        if (record.semesterId !== input.semesterId || !canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
         let source = record;
         if (p.versionId) { source = (await get("record_versions", text(p.versionId, "版本标识")))!; if (source.recordId !== record.id) fail("版本归属不匹配", "FORBIDDEN"); }
         ids = strings(source.data.photos, "照片", 3);
@@ -394,7 +397,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (!input.semesterId || photo.semesterId !== input.semesterId) fail("照片学期不匹配");
         if (photo.recordId) {
           const record = (await get("records", photo.recordId))!;
-          if (!isManager(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
+          if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
         } else if (photo.memberId !== member().id) fail("不可查看他人未提交照片", "FORBIDDEN");
         storageIds.push(String(photo.data.storageId));
       }

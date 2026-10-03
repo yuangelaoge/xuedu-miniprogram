@@ -47,7 +47,7 @@ try {
    const visible=buttons.map(text);
    const generate=buttons.some(n=>n.attr.bindtap==='generate'),confirm=buttons.some(n=>n.attr.bindtap==='confirmPlan'),excel=buttons.some(n=>n.attr['data-kind']==='xlsx');
    if(view==='schedule'){assert.equal(generate,['admin','officer'].includes(role));assert.equal(confirm,role==='admin');}
-   else {assert.equal(excel,['admin','officer'].includes(role));assert.equal(visible.includes('名单 TXT'),role==='admin');}
+   else {assert.equal(excel,['admin','officer'].includes(role));assert.equal(visible.includes('名单 TXT'),role==='admin');assert.equal(text(render(page.data)).includes('听课汇总'),['admin','leader','officer'].includes(role));if(role==='officer')assert.doesNotMatch(text(render(page.data)),/仅导出班级汇总|不含个人明细/);}
    assert.equal(buttons.some(n=>n.attr.bindtap==='adjust'),view==='schedule' && role==='admin');
    if(role==='leader'){assert.doesNotMatch(text(render(page.data)),/排班工作台|本周汇总导出|直接复制请假|补排任务|转派／取消/);}
    results.push({view,role,generate,confirm,excel,buttons:visible});

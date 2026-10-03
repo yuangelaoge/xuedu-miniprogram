@@ -282,7 +282,7 @@ test("V2 cancellation drafts expose uncovered classes and reasons while complete
 function officerFixture() {
  return fixture({members:[row('admin',{name:'管理员',studentNo:'001',classId:'c1',role:'admin',active:true},{studentNo:'001'}),row('member',{name:'成员',studentNo:'002',classId:'c1',role:'member',active:true},{studentNo:'002'}),row('officer',{name:'信息部干事',studentNo:'003',classId:'c1',role:'officer',active:true},{studentNo:'003'})],bindings:[row('ba',{},{identityKey:'oa',memberId:'admin'}),row('bm',{},{identityKey:'om',memberId:'member'}),row('bo',{},{identityKey:'oo',memberId:'officer'})]});
 }
-test('officer receives statuses and aggregate export but never other records, photos, availability or management',async()=>{
+test('officer reads all records, private photos and full Excel but no foreign availability or management',async()=>{
  const f=officerFixture(),record=await submit(f);
  const status=await f.call('query',{kind:'submissionStatus',week:2},{who:'oo'});
  const person=(status.data.items as any[]).find(v=>v.id==='member');
@@ -291,10 +291,22 @@ test('officer receives statuses and aggregate export but never other records, ph
  const report=await f.call('query',{kind:'summaryReport',week:2},{who:'oo'});
  assert.equal((report.data.summary as any).rows[0].actual,29);
  assert.doesNotMatch(JSON.stringify(report.data),/studentNo|memberName|photos|suggestion|slots|identityKey|firstSubmittedAt/);
- assert.equal((await f.call('query',{kind:'records',week:2},{who:'oo'})).data.items.length,0);
+ assert.equal((await f.call('query',{kind:'records',week:2},{who:'oo'})).data.items.length,1);
+ const detail=await f.call('query',{kind:'record',id:record.id},{who:'oo'});assert.equal(detail.data.canEdit,false);
+ assert.equal((await f.call('query',{kind:'recordVersions',id:record.id},{who:'oo'})).data.items.length,1);
+ assert.equal((await f.call('photoUrls',{recordId:record.id},{who:'oo'})).data.urls.length,1);
+ assert.equal((await f.call('photoUrls',{ids:['p1']},{who:'oo'})).data.urls.length,1);
+ const full=await f.call('query',{kind:'excelReport',week:2},{who:'oo'}),adminFull=await f.call('query',{kind:'excelReport',week:2});
+ assert.deepEqual(reportSheets(full.data.state as any,2),reportSheets(adminFull.data.state as any,2));
+ assert.deepEqual((full.data.state as any).availability,[]);
+ await f.call('query',{kind:'reportCheck',format:'xlsx',version:full.data.version},{who:'oo'});
+ await f.call('query',{kind:'report',format:'xlsx',week:2},{who:'oo'});
+ await f.call('query',{kind:'report',week:2},{who:'oo'});
+ for(const payload of [{kind:'namesReport',week:2},{kind:'report',week:2,format:'txt'},{kind:'report',week:2,format:'copy'},{kind:'reportCheck',format:'txt',version:full.data.version},{kind:'reportCheck',format:'copy',version:full.data.version}])await assert.rejects(f.call('query',payload,{who:'oo'}),/仅管理员/);
  const week=await f.call('query',{kind:'week',week:2},{who:'oo'});assert.equal(week.data.availability,null);assert.equal(week.data.records.length,0);
- for(const payload of [{kind:'record',id:record.id},{kind:'recordVersions',id:record.id},{kind:'task',id:'t1'},{kind:'members'},{kind:'applications'},{kind:'report',week:2}])await assert.rejects(f.call('query',payload,{who:'oo'}),/权限|不可|管理/);
- await assert.rejects(f.call('photoUrls',{recordId:record.id},{who:'oo'}),/不可/);
+ for(const payload of [{kind:'task',id:'t1'},{kind:'members'},{kind:'applications'},{kind:'availability',memberId:'member'}])await assert.rejects(f.call('query',payload,{who:'oo'}),/权限|不可|管理|查询类型/);
+ await assert.rejects(f.call('command',{type:'recordEdit',id:record.id,reason:'越权更正',metrics,photos:['p1']},{who:'oo',expectedVersion:record.version}),/不可|本人|无权/);
+ await assert.rejects(f.call('photo',{taskId:'t1',base64:'AA=='},{who:'oo'}),/不可/);
  for(const type of ['planConfirm','taskAdjust','roleChange','applicationReview','memberRemove'])await assert.rejects(f.call('command',{type,id:'member',week:2,reason:'越权验证',confirmed:true},{who:'oo',expectedVersion:1}),/管理|管理员/);
  await assert.rejects(f.call('query',{kind:'submissionStatus',week:2},{who:'om'}),/协作/);
  await assert.rejects(f.call('query',{kind:'summaryReport',week:2},{who:'om'}),/协作/);
@@ -334,4 +346,38 @@ test('leader cannot generate, adjust, confirm or export files; retains records, 
  await assert.rejects(fresh.call('command',{type:'planConfirm',id:draft.id},{who:'om',expectedVersion:1}),/仅管理员/);
  await fresh.call('command',{type:'planConfirm',id:draft.id,reason:'管理员确认'},{expectedVersion:1});
  assert.equal((await fresh.repository.get('tasks','t1'))!.data.status,'cancelled');
+});
+
+test('officer record pagination is complete, reports match admin including empty weeks, and revocation closes photo access',async()=>{
+ const f=officerFixture(),record=await submit(f),w=await f.repository.workspace();
+ const changes:any[]=Array.from({length:55},(_,i)=>({resource:'records',id:'extra-'+String(i).padStart(3,'0'),expectedVersion:0,value:{...record,id:'extra-'+String(i).padStart(3,'0'),taskId:'extra-task-'+i,version:1}}));
+ changes.push({resource:'photos',id:'unsubmitted',expectedVersion:0,value:row('unsubmitted',{storageId:'private-unsubmitted'},{semesterId:'s1',memberId:'member',taskId:'other-task'})});
+ await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'oa',actorId:'admin',requestId:'pagination-seed',reads:[],changes,result:{}});
+ for(const bundled of [false,true]) {
+  const request=(cursor='')=>bundled?f.call('bootstrap',{page:{view:'records',week:2,semesterId:'s1',...(cursor?{more:true,cursor,selectionOwner:'officer'}:{})}},{who:'oo'}):f.call('query',{kind:'records',week:2},{who:'oo',cursor});
+  const first=await request(), list=bundled?(first.data.page as any).list:{items:first.data.items,cursor:first.cursor};
+  assert.equal(list.items.length,50);assert.ok(list.cursor);
+  const next=await request(list.cursor),second=bundled?(next.data.page as any).list:{items:next.data.items,cursor:next.cursor};
+  assert.equal(second.items.length,6);assert.equal(second.cursor,'');assert.equal(new Set([...list.items,...second.items].map(r=>r.id)).size,56);
+  assert.doesNotMatch(JSON.stringify([first,next]),/slots|identityKey/);
+ }
+ for(const week of [1,2]) {
+  const officer=await f.call('query',{kind:'excelReport',week},{who:'oo'}),admin=await f.call('query',{kind:'excelReport',week});
+  assert.deepEqual(reportSheets(officer.data.state as any,week),reportSheets(admin.data.state as any,week));
+  assert.equal((officer.data.state as any).records.length,week===2?56:0);assert.deepEqual((officer.data.state as any).availability,[]);
+ }
+ const versions=await f.call('query',{kind:'recordVersions',id:record.id},{who:'oo'});
+ assert.equal((await f.call('photoUrls',{recordId:record.id,versionId:versions.data.items[0].id},{who:'oo'})).data.urls.length,1);
+ await assert.rejects(f.call('photoUrls',{ids:['unsubmitted']},{who:'oo'}),/未提交/);
+ await assert.rejects(f.call('photoUrls',{recordId:record.id},{who:'oo',semesterId:'wrong'}),/不可/);
+ const detail=await f.call('bootstrap',{page:{view:'record',semesterId:'s1',week:2,targetId:record.id}},{who:'oo'});assert.equal((detail.data.page as any).record.canEdit,false);
+ const own=await f.call('bootstrap',{page:{view:'availability',semesterId:'s1',week:2,memberId:'member'}},{who:'oo'});assert.equal((own.data.page as any).weekData.availability,null);
+ await f.call('command',{type:'availabilitySave',week:2,slots:['3:3'],note:'own-only'},{who:'oo',expectedVersion:0});
+ const saved=await f.call('query',{kind:'week',week:2,memberId:'member'},{who:'oo'});assert.deepEqual((saved.data.availability as any).data.slots,['3:3']);assert.doesNotMatch(JSON.stringify(saved),/"1:1"/);
+ await f.call('command',{type:'roleChange',id:'officer',role:'member',reason:'合成降级',confirmed:true},{expectedVersion:1});
+ assert.equal((await f.call('query',{kind:'records',week:2},{who:'oo'})).data.items.length,0);
+ await assert.rejects(f.call('photoUrls',{ids:['p1']},{who:'oo'}),/不可/);
+ await assert.rejects(f.call('query',{kind:'excelReport',week:2},{who:'oo'}),/仅管理员/);
+ await f.call('command',{type:'memberRemove',id:'officer',reason:'合成停用'},{expectedVersion:2});
+ await assert.rejects(f.call('query',{kind:'record',id:record.id},{who:'oo'}),/通过审核/);
 });

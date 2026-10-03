@@ -1,3 +1,4 @@
+import { canViewAllRecords } from '../../miniprogram/domain/capabilities';
 import { Entity, PageResult, Query, Resource, Workspace } from '../../miniprogram/domain/v2/protocol';
 import { LoadView, PageData, PageLoadRequest } from '../../miniprogram/domain/v2/page-data';
 import { Semester } from '../../miniprogram/domain/types';
@@ -59,7 +60,7 @@ export async function readPageData(request: PageLoadRequest, c: Context): Promis
   const kind = view === 'manage' ? section : view === 'records' ? 'records' : view === 'courses' ? 'courses' : '';
   const filter: Query = {eq:{semesterId:selected, week}};
   const ownFilter: Query = {eq:{...filter.eq,memberId:actor.id}};
-  const visibleFilter = manager ? filter : ownFilter;
+  const visibleFilter = (view === 'records' ? canViewAllRecords(actor.data.role) : manager) ? filter : ownFilter;
   const loadList = async () => {
     if (!kind) return;
     const [list, classes] = await Promise.all([
@@ -95,7 +96,7 @@ export async function readPageData(request: PageLoadRequest, c: Context): Promis
     } else if (['record','submission'].includes(view) && request.targetId) {
       if (typeof request.targetId !== 'string' || request.targetId.length > 200) fail('对象标识无效');
       const entity = (await c.get(view === 'record' ? 'records' : 'tasks',request.targetId))!;
-      if (entity.semesterId !== selected || !manager && entity.memberId !== actor.id) fail('无权查看他人的资料或其他学期资料','FORBIDDEN');
+      if (entity.semesterId !== selected || !(view === 'record' ? canViewAllRecords(actor.data.role) : manager) && entity.memberId !== actor.id) fail('无权查看他人的资料或其他学期资料','FORBIDDEN');
       if (view === 'record') result.record = {record:clean(entity),canEdit:admin || entity.memberId === actor.id && now-Date.parse(String(entity.data.firstSubmittedAt))<86400000};
       else result.task = clean(entity);
     }

@@ -153,7 +153,7 @@ test('审核样例各页面合并请求仍按所选角色隔离数据', async()=
   await assert.rejects(page('record',{targetId:'review-record'}),/无权查看/);
 });
 
-test('审核体验 leader 禁止所有排班草稿和文件导出，保留查看统计；officer 仅汇总导出',async()=>{
+test('审核体验 leader 禁止所有排班草稿和文件导出，保留查看统计；officer 完整Excel和记录读取',async()=>{
  const x=setup();await x.call('reviewLogin',{payload:{username:'审核老师辛苦了',password}});
  const boot=await x.call('bootstrap',{review:true});const base={review:true,epoch:boot.epoch,semesterId:'review-semester'};
  await x.call('reviewRole',{payload:{role:'leader'}});
@@ -163,7 +163,12 @@ test('审核体验 leader 禁止所有排班草稿和文件导出，保留查看
  const report=await x.call('query',{...base,payload:{kind:'report',week:1}});assert.equal((report.data.records as any[]).length,1);
  const page=await x.call('bootstrap',{review:true,payload:{fastPage:true,page:{view:'records',week:1}}});assert.equal((page.data.member as any).data.role,'leader');assert.equal((page.data.page as any).list.items.length,1);
  await x.call('reviewRole',{payload:{role:'officer'}});
- await assert.rejects(x.call('query',{...base,payload:{kind:'excelReport',week:1}}),/仅管理员/);
+ const full=await x.call('query',{...base,payload:{kind:'excelReport',week:1}});assert.equal((full.data.state as any).records.length,1);
+ await x.call('query',{...base,payload:{kind:'reportCheck',format:'xlsx',version:full.data.version}});
+ const officerPage=await x.call('bootstrap',{review:true,payload:{page:{view:'records',week:1}}});assert.equal((officerPage.data.page as any).list.items.length,1);
+ const detail=await x.call('bootstrap',{review:true,payload:{page:{view:'record',week:1,targetId:'review-record'}}});assert.equal((detail.data.page as any).record.canEdit,false);
+ const photos=await x.call('photoUrls',{...base,payload:{recordId:'review-record'}});assert.ok((photos.data.urls as any[]).length);
+
  assert.ok((await x.call('query',{...base,payload:{kind:'summaryReport',week:1}})).data.summary);
  await assert.rejects(x.call('query',{...base,payload:{kind:'namesReport',week:1}}),/仅管理员/);
  await assert.rejects(x.call('command',{...base,requestId:'officer-adjust',expectedVersion:0,payload:{type:'taskAdjust',week:2,changes:[]}}),/仅管理员/);

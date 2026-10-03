@@ -113,15 +113,17 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 | autoApproved | 无 | 仅管理员；分页自动通过申请，包含班级快照、通过时间；不返回微信标识 |
 | rebindings | 无 | 仅管理员；分页换绑申请 |
 | audit | 无 | 管理员/部长；分页操作记录 |
-| records | 必须，week可选 | 成员仅自己，管理人员全组；该学期分页 |
+| records | 必须，week可选 | 普通成员仅自己；管理员、组部长、信息部干事全组；该学期分页 |
 | recordVersions | 必须，id=记录ID | 与原记录同权限；分页版本，不能指定其他记录 |
 | semester | 必须 | `{ semester, classIds }`参与班级 |
 | task | 必须，id | 本人或管理人员；`{ task }` |
-| record | 必须，id | `{ record, canEdit }`；成员仅本人 |
-| week | 必须，week | 目标周的semester/plan/draft/uncovered/tasks/plans/availability/records/occurrences；成员任务和记录限本人 |
-| report | 必须，week，reportVersion可选 | 管理员/组部长读取目标周记录、学期、reportVersion及仅该周state；显式format=xlsx/txt/copy仅管理员 |
-| excelReport / namesReport | 必须，week | 仅管理员；分别提供完整Excel、TXT/复制名单所需目标周数据 |
-| reportCheck | 必须，version，format可选 | 管理人员核对版本；显式format=xlsx/txt/copy仅管理员，返回valid或冲突 |
+| record | 必须，id | `{ record, canEdit }`；普通成员仅本人，管理员/组部长/干事可查看全组；读取不授予修改权限 |
+| week | 必须，week | 兼容目标周查询；普通成员/干事的任务和记录仍限本人，全组记录使用records/report；availability对所有角色均只返回本人 |
+| report | 必须，week，reportVersion可选 | 管理员/组部长/干事读取目标周记录及仅该周state；format=xlsx仅管理员/干事，txt/copy仅管理员；不含无课时段 |
+| excelReport | 必须，week | 管理员/信息部干事；同样的完整Excel数据，含原始记录，availability为空 |
+| namesReport | 必须，week | 仅管理员；TXT/复制名单所需数据 |
+| summaryReport | 必须，week | 管理员/组部长/干事；班级聚合统计，兼容旧客户端；新版干事Excel使用excelReport |
+| reportCheck | 必须，version，format可选 | 管理员/组部长/干事核对版本；format=xlsx仅管理员/干事，txt/copy仅管理员，返回valid或冲突 |
 
 autoApproval 的 setting 保存 enabled、expiresAt、updatedBy、updatedByName、updatedAt。到期不需要后台任务修改该行，active 始终按服务器时间计算，客户端不可只读 enabled 判断。非管理员 bootstrap 不返回该配置。自动入组 SQL 还用数据库时钟检查截止，并校验成员、绑定、申请与审计四项的关系；到期或冲突全事务回滚。详见 [限时入组说明](AUTO-APPROVAL.md)。
 
@@ -171,7 +173,7 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 
 `photo`：epoch、semesterId、requestId，payload `{ taskId, base64 }`。不接受任意目标路径；服务器检查任务归属/管理员纠错资格、期限与约500KB限制，写入固定 `cloud/<epoch>/<随机ID>.jpg` 私有路径并登记，返回 `photoId`（`fileID`为同一业务ID兼容字段）。随后recordSubmit/Edit引用此ID；不能跨记录引用照片。上传成功而登记失败可能留下该轮次孤儿文件，维护扫描固定轮次目录处理。
 
-`photoUrls`：epoch、semesterId，payload `{ recordId, versionId? }` 获取当前/历史版本照片；也支持 `{ ids:[业务照片ID] }`（最多30），逐张检查归属。未提交照片仅上传者可读取；已提交照片遵循原记录权限。只返回短时签名URL，历史照片继续保留到统一业务清空。
+`photoUrls`：epoch、semesterId，payload `{ recordId, versionId? }` 获取当前/历史版本照片；也支持 `{ ids:[业务照片ID] }`（最多30），逐张检查归属。未提交照片仅上传者可读取；已提交照片遵循原记录权限：管理员/组部长/信息部干事可查看全组，普通成员仅本人；干事可读历史版本照片，但不能代他人上传或修改。只返回短时签名URL，历史照片继续保留到统一业务清空。
 
 ## 统一业务清空
 
@@ -191,12 +193,11 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 
 `planSkip` 生成 `data.skip=true` 的取消草稿，原任务继续生效；须再调用 `planConfirm` 才取消未完成任务并将计划设为 `skipped`。创建草稿及确认时均检查本周无已提交记录；已有记录只能调整剩余任务，不能整周跳过。`week.plan` 和报表包含 skipped 状态，导出显示跳过原因。跳过后可用 `planGenerate` 或 `taskAdjust`（expectedVersion 为 skipped 计划版本）重新生成草稿，人工确认后恢复 confirmed。
 
-## 2026-10-03 组部长权限最新调整（补充收权本地未部署）
+## 2026-10-03 最新角色读取与导出权限（本地源码）
 
-- `excelReport` 与 `namesReport` 分别服务完整 Excel、TXT/复制名单，仅管理员可调用；`report` 显式携带 `format=xlsx|txt|copy` 也仅管理员可调用。
-- 新版文件/名单输出用各自专用查询，并在 `reportCheck` 携带 `format=xlsx|txt` 再核对管理员身份与版本。复制名单在写剪贴板前检查；文件导出在生成前后检查。
-- 普通 `report`、不带导出格式的 `reportCheck` 保留管理员/组部长合法明细查询与统计；信息部干事继续使用 `summaryReport`，不获得原始名单与记录输出。
-- `taskAdjust`、`planConfirm` 仅管理员；`planGenerate` 仅管理员/信息部干事。组部长不能生成或确认任何排班/调整草稿。
-- 006 快速页面 RPC 与普通 page-load 保留原有阅读范围，不执行生成、确认或专门导出；无需 SQL 迁移。
-- 组部长仍可按已有业务权限读取明细并自行整理；旧前端也可能用通用 `report` 在本机生成文件，所以需同步更新前后端。
-- 详情与验证见 [组部长权限调整](LEADER-PERMISSIONS.md)。
+- 组部长仍禁止生成/确认任何排班或调整草稿、完整Excel、TXT和复制名单；保留全组记录、照片和统计阅读。
+- 信息部干事新增全组记录、历史版本、签字照片读取，以及与管理员一致的完整Excel；TXT/复制名单仍仅管理员。具体无课时段只读本人，提交状态只返回已提交/未提交等状态。
+- 干事仅可生成普通排班草稿，不能确认或调整任务、修改他人记录、处理成员审核任免、维护课程学期或清空。
+- 查询与图片授权通过可信微信/审核会话及当前有效角色；记录分页50、最多100，报表内部取完目标周全部分页，私有照片通过短时签名链接访问。
+- 快速页面读取配套迁移008，保留006历史脚本；page-load与普通查询同步。008只替换服务端读取RPC，不修改业务行、角色分配或权限写入规则。详见 [信息部干事读取权限](OFFICER-RECORD-ACCESS.md)。
+- 当前这项干事权限扩展未提交推送、未执行线上008、未部署或上传；不要据1.1.3已上传记录认定新权限已上线。

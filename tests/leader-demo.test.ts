@@ -15,5 +15,7 @@ test('demo 报表 handler 对组部长禁用 TXT/复制/Excel，管理员保留'
   page.copy();for(const kind of ['txt','xlsx'])page.export({currentTarget:{dataset:{kind}}});assert.equal(copied.length,0);assert.equal(files.length,0);
   state.actorId='m7';page.onShow();assert.equal(page.data.canExportNames,true);
   page.copy();for(const kind of ['txt','xlsx'])page.export({currentTarget:{dataset:{kind}}});assert.equal(copied.length,1);assert.equal(files.length,2);assert.deepEqual(errors,[]);
+  state.members.find(m=>m.id==='m6')!.role='officer';state.actorId='m6';page.onShow();assert.equal(page.data.manager,false);assert.equal(page.data.tab,'all');assert.equal(page.data.canExportExcel,true);assert.equal(page.data.canExportNames,false);
+  const before=files.length;page.copy();page.export({currentTarget:{dataset:{kind:'txt'}}});assert.equal(files.length,before);assert.equal(copied.length,1);page.export({currentTarget:{dataset:{kind:'xlsx'}}});assert.equal(files.length,before+1);
  }finally{g.wx=old.wx;g.Page=old.Page;runtime.mode=old.mode;}
 });

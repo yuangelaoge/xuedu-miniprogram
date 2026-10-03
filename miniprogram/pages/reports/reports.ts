@@ -1,4 +1,4 @@
-import { canExportFullXlsx, canExportNames } from "../../domain/capabilities";
+import { canViewAllRecords, canExportFullXlsx, canExportNames } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, published, run } from "../../services/store";
@@ -50,7 +50,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     const c = context();
     const identity = c.user.id + ":" + c.user.role;
     if (identity !== this.viewIdentity) {
-      this.setData({ tab: c.manager ? "all" : "mine", filePath: "", filename: "" });
+      this.setData({ tab: canViewAllRecords(c.user.role) ? "all" : "mine", filePath: "", filename: "" });
       this.viewIdentity = identity;
     }
     if (!this.initialized) {
@@ -78,7 +78,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
           course: r.course.name,
           classLabel: r.classLabel,
           date: r.date,
-          canView: manager || r.memberId === user.id,
+          canView: canViewAllRecords(user.role) || r.memberId === user.id,
         })),
       stats: gradeStats(state, week).map((g) => ({
         grade: g.grade,

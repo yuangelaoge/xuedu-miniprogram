@@ -39,7 +39,7 @@
     <view wx:if="{{view === 'schedule' || view === 'records' && semesterId || view === 'availability'}}" class="week-switch"><view class="week-arrow" data-delta="-1" bindtap="moveWeek">‹</view><view class="week-center"><view class="week-title">{{semesterId ? '第 ' + week + ' 周' : '尚未启用学期'}}</view><view class="week-dates">{{dates}}</view></view><view class="week-arrow" data-delta="1" bindtap="moveWeek">›</view></view>
     <view wx:if="{{view === 'schedule'}}" class="row" style="justify-content:flex-end;margin-top:22rpx"><text class="link" data-target="courses" bindtap="navigate">课程总表 ›</text></view>
     <view wx:if="{{coordinator && semesterId && (view === 'schedule' || view === 'records')}}" class="card">
-      <button disabled="{{busy}}" bindtap="submissionStatus">查看第 {{week}} 周提交状态</button>
+      <button class="v2-submission-status-button" disabled="{{busy}}" bindtap="submissionStatus">查看第 {{week}} 周提交状态</button>
       <view wx:if="{{statusLoaded}}" class="muted small">仅显示提交状态；无任务、未报名管理人员和跳过周不计漏交。</view>
       <view wx:for="{{statusRows}}" wx:key="id" class="v2-row">{{item.name}} · {{item.className}}<view>无课时间：{{item.availability}} · 听课记录：{{item.record}}</view></view>
       <button wx:if="{{statusCursor}}" disabled="{{busy}}" data-more="true" bindtap="submissionStatus">继续加载名单</button>

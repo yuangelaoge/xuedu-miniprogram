@@ -17,7 +17,7 @@ export function createPhotos(bucket: Bucket, decode: (base64: string) => Uint8Ar
     async upload(path: string, base64: string): Promise<string> {
       const safe = key(path), bytes = decode(base64);
       if (bytes.byteLength > 512000) throw new Error("照片过大，请压缩至500KB内");
-      const result = await bucket.upload(safe, bytes, { contentType: safe.endsWith(".png") ? "image/png" : "image/jpeg", upsert: false });
+      const result = await bucket.upload(safe, bytes, { contentType: safe.endsWith(".png") ? "image/png" : "image/jpeg", upsert: /^cloud\/[a-zA-Z0-9-]+\/stable-[a-f0-9]{64}\.jpg$/.test(path) });
       if (result.error) throw new Error("照片上传失败");
       return ID_PREFIX + safe;
     },

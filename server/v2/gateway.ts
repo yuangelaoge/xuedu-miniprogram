@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { copy, schedulingPage } from "./scheduling-read";
 import { isManager, canViewAllRecords, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
 import { summarizeEntities } from "./summary-report";
@@ -52,6 +53,12 @@ function clean(entity: Entity): Entity {
   delete result.identityKey; delete result.data.identityKey;
   return result;
 }
+function writeDigest(value: unknown): string {
+  // Storage/transport may reorder object keys; identical operations keep one digest.
+  const canonical = JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+    ? Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]])) : item);
+  return createHash("sha256").update(canonical).digest("hex");
+}
 const ROLE = ["member", "leader", "admin", "officer"];
 const DAY = 86400000;
 const OBSERVATION_FIELDS = ["absentNames", "leaveNames", "otherDescription", "evaluation", "feedback", "suggestion"];
@@ -62,6 +69,12 @@ export function createGatewayV2(deps: DependenciesV2) {
   return async (input: ApiRequest, context: { OPENID?: string; APPID?: string }): Promise<ApiResponse> => {
     if (!context.OPENID || context.APPID !== deps.appid) fail("微信身份无效", "UNAUTHENTICATED");
     if (!input || input.protocolVersion !== 2) fail("请更新小程序", "UPGRADE_REQUIRED");
+    const resolving = input.operation === "resolveWrite";
+    if (resolving) {
+      const original = input.payload?.original as ApiRequest | undefined;
+      if (!original || !(original.operation === "photo" || original.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(original.payload?.type)))) fail("恢复请求无效");
+      input = {...original, protocolVersion: 2, epoch: input.epoch};
+    }
     const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(input.operation)) fail("请更新小程序", "UPGRADE_REQUIRED");
     if (JSON.stringify(input).length > 1200000) fail("单次请求过大");
@@ -81,7 +94,12 @@ export function createGatewayV2(deps: DependenciesV2) {
     // Read the permission fence BEFORE speculative rows, then check it again in response().
     const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust"].includes(String(p.type));
     const membersList = input.operation === "query" && p.kind === "members";
-    const prefetched = (scheduling || membersList) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
+    const recordWrite = input.operation === "photo" || input.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(p.type));
+    const digest = recordWrite ? writeDigest([input.operation,input.semesterId,input.expectedVersion,p]) : "";
+    const prefetched = recordWrite && repo.recordRead ? await repo.recordRead(identityKey, {
+      kind: input.operation === "photo" ? "photo" : p.type, epoch: input.epoch, semesterId: input.semesterId,
+      taskId: p.taskId, id: p.id, photos: p.photos, requestId: input.requestId,
+    }) : (scheduling || membersList) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
       kind: membersList ? "members" : p.type, epoch: input.epoch, semesterId: input.semesterId,
       week: p.week, requestId: input.requestId, cursor: input.cursor, limit: input.limit, version: p.version,
     }) : null;
@@ -156,17 +174,18 @@ export function createGatewayV2(deps: DependenciesV2) {
       const outcome = await repo.commit({ epoch: workspace.epoch, workspaceVersion: workspace.version,
         permissionsVersion: workspace.permissionsVersion, identityKey, actorId: actor?.id || (initialize ? String(result.adminId) : autoJoin ? String(result.memberId) : ""),
         requestId, reads: Array.from(reads.values()), changes: Array.from(changes.values()), workspace: patch,
-        maintenanceId, initialize, autoJoin, result: { changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
+        maintenanceId, initialize, autoJoin, result: { ...(recordWrite ? {writeDigest:digest,writeState:"committed"} : {}), changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
+      if (recordWrite && outcome.writeDigest !== digest) fail("请求内容已变化，请恢复原操作", "REQUEST_MISMATCH");
       const expectedEpoch = patch?.epoch || workspace.epoch;
       const committedPermissions = workspace.permissionsVersion;
       workspace = await repo.workspace();
-      // These draft commands cannot change permissions. Fence their result with this
+      // These scheduling/record writes cannot change permissions. Fence their result with this
       // fresh read; no second identical network read is needed after synchronous work.
-      if (prefetched && scheduling && workspace.permissionsVersion !== committedPermissions) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
+      if ((recordWrite || prefetched && scheduling) && workspace.permissionsVersion !== committedPermissions) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
       if (workspace.epoch !== expectedEpoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT");
       resourceVersions.workspace = workspace.version;
       for (const change of changes.values()) if (change.value && !["bindings", "requests"].includes(change.resource)) resourceVersions[change.resource + ":" + change.id] = change.expectedVersion + 1;
-      if (prefetched && scheduling) return {protocolVersion: 2 as const, epoch: workspace.epoch, resourceVersions, data: outcome};
+      if (prefetched && (scheduling || recordWrite)) return {protocolVersion: 2 as const, epoch: workspace.epoch, resourceVersions, data: outcome};
       return response(outcome);
     };
     const requireSemester = async () => {
@@ -206,12 +225,14 @@ export function createGatewayV2(deps: DependenciesV2) {
     };
     const draftTask = (plan: Entity, task: Entity, data: Record<string, unknown>) => add("tasks", { ...data, status: "draft", replacesTaskId: task.id }, { semesterId: task.semesterId, week: task.week, memberId: String(data.memberId || task.memberId), parentId: plan.id });
 
+    if (recordWrite && p.writeOwnerId !== undefined && p.writeOwnerId !== member().id) fail("成员身份已变化，请重新打开页面", "IDENTITY_CHANGED");
     // A receipt is independent from historical business rows; replay before mutable validation.
     if (input.requestId && !["bootstrap", "query", "photoUrls", "clearPreview"].includes(input.operation)) {
       const receipt = (await page("requests", { eq: { identityKey, parentId: input.requestId }, limit: 1 })).items[0];
       if (receipt?.data.result) {
         if (receipt.data.permissionsVersion !== workspace.permissionsVersion) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
         if (!validActor && !(input.operation === "command" && ["join", "rebindRequest"].includes(String(p.type)))) fail("原微信身份已失效", "FORBIDDEN");
+        if (recordWrite && (receipt.data.result as Record<string,unknown>).writeDigest !== digest) fail("请求内容已变化，请恢复原操作", "REQUEST_MISMATCH");
         return response(receipt.data.result as Record<string, unknown>);
       }
     }
@@ -383,15 +404,25 @@ export function createGatewayV2(deps: DependenciesV2) {
       }
       fail("查询类型无效");
     }
+    if (resolving) {
+      requireExecution(); mutable(); member();
+      // The normal commit lock serializes this empty terminal receipt with the
+      // original write. Once returned, a delayed original cannot commit changes.
+      return commit({writeState:"notCommitted"});
+    }
     if (input.operation === "photo") {
       requireExecution(); mutable(); member(); const task = (await get("tasks", text(p.taskId, "任务标识")))!;
       if (task.semesterId !== input.semesterId) fail("学期不匹配");
       const record = (await page("records", { eq: { taskId: task.id }, limit: 1 })).items[0];
       if (task.memberId !== member().id && member().data.role !== "admin") fail("不可上传他人任务照片", "FORBIDDEN");
-      if (record && member().data.role !== "admin" && now - Date.parse(String(record.data.firstSubmittedAt)) >= DAY) fail("本人修改期限已过");
+      if (record && member().data.role !== "admin" && (now - Date.parse(String(record.data.firstSubmittedAt)) >= DAY || now < Date.parse(String(record.data.firstSubmittedAt)))) fail("本人修改期限已过");
       const base64 = text(p.base64, "照片内容", 700000);
       if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64) || base64.length * 3 / 4 > 512000) fail("单张照片不得超过500KB");
-      const path = `cloud/${workspace.epoch}/${deps.uuid()}.jpg`;
+      text(input.requestId, "请求标识", 200);
+      // Identical content for the same owner/task/epoch has one immutable path,
+      // including when storage succeeds but metadata registration times out.
+      const fileHash = createHash("sha256").update(JSON.stringify([workspace.epoch,identityKey,task.id,base64])).digest("hex");
+      const path = `cloud/${workspace.epoch}/stable-${fileHash}.jpg`;
       const storageId = await deps.photos.upload(path, base64);
       const photo = add("photos", { storageId, path, createdAt: at }, { semesterId: task.semesterId, memberId: member().id, taskId: task.id });
       // A failed commit leaves an orphan only inside this fixed epoch directory; maintenance sweeps it.

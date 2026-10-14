@@ -61,7 +61,7 @@ exports.main = async event => {
       } };
     }
     const reviewOperation = ["reviewLogin", "reviewStatus", "reviewRole", "reviewLogout"].includes(event.operation);
-    const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
+    const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "resolveWrite", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(event.operation) && !reviewOperation) return { ok: false, code: "UPGRADE_REQUIRED", error: "请更新小程序" };
     if (!config.executionConfigured || !config.environmentMatches || !config.backendMatches || !config.key)
       return { ok: false, code: "CONFIGURATION", error: "云端配置尚未完成，请联系维护人员核对环境、服务端密钥和实际函数执行上限" };

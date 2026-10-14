@@ -52,8 +52,8 @@ function setup() {
 test("photo integration uploads decoded bytes only into current epoch and reads signed URLs through record authorization", async () => {
   const f = setup();
   const uploaded = await f.call("photo", { taskId: "task", base64: Buffer.from([255, 216, 255, 217]).toString("base64") });
-  assert.equal(f.uploaded.length, 1); assert.match(f.uploaded[0].path, /^cloud\/old-epoch\/uuid-\d+\.jpg$/);
-  assert.deepEqual([...f.uploaded[0].bytes], [255, 216, 255, 217]); assert.deepEqual(f.uploaded[0].options, { contentType: "image/jpeg", upsert: false });
+  assert.equal(f.uploaded.length, 1); assert.match(f.uploaded[0].path, /^cloud\/old-epoch\/stable-[a-f0-9]{64}\.jpg$/);
+  assert.deepEqual([...f.uploaded[0].bytes], [255, 216, 255, 217]); assert.deepEqual(f.uploaded[0].options, { contentType: "image/jpeg", upsert: true });
   const photoId = String(uploaded.data.fileID), photo = (await f.repository.get("photos", photoId))!;
   assert.equal(photo.data.storageId, prefix + f.uploaded[0].path);
   const metrics = { expected: 30, actual: 30, late: 0, early: 0, sleep: 0, phone: 0, talk: 0, other: 0 };
@@ -121,4 +121,14 @@ test("photo signed URL adapter preserves requested ordering and rejects unknown/
   await assert.rejects(f.photos.urls(paths.map(path => prefix + path)), /链接无效/);
   await assert.rejects(f.photos.list("cloud/"), /固定旧轮次/);
   assert.equal(f.listed.length, 0);
+});
+
+
+test("content-addressed retries reuse one object; changed bytes use a different path; legacy paths never upsert", async () => {
+  const f=setup(), base64=Buffer.from([255,216,255,217]).toString("base64");
+  const request={requestId:"same-upload"};const first=await f.call("photo",{taskId:"task",base64},request);
+  const again=await f.call("photo",{taskId:"task",base64},request);assert.equal(first.data.fileID,again.data.fileID);assert.equal(f.uploaded.length,1);
+  await f.call("photo",{taskId:"task",base64});assert.equal(f.files.size,1);
+  await f.call("photo",{taskId:"task",base64:Buffer.from([255,216,1,255,217]).toString("base64")});assert.equal(f.files.size,2);
+  await f.photos.upload("cloud/old-epoch/legacy.jpg",base64);assert.equal(f.uploaded.at(-1)!.options.upsert,false);
 });

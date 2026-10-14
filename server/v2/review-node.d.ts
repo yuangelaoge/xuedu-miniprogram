@@ -1,4 +1,5 @@
 declare module "node:crypto" {
+  export function createHash(algorithm: string): { update(data: string): { digest(encoding: string): string } };
   export function createHmac(algorithm: string, key: Uint8Array): { update(data: string): { digest(encoding: string): string } };
   export function randomUUID(): string;
   export function scryptSync(password: string, salt: Uint8Array, keylen: number, options: { N: number; r: number; p: number; maxmem: number }): Uint8Array;

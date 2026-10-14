@@ -81,7 +81,7 @@ export function createReviewGateway(deps: ReviewDependencies) {
       await deps.store.role(digest, session.version, role as ReviewRole);
       return response(session, {role,expiresAt:session.expiresAt});
     }
-    if (input.review !== true || !["bootstrap","query","command","photo","photoUrls"].includes(input.operation)) fail("FORBIDDEN", "审核会话无权执行此操作");
+    if (input.review !== true || !["bootstrap","query","command","photo","photoUrls","resolveWrite"].includes(input.operation)) fail("FORBIDDEN", "审核会话无权执行此操作");
     const memory = new MemoryRepository(session.snapshot.workspace, session.snapshot.rows, deps.now);
     let stateVersion = session.version;
     const repository: Repository = {

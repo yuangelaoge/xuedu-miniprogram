@@ -5,6 +5,19 @@ import { Repository } from "./repository";
 
 const publicErrors = new Set(["SCHEDULING_LIMIT","AUTO_APPROVAL_EXPIRED","VERSION_CONFLICT", "EPOCH_CHANGED", "MAINTENANCE", "MAINTENANCE_CHANGED", "IDENTITY_CHANGED", "LAST_ADMIN", "ALREADY_INITIALIZED", "UNIQUE_CONFLICT", "FORBIDDEN", "INVALID_QUERY", "INVALID_COMMIT", "INVALID_CHANGE", "INVALID_ENTITY", "INVALID_EPOCH", "INVALID_BINDING", "INVALID_ADMIN_CLASS", "UPDATE_REQUIRED", "LEGACY_MAINTENANCE_PENDING", "CUTOVER_REQUIRED"]);
 export class PostgresRepository implements Repository {
+  private recordRpcAvailable = true;
+  async recordRead(identityKey: string, request: Record<string, unknown>): Promise<SchedulingRead | null> {
+    if (!this.recordRpcAvailable) return null;
+    const result = await this.db.rpc("xuedu_v2_record_read", {p_identity_key: identityKey, p_request: request});
+    const error = result.error as {code?: string; message?: string} | null;
+    if (error && ["42883", "PGRST202"].includes(error.code || "")) { this.recordRpcAvailable = false; return null; }
+    if (error) {
+      if (["40001", "40P01", "55P03"].includes(error.code || "")) throw new Error("VERSION_CONFLICT");
+      const safe = (error.message || "").match(/[A-Z][A-Z_]+/g)?.find(s => publicErrors.has(s));
+      throw new Error(safe || "DATABASE_UNAVAILABLE");
+    }
+    return result.data as SchedulingRead;
+  }
   private schedulingRpcAvailable = true;
   async schedulingRead(identityKey: string, request: Record<string, unknown>): Promise<SchedulingRead | null> {
     if (!this.schedulingRpcAvailable) return null;

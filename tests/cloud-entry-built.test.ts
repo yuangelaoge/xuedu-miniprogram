@@ -50,6 +50,7 @@ test('实际独立构建包的审核错误可跨入口识别，未知异常仍�
             assert.ok(session); session.role = args.p_role as ReviewRole; data = ++session.version; break;
           case 'xuedu_v2_workspace':
             data = { id: 'main', epoch: 'synthetic-epoch', version: 1, permissionsVersion: 1, protocolVersion: 2, activeSemesterId: '', maxExecutionMs: 3000, maintenance: '' }; break;
+          case 'xuedu_v2_scheduling_read': return {data: null, error: {code: 'PGRST202'}}; // Prior-schema rollout fallback.
           case 'xuedu_v2_query': data = { items: [], cursor: '' }; break;
           default: throw new Error('Unexpected RPC ' + name);
         }

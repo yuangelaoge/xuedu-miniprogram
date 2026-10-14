@@ -1,3 +1,4 @@
+import { copy, schedulingPage } from "./scheduling-read";
 import { isManager, canViewAllRecords, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
 import { summarizeEntities } from "./summary-report";
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
@@ -78,13 +79,19 @@ export function createGatewayV2(deps: DependenciesV2) {
     const memberHint = hintId(input.readHint?.memberId);
     const p = input.payload || {};
     // Read the permission fence BEFORE speculative rows, then check it again in response().
-    let workspace = await repo.workspace();
+    const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust"].includes(String(p.type));
+    const membersList = input.operation === "query" && p.kind === "members";
+    const prefetched = (scheduling || membersList) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
+      kind: membersList ? "members" : p.type, epoch: input.epoch, semesterId: input.semesterId,
+      week: p.week, requestId: input.requestId, cursor: input.cursor, limit: input.limit, version: p.version,
+    }) : null;
+    let workspace = prefetched?.workspace || await repo.workspace();
     const pageRequest = p.page as PageLoadRequest | undefined;
     const semesterHint = input.operation === "bootstrap" && (p.includeHome === true || p.page !== undefined)
       ? hintId(input.readHint?.semesterId) || hintId(pageRequest?.semesterId) || workspace.activeSemesterId : "";
     const [bindingAhead, memberAhead, semesterAhead] = await Promise.all([
-      repo.query("bindings", {eq:{identityKey,epoch:workspace.epoch},limit:1}),
-      memberHint ? repo.get("members", memberHint) : Promise.resolve(undefined),
+      prefetched ? Promise.resolve(schedulingPage(prefetched.rows.bindings || [], {eq:{identityKey,epoch:workspace.epoch},limit:1})) : repo.query("bindings", {eq:{identityKey,epoch:workspace.epoch},limit:1}),
+      memberHint && !prefetched ? repo.get("members", memberHint) : Promise.resolve(undefined),
       semesterHint ? repo.get("semesters", semesterHint) : Promise.resolve(undefined),
     ]);
     const reads = new Map<string, ReadVersion>();
@@ -95,13 +102,17 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (!["bindings", "requests"].includes(resource)) resourceVersions[resource + ":" + row.id] = row.version; return row;
     };
     const get = async (resource: Resource, id: string, required = true): Promise<Entity | undefined> => {
-      const row = resource === "semesters" && id === semesterHint && semesterAhead?.epoch === workspace.epoch
+      const cachedRows = prefetched?.rows[resource];
+      const row = cachedRows ? copy(cachedRows.find(row => row.id === id) || null) || undefined : resource === "semesters" && id === semesterHint && semesterAhead?.epoch === workspace.epoch
         ? semesterAhead : await repo.get(resource, id);
       if ((!row || row.epoch !== workspace.epoch) && required) fail("对象不存在或已清空", "NOT_FOUND");
       return row && row.epoch === workspace.epoch ? track(resource, row) : undefined;
     };
     const page = async (resource: Resource, query: Query = {}) => {
-      const result = await repo.query(resource, { ...query, eq: { ...query.eq, epoch: workspace.epoch } });
+      const scoped = { ...query, eq: { ...query.eq, epoch: workspace.epoch } };
+      const cachedRows = prefetched?.rows[resource];
+      const result = membersList && resource === "members" && prefetched?.memberPage ? copy(prefetched.memberPage)
+        : cachedRows ? schedulingPage(cachedRows, scoped) : await repo.query(resource, scoped);
       result.items.forEach(row => track(resource, row)); return result;
     };
     const all = async (resource: Resource, query: Query = {}): Promise<Entity[]> => {
@@ -147,10 +158,15 @@ export function createGatewayV2(deps: DependenciesV2) {
         requestId, reads: Array.from(reads.values()), changes: Array.from(changes.values()), workspace: patch,
         maintenanceId, initialize, autoJoin, result: { changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
       const expectedEpoch = patch?.epoch || workspace.epoch;
+      const committedPermissions = workspace.permissionsVersion;
       workspace = await repo.workspace();
+      // These draft commands cannot change permissions. Fence their result with this
+      // fresh read; no second identical network read is needed after synchronous work.
+      if (prefetched && scheduling && workspace.permissionsVersion !== committedPermissions) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
       if (workspace.epoch !== expectedEpoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT");
       resourceVersions.workspace = workspace.version;
       for (const change of changes.values()) if (change.value && !["bindings", "requests"].includes(change.resource)) resourceVersions[change.resource + ":" + change.id] = change.expectedVersion + 1;
+      if (prefetched && scheduling) return {protocolVersion: 2 as const, epoch: workspace.epoch, resourceVersions, data: outcome};
       return response(outcome);
     };
     const requireSemester = async () => {

@@ -33,7 +33,9 @@ test("云端页面完整流程：首次登记、独立建班、申请审核、�
   const course=(await repository.query("courses",{})).items[0];await manage.openForm("courseSave",course);assert.equal(manage.data.fields.find((f:any)=>f.key==="teacher").value,"测试教师");manage.cancelForm();
   who="member";const availability=await page("availability");availability.data.selectedSlots=["1:1","1:2"];await availability.saveAvailability();assert.deepEqual(errors,[]);
   availability.toggleSlot(event({key:"1:3"}));assert.ok(availability.data.selectedSlots.includes("1:3"));availability.toggleSlot(event({key:"1:3"}));assert.ok(!availability.data.selectedSlots.includes("1:3"));
-  who="owner";const schedule=await page("schedule");await schedule.generate();assert.ok(schedule.data.weekData.draft);await schedule.confirmPlan();assert.deepEqual(errors,[]);const task=(await repository.query("tasks",{})).items.find(t=>t.data.status==="confirmed")!;assert.ok(task);
+  who="owner";const schedule=await page("schedule");await schedule.adjust(event());
+  assert.ok(schedule.data.fields.find((f:any)=>f.key==="memberId").options.length>0);
+  assert.ok(schedule.data.fields.find((f:any)=>f.key==="occurrenceId").options.length>0,"补排必须有本周课程选项");schedule.cancelForm();await schedule.generate();assert.ok(schedule.data.weekData.draft);await schedule.confirmPlan();assert.deepEqual(errors,[]);const task=(await repository.query("tasks",{})).items.find(t=>t.data.status==="confirmed")!;assert.ok(task);
   who="member";const submission=await page("submission",{taskId:task.id,semesterId});fill(submission,{expected:30,actual:29,late:0,early:0,sleep:0,phone:0,talk:0,other:0,absentNames:"无",leaveNames:"测试同学"});await submission.choosePhotos();assert.deepEqual(errors,[]);await save(submission);
   const home=await page("home");
   const currentSemester=(await repository.get("semesters",semesterId))!.data as unknown as Semester;

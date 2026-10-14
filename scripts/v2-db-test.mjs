@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 // Disposable local Docker database only. No connection string or cloud credential accepted.
 const pagesOnly = process.argv.includes('--pages');
-const officer = process.argv.includes('--officer');
+const scheduling = process.argv.includes('--scheduling');
+const officer = process.argv.includes('--officer') || scheduling;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const container = 'xuedu-v2-test-' + process.pid;
 const docker = args => execFileSync('docker', args, { encoding: 'utf8', stdio: ['pipe','pipe','pipe'] });
@@ -25,7 +26,8 @@ try {
   if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/006-page-bootstrap.sql')), stdio:['pipe','ignore','inherit'] });
   if (officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/007-information-officer.sql')), stdio:['pipe','ignore','inherit'] });
   if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/008-officer-record-access.sql')), stdio:['pipe','ignore','inherit'] });
-  const result = spawnSync(process.execPath, ['--import','tsx','--test',pagesOnly ? 'tests/v2-page-rpc.test.ts' : 'tests/v2-database-postgres.test.ts'], { cwd:root, env:{...process.env,XUEDU_LOCAL_PG_CONTAINER:container},stdio:'inherit' });
+  if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/009-scheduling-read.sql')), stdio:['pipe','ignore','inherit'] });
+  const result = spawnSync(process.execPath, ['--import','tsx','--test',scheduling ? 'tests/v2-scheduling-rpc.test.ts' : pagesOnly ? 'tests/v2-page-rpc.test.ts' : 'tests/v2-database-postgres.test.ts'], { cwd:root, env:{...process.env,XUEDU_LOCAL_PG_CONTAINER:container},stdio:'inherit' });
   process.exitCode = result.status === 0 ? 0 : 1;
 } catch (e) { console.error('Local PostgreSQL test failed:', e.message); process.exitCode=1; }
 finally { if(started) docker(['rm','-f',container]); }

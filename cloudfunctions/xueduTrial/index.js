@@ -26,6 +26,7 @@ function configuration() {
     reviewSessionKey: process.env.REVIEW_SESSION_KEY || "", reviewAccessUntil: process.env.REVIEW_ACCESS_UNTIL || "" };
 }
 const knownErrors = {
+  SCHEDULING_LIMIT: "本周排班资料超过处理上限，请联系维护人员",
   AUTO_APPROVAL_EXPIRED: "自动通过已到期，请重新提交转入人工审核",
   VERSION_CONFLICT: "数据已被修改，请刷新后重试", EPOCH_CHANGED: "业务数据已变化，请刷新",
   MAINTENANCE: "业务数据正在维护，请稍后再试", MAINTENANCE_CHANGED: "维护任务已变化，请刷新",

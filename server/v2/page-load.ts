@@ -88,9 +88,10 @@ export async function readPageData(request: PageLoadRequest, c: Context): Promis
       const own = (await c.page('availability', {...ownFilter,limit:1})).items[0];
       result.weekData = {semester:clean(semester),tasks:[],occurrences:[],availability:own ? clean(own) : null};
     } else if (view === 'schedule') {
-      const [tasks, plans] = await Promise.all([c.all('tasks',visibleFilter),c.all('plans',filter)]);
+      const [tasks, plans, occurrences] = await Promise.all([c.all('tasks',visibleFilter),c.all('plans',filter),
+        admin ? c.all('occurrences',{eq:{...filter.eq,status:'active'}}) : Promise.resolve([])]);
       const draft = plans.find(p=>p.data.status === 'draft');
-      result.weekData = {semester:clean(semester),tasks:tasks.map(clean),occurrences:[],
+      result.weekData = {semester:clean(semester),tasks:tasks.map(clean),occurrences:occurrences.map(clean),
         plan:plans.filter(p=>['confirmed','skipped'].includes(String(p.data.status))).map(clean).pop(),
         draft:draft ? clean(draft) : undefined,uncovered:(draft?.data.uncovered || []) as {label:string;reason:string}[]};
     } else if (['record','submission'].includes(view) && request.targetId) {

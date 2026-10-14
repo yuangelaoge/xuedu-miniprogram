@@ -1,6 +1,6 @@
   <view wx:if="{{formType}}" id="v2-active-form" class="v2-card v2-form">
     <view class="v2-title">{{formTitle}}</view>
-    <view wx:if="{{view === 'manage'}}" class="v2-actions v2-save-toolbar"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{recordPending ? '确认保存结果' : formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
+    <view wx:if="{{view === 'manage'}}" class="v2-actions v2-save-toolbar"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
     <block wx:if="{{formType === 'recordSubmit' || formType === 'recordEdit'}}"><include src="cloud-record-form.wxml" /></block>
     <view wx:for="{{fields}}" wx:key="key" wx:for-item="field" wx:if="{{formType !== 'recordSubmit' && formType !== 'recordEdit'}}" class="v2-field">
       <view class="v2-label">{{field.label}}</view>
@@ -12,5 +12,5 @@
     </view>
     <block wx:if="{{formType === 'import'}}"><view class="actions"><button disabled="{{busy}}" bindtap="chooseImportFile">选择JSON／TXT文件</button><button disabled="{{busy}}" bindtap="previewImport">解析预览</button></view><view wx:if="{{importProgress}}" class="v2-note">{{importProgress}}</view><view wx:if="{{importPending}}" class="actions"><button disabled="{{busy}}" bindtap="restoreImport">恢复上次内容</button><button disabled="{{busy}}" bindtap="discardImport">清除本机续传记录</button></view><view wx:if="{{importReady}}"><view class="section-title">{{importCount}} 条课程 · {{importClassCount}} 个新班级</view><view wx:for="{{importPreview}}" wx:key="*this" class="v2-row">{{item}}</view><view class="muted small">仅展示前20条。确认时服务端先校验完整文件，再分小批写入；中断后使用相同请求号续传，已成功批次不会自动回滚。</view></view></block>
 
-    <view wx:if="{{view !== 'manage'}}" class="v2-actions"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{recordPending ? '确认保存结果' : formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
+    <view wx:if="{{view !== 'manage'}}" class="v2-actions"><button type="primary" disabled="{{busy}}" bindtap="saveForm">{{formType === 'taskAdjust' ? '生成待确认草稿' : formType === 'import' ? '确认导入' : formType === 'recordSubmit' ? '提交听课记录' : formType === 'recordEdit' ? '保存更正' : '保存'}} </button><button disabled="{{busy}}" bindtap="cancelForm">取消</button></view>
   </view>

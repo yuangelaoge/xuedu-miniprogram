@@ -110,7 +110,7 @@ test("V2 same-request replay remains idempotent after task is submitted; record 
   const retry = await f.call("command", payload, { who: "om", expectedVersion: 1, requestId: "same" });
   assert.deepEqual(retry.data, first.data);
   const record = (first.data.changed as Entity[]).find(e => e.data.firstSubmittedAt)!;
-  const edits = await Promise.allSettled([1, 2].map(() => f.call("command", { type: "recordEdit", id: record.id, reason: "并发核对", metrics, photos: ["p1"] }, { who: "om", expectedVersion: 1 })));
+  const edits = await Promise.allSettled([1, 2].map(i => f.call("command", { type: "recordEdit", id: record.id, reason: "并发核对" + i, metrics, photos: ["p1"] }, { who: "om", expectedVersion: 1 })));
   assert.equal(edits.filter(e => e.status === "fulfilled").length, 1);
 });
 

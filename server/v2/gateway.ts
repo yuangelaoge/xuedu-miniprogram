@@ -69,12 +69,6 @@ export function createGatewayV2(deps: DependenciesV2) {
   return async (input: ApiRequest, context: { OPENID?: string; APPID?: string }): Promise<ApiResponse> => {
     if (!context.OPENID || context.APPID !== deps.appid) fail("微信身份无效", "UNAUTHENTICATED");
     if (!input || input.protocolVersion !== 2) fail("请更新小程序", "UPGRADE_REQUIRED");
-    const resolving = input.operation === "resolveWrite";
-    if (resolving) {
-      const original = input.payload?.original as ApiRequest | undefined;
-      if (!original || !(original.operation === "photo" || original.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(original.payload?.type)))) fail("恢复请求无效");
-      input = {...original, protocolVersion: 2, epoch: input.epoch};
-    }
     const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(input.operation)) fail("请更新小程序", "UPGRADE_REQUIRED");
     if (JSON.stringify(input).length > 1200000) fail("单次请求过大");
@@ -95,15 +89,21 @@ export function createGatewayV2(deps: DependenciesV2) {
     const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust"].includes(String(p.type));
     const membersList = input.operation === "query" && p.kind === "members";
     const recordWrite = input.operation === "photo" || input.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(p.type));
+    if (typeof input.requestId === "string" && input.requestId.startsWith("record-v1-")) fail("请求标识使用了保留前缀");
+    if (recordWrite) text(input.requestId, "请求标识", 200);
     const digest = recordWrite ? writeDigest([input.operation,input.semesterId,input.expectedVersion,p]) : "";
     const prefetched = recordWrite && repo.recordRead ? await repo.recordRead(identityKey, {
       kind: input.operation === "photo" ? "photo" : p.type, epoch: input.epoch, semesterId: input.semesterId,
-      taskId: p.taskId, id: p.id, photos: p.photos, requestId: input.requestId,
+      taskId: p.taskId, id: p.id, photos: p.photos, operationDigest: digest,
     }) : (scheduling || membersList) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
       kind: membersList ? "members" : p.type, epoch: input.epoch, semesterId: input.semesterId,
       week: p.week, requestId: input.requestId, cursor: input.cursor, limit: input.limit, version: p.version,
     }) : null;
     let workspace = prefetched?.workspace || await repo.workspace();
+    // Old clients generate fresh request IDs on retry. The same immutable write
+    // (including expectedVersion) shares a receipt only within its live permission
+    // version, identity and epoch. No pending/cancelled receipt is ever returned.
+    if (recordWrite) input = {...input,requestId:`record-v1-${digest}-p${workspace.permissionsVersion}`};
     const pageRequest = p.page as PageLoadRequest | undefined;
     const semesterHint = input.operation === "bootstrap" && (p.includeHome === true || p.page !== undefined)
       ? hintId(input.readHint?.semesterId) || hintId(pageRequest?.semesterId) || workspace.activeSemesterId : "";
@@ -174,8 +174,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       const outcome = await repo.commit({ epoch: workspace.epoch, workspaceVersion: workspace.version,
         permissionsVersion: workspace.permissionsVersion, identityKey, actorId: actor?.id || (initialize ? String(result.adminId) : autoJoin ? String(result.memberId) : ""),
         requestId, reads: Array.from(reads.values()), changes: Array.from(changes.values()), workspace: patch,
-        maintenanceId, initialize, autoJoin, result: { ...(recordWrite ? {writeDigest:digest,writeState:"committed"} : {}), changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
-      if (recordWrite && outcome.writeDigest !== digest) fail("请求内容已变化，请恢复原操作", "REQUEST_MISMATCH");
+        maintenanceId, initialize, autoJoin, result: { changed, refresh: Array.from(new Set(Array.from(changes.values()).map(c => c.resource))), ...result } });
       const expectedEpoch = patch?.epoch || workspace.epoch;
       const committedPermissions = workspace.permissionsVersion;
       workspace = await repo.workspace();
@@ -225,14 +224,12 @@ export function createGatewayV2(deps: DependenciesV2) {
     };
     const draftTask = (plan: Entity, task: Entity, data: Record<string, unknown>) => add("tasks", { ...data, status: "draft", replacesTaskId: task.id }, { semesterId: task.semesterId, week: task.week, memberId: String(data.memberId || task.memberId), parentId: plan.id });
 
-    if (recordWrite && p.writeOwnerId !== undefined && p.writeOwnerId !== member().id) fail("成员身份已变化，请重新打开页面", "IDENTITY_CHANGED");
     // A receipt is independent from historical business rows; replay before mutable validation.
     if (input.requestId && !["bootstrap", "query", "photoUrls", "clearPreview"].includes(input.operation)) {
       const receipt = (await page("requests", { eq: { identityKey, parentId: input.requestId }, limit: 1 })).items[0];
       if (receipt?.data.result) {
         if (receipt.data.permissionsVersion !== workspace.permissionsVersion) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
         if (!validActor && !(input.operation === "command" && ["join", "rebindRequest"].includes(String(p.type)))) fail("原微信身份已失效", "FORBIDDEN");
-        if (recordWrite && (receipt.data.result as Record<string,unknown>).writeDigest !== digest) fail("请求内容已变化，请恢复原操作", "REQUEST_MISMATCH");
         return response(receipt.data.result as Record<string, unknown>);
       }
     }
@@ -403,12 +400,6 @@ export function createGatewayV2(deps: DependenciesV2) {
         return response(await readWeek(semester, week));
       }
       fail("查询类型无效");
-    }
-    if (resolving) {
-      requireExecution(); mutable(); member();
-      // The normal commit lock serializes this empty terminal receipt with the
-      // original write. Once returned, a delayed original cannot commit changes.
-      return commit({writeState:"notCommitted"});
     }
     if (input.operation === "photo") {
       requireExecution(); mutable(); member(); const task = (await get("tasks", text(p.taskId, "任务标识")))!;

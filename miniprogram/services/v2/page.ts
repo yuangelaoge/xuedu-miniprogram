@@ -1,4 +1,3 @@
-import { pendingWrite, recoverableWrite, finishWrite, writeNeedsRefresh } from "./recoverable-write";
 import { isManager, canViewAllRecords, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, canAdjustTasks, canExportNames, participatesByDefault } from "../../domain/capabilities";
 import { SummaryReport } from "../../domain/v2/summary-report";
 import { summaryGradeStats } from "../../domain/summary-xlsx";
@@ -114,7 +113,7 @@ export function registerCloudPage(view: View): void {
       semesterId: "", semesterName: "", activeSemesterId: "", semesters: [] as Entity[], semesterOptions: [] as Option[], semesterCursor: "", semesterIndex: 0,
       fixedSemester: "", targetId: "", week: 1, weekData: { tasks: [], occurrences: [] } as WeekData, tasks: [] as Row[],
       record: null as Entity | null, recordFields: [] as { label: string; value: string }[], canEdit: false, versions: [] as Row[], versionCursor: "", photoUrls: [] as string[],
-      recordPending: false, photoPending: false, formType: "", formTitle: "", formId: "", formVersion: 0, fields: [] as Field[], formExtra: {} as Record<string, unknown>, photoIds: [] as string[], formPhotos: [] as string[],
+      formType: "", formTitle: "", formId: "", formVersion: 0, fields: [] as Field[], formExtra: {} as Record<string, unknown>, photoIds: [] as string[], formPhotos: [] as string[],
       impacts: [] as Row[], stats: [] as {grade:string;count:number;valid:number;rate:string}[], statsCount: 0, statsLoaded: false, clearProgress: "", slots: [] as { key: string; label: string; checked: boolean }[], selectedSlots: [] as string[], optedIn: false, availabilityNote: "",
     },
     onLoad(q: Record<string, string>) { this.setData({section: view === "manage" && q.section === "applications" ? "applications" : this.data.section, fixedSemester: q.semesterId || "", targetId: q.id || q.taskId || "", week: Number(q.week) || 1, weekInitialized: Number(q.week) > 0 }); },
@@ -370,13 +369,12 @@ export function registerCloudPage(view: View): void {
         this.setData({ importPreview:importSource ? importSource.courses.slice(0,20).map((c,i)=>`${i+1}. ${s(c?.name) || "未填写课程名称"} · ${s(c?.teacher)} · ${s(c?.classroom)}`) : [],
           importReady:!!pending,importPending:!!pending || !!pendingError,importCount:importSource?.courses.length || 0,importClassCount:importSource?.classes?.length || 0,
           importProgress:pending ? `待续传：已完成 ${pending.next}/${pending.batches.length} 批` : pendingError,
-          formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [],recordPending:false,photoPending:false }, () => {
+          formType: type, formTitle: ({ autoApprovalSet: "限时自动通过新申请", classSave: "维护班级", courseSave: "维护课程", semesterCreate: "建立学期草稿", semesterParticipants: "选择参与班级", exceptionSave: "停课与调补课", join: "提交入组申请", initialize: "首次登记", rebindRequest: "申请微信换绑", import: "JSON课表导入" } as Record<string, string>)[type] || "维护资料", formId: id, formVersion: type === "autoApprovalSet" ? this.data.autoApprovalVersion : entity?.version || 0, fields: fields.map(f => ({ ...f, options: f.options.map(o => ({ ...o, checked: f.selected.includes(o.value) })) })), formExtra: extra, photoIds: [], formPhotos: [] }, () => {
             if (view === "manage" && typeof wx.pageScrollTo === "function") wx.pageScrollTo({selector:"#v2-active-form",duration:200});
           });
       } catch (e) { displayError(e); }
     },
     input(e: UiEvent) {
-      if (this.data.busy || this.recordLocked()) return;
       const key = e.currentTarget.dataset.key;
       const fields = this.data.fields.map(f => f.key === key ? { ...f, value: e.detail.value } : f);
       this.setData({ fields, ...(key === "text" ? {importReady:false,importPreview:[]} : {}) });
@@ -459,12 +457,11 @@ export function registerCloudPage(view: View): void {
       this.setData({importPending:false,importProgress:`导入完成：${plan.batches.length} 批，全部课程已提交。`});
       return true;
     },
-    cancelForm() { if(this.data.busy)return; this.setData({ formType: "", photoIds: [], formPhotos: [],uploadingPhoto:"",recordContext:null,recordPending:false,photoPending:false }); },
+    cancelForm() { if(this.data.busy)return; this.setData({ formType: "", photoIds: [], formPhotos: [],uploadingPhoto:"",recordContext:null }); },
     async saveForm() {
       if (this.data.busy) return;
       if (this.data.formType === "taskAdjust" && (this.data.error || !this.data.canAdjust || !canAdjustTasks(currentBoot().member?.data.role))) return;
       let admitted = false;
-      let saved = false, refreshAfterError = false;
       this.setData({ busy: true });
       try {
         const type = this.data.formType, payload: Record<string, unknown> = { ...this.data.formExtra };
@@ -483,18 +480,12 @@ export function registerCloudPage(view: View): void {
           const parsed = JSON.parse(s(payload.text)) as { courses?: unknown[]; classes?: unknown[] };
           if (!Array.isArray(parsed.courses)) throw new Error("JSON缺少courses课程列表");
         }
-        if ((type === "recordSubmit" || type === "recordEdit") && !pendingWrite(this.recordWriteKey())) {
+        if (type === "recordSubmit" || type === "recordEdit") {
           const metrics: Record<string, number> = {};
           for (const f of METRIC_FIELDS) { const input = this.data.fields.find(x => x.key === f.key)?.value; if (!input?.trim()) throw new Error("请填写全部人数，未知请填“信息缺失”"); metrics[f.key] = Number(payload[f.key]); delete payload[f.key]; }
           payload.metrics = metrics; payload.photos = this.data.photoIds; if (type === "recordEdit") delete payload.taskId;
         }
-        if (type === "recordSubmit" || type === "recordEdit") {
-          if (pendingWrite(this.photoWriteKey())) throw new Error("请先点击添加照片，确认上次上传结果");
-          this.persistRecordDraft();
-          await recoverableWrite(this.recordWriteKey(), {original:{operation:"command",semesterId:this.data.semesterId,expectedVersion:this.data.formVersion,payload:{type,...payload}}});
-          wx.removeStorageSync(this.recordDraftKey());
-          finishWrite(this.recordWriteKey());
-        } else if (type === "initialize") {
+        if (type === "initialize") {
           await call("initialize", { requestId: requestId(), expectedVersion: currentBoot().workspace.version, payload: {
             semester: { name: payload.semesterName, startDate: payload.startDate, weeks: payload.weeksCount, days: 5, periods: 14, edition: "西南大学计信院学风督察小组" },
             schoolClass: { name: payload.className, grade: payload.grade, major: payload.major }, member: { name: payload.name, studentNo: payload.studentNo },
@@ -502,11 +493,10 @@ export function registerCloudPage(view: View): void {
         } else if (type === "import") {
           if (!await this.runImport(s(payload.text))) return;
         } else { const result = await command(type, payload, ["join", "classSave", "rebindRequest", "semesterCreate", "autoApprovalSet"].includes(type) ? "" : type === "semesterParticipants" ? this.data.formId : this.data.semesterId, this.data.formVersion); admitted = type === "join" && result.data.automaticallyApproved === true; this.setData({ impacts: Array.isArray(result.data.impacts) ? (result.data.impacts as Entity[]).map(row) : [] }); }
-        saved = true;
+        if (type === "recordSubmit") wx.removeStorageSync(draftKey(s(payload.taskId)));
         this.setData({ formType: "", record: null, rows: [], versions: [], versionCursor: "" });
         wx.showToast({ title: "已保存", icon: "success" });
       } catch (e) {
-        refreshAfterError = writeNeedsRefresh(e);
         if (this.data.formType === "import") try {
           const pending = readImportPlan(this.data.semesterId);
           if (pending) this.setData({importPending:true,importProgress:`导入中断：已完成 ${pending.next}/${pending.batches.length} 批。请确认后继续同一文件。`});
@@ -514,8 +504,8 @@ export function registerCloudPage(view: View): void {
         } catch { /* Keep the original error; a corrupt plan can be cleared explicitly. */ }
         displayError(e);
       }
-      finally { this.setData({ busy: false }); this.syncWriteState(); }
-      if (saved || refreshAfterError || !["recordSubmit","recordEdit"].includes(this.data.formType)) await this.load();
+      finally { this.setData({ busy: false }); }
+      await this.load();
       if (admitted && this.data.memberId) wx.switchTab({url:"/pages/index/index"});
     },
     async toggleAutoApproval(e: WechatMiniprogram.SwitchChange) {
@@ -622,78 +612,53 @@ export function registerCloudPage(view: View): void {
       this.setData({ formType: editing ? "recordEdit" : "recordSubmit", formTitle: editing ? "更正听课记录" : "填写听课记录", formId: editing ? target.id : "", formVersion: target.version,
         fields: [...METRIC_FIELDS.map(f => field(f.key, f.label, metrics?.[f.key] === -1 ? "信息缺失" : metrics?.[f.key] === undefined ? "" : metrics[f.key])), ...[["absentNames", "旷课名单（没有填无）"], ["leaveNames", "请假名单（没有填无）"], ["evaluation", "班风评价"], ["feedback", "异常情况及反馈"], ["suggestion", "教师建议"], ["otherDescription", "其他情况说明"]].map(([key, label]) => field(key, label, d[key], "textarea")), ...(editing ? [field("reason", "本次更正原因（必填）", "", "textarea")] : [])],
         formExtra: { taskId: editing ? target.taskId || d.taskId : target.id }, photoIds: editing && Array.isArray(d.photos) ? d.photos.map(String) : [], formPhotos: editing ? this.data.photoUrls : [] });
-      const draft = wx.getStorageSync(this.recordDraftKey()) as {fields?:Field[];photoIds?:string[];formPhotos?:string[];version?:number};
-      if (draft && (!editing || draft.version === target.version || pendingWrite(this.recordWriteKey()))) {
-        if (Array.isArray(draft.fields)) this.setData({fields:this.data.fields.map(f=>{
-          const saved=draft.fields!.find(v=>v?.key===f.key);return saved && typeof saved.value === "string" ? {...f,value:saved.value} : f;
-        })});
-        if (Array.isArray(draft.photoIds) && draft.photoIds.length<=3 && draft.photoIds.every(v=>typeof v==="string")) {
-          this.setData({photoIds:draft.photoIds,formPhotos:draft.photoIds.map((_,i)=>draft.formPhotos?.[i] || "")});
-        }
+      if (!editing) {
+        const draft = wx.getStorageSync(draftKey(target.id)) as { fields?: Field[] };
+        if (Array.isArray(draft?.fields)) this.setData({ fields: this.data.fields.map(f=>{
+          const saved=draft.fields!.find(v=>v?.key === f.key);return saved && typeof saved.value === "string" ? {...f,value:saved.value} : f;
+        }) });
       }
       this.renderRecordFields();
     },
     renderRecordFields() {
-      this.syncWriteState();
       if(!["recordSubmit","recordEdit"].includes(this.data.formType))return;
       const metricKeys=new Set<string>(METRIC_FIELDS.map(f=>f.key));
       this.setData({metricFields:this.data.fields.filter(f=>metricKeys.has(f.key)),nameFields:this.data.fields.filter(f=>["absentNames","leaveNames"].includes(f.key)),feedbackFields:this.data.fields.filter(f=>["otherDescription","evaluation","feedback","suggestion","reason"].includes(f.key))});
     },
     markMissing(e: UiEvent) {
-      if(this.data.busy || this.recordLocked() || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      if(this.data.busy || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
       const key=e.currentTarget.dataset.key;if(!METRIC_FIELDS.some(f=>f.key === key))return;
       this.setData({fields:this.data.fields.map(f=>f.key === key ? {...f,value:"信息缺失"} : f)});this.renderRecordFields();
     },
     zeroRemaining() {
-      if(this.data.busy || this.recordLocked() || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      if(this.data.busy || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
       const keys=new Set<string>(METRIC_FIELDS.map(f=>f.key).filter(k=>k!=="expected" && k!=="actual"));
       this.setData({fields:this.data.fields.map(f=>keys.has(f.key) && !f.value.trim() ? {...f,value:"0"} : f)});this.renderRecordFields();
     },
     noNames(e: UiEvent) {
-      if(this.data.busy || this.recordLocked() || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
+      if(this.data.busy || !["recordSubmit","recordEdit"].includes(this.data.formType))return;
       const key=e.currentTarget.dataset.key;if(!["absentNames","leaveNames"].includes(key))return;
       this.setData({fields:this.data.fields.map(f=>f.key === key ? {...f,value:"无"} : f)});this.renderRecordFields();
     },
     editRecord() { if (this.data.record && this.data.canEdit) this.openRecordForm(this.data.record, true); },
-    syncWriteState() {
-      const recordForm=["recordSubmit","recordEdit"].includes(this.data.formType);
-      this.setData({recordPending:recordForm && !!pendingWrite(this.recordWriteKey()),photoPending:recordForm && !!pendingWrite(this.photoWriteKey())});
-    },
-    recordLocked() { return ["recordSubmit","recordEdit"].includes(this.data.formType) && !!pendingWrite(this.recordWriteKey()); },
-    recordDraftKey() { return draftKey(s(this.data.formExtra.taskId)) + (this.data.formType === "recordEdit" ? ".edit." + this.data.formId : ""); },
-    recordWriteKey() { return this.recordDraftKey() + ".write"; },
-    photoWriteKey() { return this.recordDraftKey() + ".photo"; },
-    persistRecordDraft() { wx.setStorageSync(this.recordDraftKey(), {fields:this.data.fields,photoIds:this.data.photoIds,formPhotos:this.data.formPhotos,version:this.data.formVersion}); },
-    saveDraft() { this.persistRecordDraft(); wx.showToast({title:"草稿已保存在本机",icon:"success"}); },
+    saveDraft() { wx.setStorageSync(draftKey(s(this.data.formExtra.taskId)), { fields: this.data.fields }); wx.showToast({ title: "草稿已保存在本机", icon: "success" }); },
     async choosePhotos() {
       if (this.data.busy) return;
-      let refreshAfterError = false;
       try {
-        this.setData({busy:true});
-        if (pendingWrite(this.recordWriteKey())) throw new Error("请先点击保存，确认上次提交结果");
-        const key=this.photoWriteKey();
-        const accept=async (path:string,base64?:string) => {
-          this.persistRecordDraft();
-          const response=await recoverableWrite<{fileID:string}>(key,base64===undefined ? undefined : {preview:path,original:{operation:"photo",semesterId:this.data.semesterId,payload:{taskId:this.data.formExtra.taskId,recordId:this.data.formType==="recordEdit" ? this.data.formId : undefined,base64}}});
-          if (!this.data.photoIds.includes(response.data.fileID)) this.setData({photoIds:this.data.photoIds.concat(response.data.fileID),formPhotos:this.data.formPhotos.concat(path),uploadingPhoto:""});
-          this.persistRecordDraft(); finishWrite(key);
-        };
-        const pending=pendingWrite(key);
-        if (pending) { await accept(pending.preview || ""); return; }
-        if (this.data.photoIds.length>=3) throw new Error("每份记录最多3张照片");
-        const chosen=await wx.chooseMedia({count:3-this.data.photoIds.length,mediaType:["image"],sizeType:["compressed"]});
+        this.setData({ busy: true });
+        if (this.data.photoIds.length >= 3) throw new Error("每份记录最多3张照片");
+        const chosen = await wx.chooseMedia({ count: 3 - this.data.photoIds.length, mediaType: ["image"], sizeType: ["compressed"] });
         for (const image of chosen.tempFiles) {
           this.setData({uploadingPhoto:image.tempFilePath});
-          let path=image.tempFilePath,base64=s(wx.getFileSystemManager().readFileSync(path,"base64"));
-          if (base64.length>680000) { const compressed=await wx.compressImage({src:path,quality:65});path=compressed.tempFilePath;base64=s(wx.getFileSystemManager().readFileSync(path,"base64")); }
-          if (base64.length>680000) throw new Error("请裁剪照片至约500KB以内，并保证签字清晰");
-          await accept(path,base64);
+          let path = image.tempFilePath, base64 = s(wx.getFileSystemManager().readFileSync(path, "base64"));
+          if (base64.length > 680000) { const compressed = await wx.compressImage({ src: path, quality: 65 }); path = compressed.tempFilePath; base64 = s(wx.getFileSystemManager().readFileSync(path, "base64")); }
+          if (base64.length > 680000) throw new Error("请裁剪照片至约500KB以内，并保证签字清晰");
+          const response = await call<{ fileID: string }>("photo", { requestId: requestId(), semesterId: this.data.semesterId, payload: { taskId: this.data.formExtra.taskId, recordId: this.data.formType === "recordEdit" ? this.data.formId : undefined, base64 } });
+          this.setData({ photoIds: this.data.photoIds.concat(response.data.fileID), formPhotos: this.data.formPhotos.concat(path),uploadingPhoto:"" });
         }
-      } catch (e) { refreshAfterError = writeNeedsRefresh(e); if (!(e && typeof e==="object" && "errMsg" in e && /cancel/.test(String(e.errMsg)))) displayError(e); }
-      finally { this.setData({busy:false,uploadingPhoto:""}); this.syncWriteState(); }
-      if (refreshAfterError) await this.load();
+      } catch (e) { if(!(e && typeof e === "object" && "errMsg" in e && /cancel/.test(String(e.errMsg))))displayError(e); } finally { this.setData({ busy: false,uploadingPhoto:"" }); }
     },
-    removePhoto(e: UiEvent) { if(this.data.busy || this.recordLocked())return; const i = Number(e.currentTarget.dataset.index); this.setData({ photoIds: this.data.photoIds.filter((_, n) => n !== i), formPhotos: this.data.formPhotos.filter((_, n) => n !== i) }); this.persistRecordDraft(); },
+    removePhoto(e: UiEvent) { if(this.data.busy)return; const i = Number(e.currentTarget.dataset.index); this.setData({ photoIds: this.data.photoIds.filter((_, n) => n !== i), formPhotos: this.data.formPhotos.filter((_, n) => n !== i) }); },
     previewUploadingPhoto() { if(this.data.uploadingPhoto)wx.previewImage({urls:[this.data.uploadingPhoto],current:this.data.uploadingPhoto}); },
     async previewFormPhoto(e: UiEvent) {
       if(this.data.busy)return;const index=Number(e.currentTarget.dataset.index);if(!this.data.photoIds[index])return;

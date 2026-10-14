@@ -10,6 +10,7 @@ BEGIN
  PERFORM xuedu_v2.require_server();
  IF coalesce(p_identity_key,'')='' OR length(p_identity_key)>200
    OR jsonb_typeof(p_request) IS DISTINCT FROM 'object' OR octet_length(p_request::text)>10000
+   OR coalesce(p_request->>'operationDigest','') !~ '^[a-f0-9]{64}$'
    OR kind IS NULL OR kind NOT IN ('photo','recordSubmit','recordEdit') THEN RAISE EXCEPTION 'INVALID_QUERY'; END IF;
  PERFORM 1 FROM xuedu_v2.workspace WHERE id='main' FOR SHARE NOWAIT;
  w:=public.xuedu_v2_workspace(); ep:=w->>'epoch';
@@ -20,7 +21,7 @@ BEGIN
  IF actor IS NULL OR actor->'data'->'active' IS DISTINCT FROM 'true'::jsonb THEN RAISE EXCEPTION 'FORBIDDEN'; END IF;
  rows:=jsonb_build_object('bindings',jsonb_build_array(binding),'members',jsonb_build_array(actor));
  SELECT xuedu_v2.entity(to_jsonb(r)) INTO receipt FROM xuedu_v2.requests r
- WHERE r.epoch=ep AND r.identity_key=p_identity_key AND r.parent_id=p_request->>'requestId';
+ WHERE r.epoch=ep AND r.identity_key=p_identity_key AND r.parent_id='record-v1-' || (p_request->>'operationDigest') || '-p' || (w->>'permissionsVersion');
  rows:=rows || jsonb_build_object('requests',CASE WHEN receipt IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(receipt) END);
  IF receipt IS NOT NULL THEN
   IF receipt->'data'->'permissionsVersion' IS DISTINCT FROM w->'permissionsVersion' THEN RAISE EXCEPTION 'VERSION_CONFLICT'; END IF;

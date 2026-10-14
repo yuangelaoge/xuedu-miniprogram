@@ -51,7 +51,7 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   const readHint = boot?.member ? { memberId: boot.member.id, semesterId: options.semesterId || page?.semesterId || boot.workspace.activeSemesterId } : undefined;
   const response = await wx.cloud.callFunction({ name: runtime.functionName, data: { protocolVersion: 2, operation, epoch: epoch || undefined, readHint, review: reviewActive(), ...options } });
   const result = response.result as unknown as { ok: boolean; data?: ApiResponse<T>; error?: string; code?: string };
-  if (!result?.ok || !result.data) { pageRevision++; if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw Object.assign(new Error(result?.error || "云端请求失败，请刷新重试"), {code:result?.code}); }
+  if (!result?.ok || !result.data) { pageRevision++; if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw new Error(result?.error || "云端请求失败，请刷新重试"); }
   if (result.data.protocolVersion !== 2) throw new Error("请更新小程序，云端协议不匹配");
   if (startedGeneration !== generation) throw new Error("业务数据轮次已变化，请刷新后重试");
   if (epoch && epoch !== result.data.epoch && operation !== "bootstrap" && operation !== "clearStep") throw new Error("业务数据轮次已变化，请刷新后重试");
@@ -113,4 +113,4 @@ export function clearLocalDrafts(): void {
   for (const key of wx.getStorageInfoSync().keys) if (key.startsWith(prefix)) wx.removeStorageSync(key);
   resetView();
 }
-export function draftKey(taskId: string): string { return "xuedu.form." + runtime.env + ".cloud." + (reviewActive() ? "review." : "") + epoch + "." + (boot?.member?.id || "") + "." + taskId; }
+export function draftKey(taskId: string): string { return "xuedu.form." + runtime.env + ".cloud." + epoch + "." + (boot?.member?.id || "") + "." + taskId; }

@@ -46,13 +46,10 @@ test('实际独立构建包的审核错误可跨入口识别，未知异常仍�
             if (args.p_valid) session = { snapshot: args.p_snapshot as ReviewSnapshot, version: 1, role: 'admin', expiresAt: String(args.p_expires_at) };
             data = args.p_valid; break;
           case 'xuedu_review_read': data = Object.hasOwn(options, 'readData') ? options.readData : session; break;
-          case 'xuedu_review_save':
-            assert.ok(session);assert.equal(args.p_expected_version,session.version);session.snapshot=args.p_snapshot as ReviewSnapshot;data=++session.version;break;
           case 'xuedu_review_role':
             assert.ok(session); session.role = args.p_role as ReviewRole; data = ++session.version; break;
           case 'xuedu_v2_workspace':
             data = { id: 'main', epoch: 'synthetic-epoch', version: 1, permissionsVersion: 1, protocolVersion: 2, activeSemesterId: '', maxExecutionMs: 3000, maintenance: '' }; break;
-          case 'xuedu_v2_record_read':
           case 'xuedu_v2_scheduling_read': return {data: null, error: {code: 'PGRST202'}}; // Prior-schema rollout fallback.
           case 'xuedu_v2_query': data = { items: [], cursor: '' }; break;
           default: throw new Error('Unexpected RPC ' + name);
@@ -164,17 +161,6 @@ test('实际独立构建包的审核错误可跨入口识别，未知异常仍�
       assert.equal(boot.ok, true); assert.equal(boot.data?.data.status, 'preparing');
       failure(await x.call('query', { review: false, epoch: boot.data?.epoch, payload: { kind: 'members' } }), 'FORBIDDEN', '请先申请并通过审核');
       assert.ok(x.calls.every(name => name.startsWith('xuedu_v2_')));
-    });
-    await t.test('构建入口允许照片/记录恢复，审核恢复仅写样例；禁止借恢复调用其他命令', async () => {
-      const x=entry();assert.equal((await x.login()).ok,true);
-      const epoch=x.session().snapshot.workspace.epoch;
-      const original={protocolVersion:2,operation:'photo',epoch,semesterId:'review-semester',requestId:'recover-test',payload:{taskId:'review-task-open',base64:'aGVsbG8='}};
-      const result=await x.call('resolveWrite',{epoch,payload:{original}});assert.equal(result.ok,true);assert.equal(result.data?.data.writeState,'notCommitted');
-      const replay=await x.call('photo',original);assert.equal(replay.ok,true);assert.equal(replay.data?.data.writeState,'notCommitted');
-      failure(await x.call('resolveWrite',{epoch,payload:{original:{...original,operation:'command',payload:{type:'roleChange'}}}}),'INVALID_REQUEST','恢复请求无效');
-      assert.ok(x.calls.every(name=>name.startsWith('xuedu_review_')));
-      const live=entry();failure(await live.call('resolveWrite',{review:false,epoch:'synthetic-epoch',payload:{original}}),'FORBIDDEN','请先申请并通过审核');
-      assert.ok(live.calls.includes('xuedu_v2_record_read'));
     });
     await t.test('伪造业务错误字段和未知 SDK 异常不透传', async () => {
       for (const error of [

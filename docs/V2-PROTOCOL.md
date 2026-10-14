@@ -171,7 +171,7 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 
 ## 照片
 
-`photo`：epoch、semesterId、requestId，payload `{ taskId, base64 }`。不接受任意目标路径；服务器检查任务归属/管理员纠错资格、期限与约500KB限制，写入固定 `cloud/<epoch>/<随机ID>.jpg` 私有路径并登记，返回 `photoId`（`fileID`为同一业务ID兼容字段）。随后recordSubmit/Edit引用此ID；不能跨记录引用照片。上传成功而登记失败可能留下该轮次孤儿文件，维护扫描固定轮次目录处理。
+`photo`：epoch、semesterId、requestId，payload `{ taskId, base64 }`。不接受任意目标路径；服务器检查任务归属/管理员纠错资格、期限与约500KB限制，写入服务端派生的 `cloud/<epoch>/stable-<hash>.jpg` 私有路径并登记（旧 UUID 路径继续可读），返回 `photoId`（`fileID`为同一业务ID兼容字段）。随后recordSubmit/Edit引用此ID；不能跨记录引用照片。上传成功而登记失败可能留下该轮次孤儿文件，维护扫描固定轮次目录处理。
 
 `photoUrls`：epoch、semesterId，payload `{ recordId, versionId? }` 获取当前/历史版本照片；也支持 `{ ids:[业务照片ID] }`（最多30），逐张检查归属。未提交照片仅上传者可读取；已提交照片遵循原记录权限：管理员/组部长/信息部干事可查看全组，普通成员仅本人；干事可读历史版本照片，但不能代他人上传或修改。只返回短时签名URL，历史照片继续保留到统一业务清空。
 
@@ -202,10 +202,10 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 - 快速页面读取配套迁移008，保留006历史脚本；page-load与普通查询同步。008只替换服务端读取RPC，不修改业务行、角色分配或权限写入规则。详见 [信息部干事读取权限](OFFICER-RECORD-ACCESS.md)。
 - 当前这项干事权限扩展未提交推送、未执行线上008、未部署或上传；不要据1.1.3已上传记录认定新权限已上线。
 
-### 照片/记录写入结果恢复（2026-10-14，本地实现，尚未上线）
+### 照片/记录后端优化（2026-10-14，本地完成，尚未上线）
 
-照片、`recordSubmit` 和 `recordEdit` 回执增加 `writeState: committed | notCommitted` 与服务端计算的 `writeDigest`。同一请求编号必须保持内容、学期和预期版本一致；只有对象字段排列次序变化不影响摘要。
+照片、`recordSubmit`、`recordEdit` 的客户端输入输出格式不变，兼容现有 1.2。撤销先前未上线交付中的 `resolveWrite`、`writeState`、`writeDigest` 和终止回执；前端相对 `3c3fbe1` 无差异。
 
-新增 `operation: resolveWrite`，`epoch` 为原轮次，`payload.original` 为完整原照片/记录写请求。入口仅接受上述三类写操作，仍验证可信身份、当前绑定、轮次和权限版本。客户端可附加 `payload.writeOwnerId` 约束已核验成员，不能用它授予身份。
+服务端以操作、学期、预期版本及完整 payload 的规范化摘要与当前权限版本生成内部请求键，仍按可信微信和轮次隔离。相同内容的新 requestId 重试只重放实际成功结果；改变内容、预期版本或权限版本后重新执行原业务校验。客户端请求编号不能使用保留的 `record-v1-` 前缀。不同写入仍由原提交事务和任务唯一约束保护。
 
-**恢复接口可能写入终止回执，属于写操作，不能作为只读探针。** 已提交返回原结果；无回执时，通过原提交事务锁写入同编号的 `notCommitted` 回执，阻止原请求延迟提交。查询/确认失败仍是未知，必须保留原请求，不能另造编号重放。确认未提交后才可发起新的写操作。新增服务端只读 RPC `xuedu_v2_record_read` 由 010 迁移提供，仅 `service_role` 可执行。上线顺序、前端配合及回退限制见 [照片与记录超时修复](RECORD-TIMEOUT-REPAIR.md)。
+010 新增服务端只读 RPC `xuedu_v2_record_read`，仅 service_role 可执行，合并当前身份及单次写入需要的有界读取。照片路径改为按轮次、可信身份、任务和内容派生的 `cloud/<epoch>/stable-<hash>.jpg`，相同字节失败重试复用对象，旧路径不覆盖。部署顺序、验证和回退见 [照片与记录超时修复](RECORD-TIMEOUT-REPAIR.md)。

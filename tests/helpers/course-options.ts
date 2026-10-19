@@ -37,7 +37,7 @@ export function optionApi(repository:Repository) {
  };
  return {call,uploads:()=>uploads};
 }
-export function optionFixture() {const seed=optionSeed(),repo=new MemoryRepository(seed.workspace,seed.rows,()=>optionNow);return {seed,repo,...optionApi(repo)};}
+export function optionFixture(seed=optionSeed()) {const repo=new MemoryRepository(seed.workspace,seed.rows,()=>optionNow);return {seed,repo,...optionApi(repo)};}
 export function changed(result:{data:Record<string,unknown>},predicate:(e:Entity)=>boolean):Entity {return (result.data.changed as Entity[]).find(predicate)!;}
 export async function generateOptions(f:ReturnType<typeof optionApi>, priorityGrade='') {
  const draft=await f.call('command',{type:'planGenerate',week:2,priorityGrade});

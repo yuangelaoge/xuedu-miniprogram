@@ -1,4 +1,5 @@
 import { ScheduleReport, exportScheduleXlsx } from "../../domain/schedule-report";
+import { courseHeadcountText } from "../../domain/course-headcount";
 import { taskCourseOptions, TaskCourseOption } from "../../domain/v2/task-options";
 import { isManager, canViewAllRecords, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, canAdjustTasks, canExportNames, participatesByDefault } from "../../domain/capabilities";
 import { SummaryReport } from "../../domain/v2/summary-report";
@@ -19,14 +20,17 @@ const localTime = (value: string) => value ? new Date(Date.parse(value) + 8 * 36
 type View = "home" | "schedule" | "records" | "profile" | "manage" | "join" | "record" | "submission" | "availability" | "courses";
 interface Option { label: string; value: string; checked?: boolean; }
 interface Field { key: string; label: string; value: string; kind: string; options: Option[]; selected: string[]; }
-interface Row extends Entity { courseGrades?: string[]; courseClassLabel?: string; selected?: boolean; label: string; detail: string; status: string; active: boolean; role: string; statusLabel: string; cancel: boolean; replaces: boolean; historyFields: {label:string;value:string}[]; }
+interface Row extends Entity { courseCounts: {id:string;label:string;count:string;combined:boolean}[]; courseGrades?: string[]; courseClassLabel?: string; selected?: boolean; label: string; detail: string; status: string; active: boolean; role: string; statusLabel: string; cancel: boolean; replaces: boolean; historyFields: {label:string;value:string}[]; }
 const titles: Record<View, string> = { home: "学风督察", schedule: "听课安排", records: "听课记录", profile: "我的", manage: "管理工作台", join: "申请加入", record: "听课记录详情", submission: "填写听课记录", availability: "无课时间", courses: "课程总表" };
 const s = (value: unknown) => value === undefined || value === null ? "" : String(value);
 const actionLabels: Record<string,string> = { autoApprovalEnabled:"开启自动通过", autoApprovalDisabled:"关闭自动通过", autoApproveApplication:"自动通过入组申请", initialize:"首次初始化", roleChange:"调整角色", memberStatus:"调整启停状态", memberRemove:"移除成员", memberRestore:"恢复成员", classSave:"维护班级", classDisable:"停用班级", semesterCreate:"建立学期草稿", semesterActivate:"启用学期", semesterParticipants:"配置参与班级", courseSave:"维护课程", courseDisable:"停用课程", exceptionSave:"停调补课", planGenerate:"生成排班草稿", planConfirm:"确认排班", taskAdjust:"调整任务草稿", recordSubmit:"提交记录", recordEdit:"更正记录", rebindConfirm:"确认微信换绑", applicationReview:"审核申请", clearBegin:"开始业务清空", import:"导入课表" };
 const statusLabels: Record<string, string> = { pending: "待审核", approved: "已通过", rejected: "已驳回", draft: "草稿", active: "已启用", confirmed: "已确认", submitted: "已提交", pendingAdjustment: "待调整", cancelled: "已取消" };
 const row = (e: Entity): Row => {
   const course = e.data.course as Record<string, unknown> | undefined;
-  return { ...e, label: s(e.data.name || e.data.memberName || e.data.classLabel || (actionLabels[s(e.data.action)] || e.data.action) || e.date || "业务资料"),
+  const courseCounts = course ? taskCourseOptions(e).map(option => ({id:option.occurrenceId,
+    label:`${option.course.name} · ${option.date} 第${option.course.start}–${option.course.end}节`,
+    count:courseHeadcountText(option.course.expected),combined:option.course.classIds?.length > 1})) : [];
+  return { ...e, courseCounts, label: s(e.data.name || e.data.memberName || e.data.classLabel || (actionLabels[s(e.data.action)] || e.data.action) || e.date || "业务资料"),
     detail: [e.data.studentNo, e.data.classLabel, e.data.approvalMode === "automatic" ? "自动通过 · " + localTime(s(e.data.reviewedAt)) : "", course?.name, e.data.grade, e.data.major, e.data.teacher || course?.teacher, e.data.date || e.date, course ? `第${course.start}–${course.end}节 ${course.classroom || ""}` : "", e.data.reason, e.data.detail, e.data.correctedAt ? "更正于 " + s(e.data.correctedAt) : ""].filter(Boolean).join(" · "),
     status: s(e.data.status), statusLabel: statusLabels[s(e.data.status)] || s(e.data.status), active: e.data.active !== false, role: s(e.data.role), cancel: e.data.cancel === true, replaces: !!e.data.replacesTaskId, historyFields: e.data.metrics ? METRIC_FIELDS.map(f => ({label:f.label,value:(e.data.metrics as Record<string,number>)[f.key] === -1 ? "信息缺失" : s((e.data.metrics as Record<string,number>)[f.key])})) : [] };
 };

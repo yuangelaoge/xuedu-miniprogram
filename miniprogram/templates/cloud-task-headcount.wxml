@@ -1,0 +1,4 @@
+<view wx:for="{{item.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
+  <view wx:if="{{item.courseCounts.length > 1}}">{{count.label}}</view>
+  <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+</view>

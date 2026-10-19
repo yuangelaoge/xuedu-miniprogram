@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {optionFixture,generateOptions} from './helpers/course-options';
+import {optionFixture,optionSeed,generateOptions} from './helpers/course-options';
 import { registerCloudPage } from '../miniprogram/services/v2/page';
 import { runtime } from '../miniprogram/config/runtime';
 import {readFileSync} from 'node:fs';
 const event=(value:string,key='')=>({currentTarget:{dataset:{key}},detail:{value}});
 let serial=0;
-async function ui(work:(f:any)=>Promise<void>) {
- const f=optionFixture(),{plan,task}=await generateOptions(f);
+async function ui(work:(f:any)=>Promise<void>,seed=optionSeed()) {
+ const f=optionFixture(seed),{plan,task}=await generateOptions(f);
  await f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version});
  const g=globalThis as any,oldWx=g.wx,oldPage=g.Page,oldRuntime={...runtime};runtime.mode='cloud';runtime.env='options-ui-'+ ++serial;
  let definition:any,who:'admin'|'member'|'officer'='member';const storage=new Map(),calls:any[]=[],errors:string[]=[],files:any[]=[];
@@ -50,3 +50,20 @@ test('安排表从当前周导出真实XLSX并前后复核；普通成员无导�
  const checks=f.calls.filter((c:any)=>c.payload?.kind==='reportCheck' && c.payload.format==='schedule');assert.equal(checks.length,2);
  assert.ok(checks.every((c:any)=>c.payload.week===2 && c.semesterId==='review-semester'));
 }));
+test('普通干事首页/正式任务逐门显示课表人数，合班合计、零与缺失不混淆',async()=>{
+ const seed=optionSeed(),task=seed.rows.tasks!.find(t=>t.id==='review-task-open')!,course=task.data.course as Record<string,unknown>;
+ task.data.courseOptions=[64,0,undefined].map((expected,i)=>({occurrenceId:'display-'+i,date:task.data.date,classLabel:'甲班 / 乙班',classes:[],course:{...course,id:'display-'+i,name:'不同课程'+i,classIds:['class-a','class-b'],expected}}));
+ await ui(async f=>{
+   const home=await f.page('home');assert.equal(home.data.homeTasks.length,1);
+   const counts=home.data.homeTasks[0].courseCounts;
+   assert.deepEqual(counts.map((c:any)=>c.count),['64 人','0 人','未填写']);assert.ok(counts.every((c:any)=>c.combined));
+   assert.equal(new Set(counts.map((c:any)=>c.label)).size,3);
+   const schedule=await f.page('schedule',{week:'1'});assert.equal(schedule.data.visibleTasks.length,1);
+   assert.deepEqual(schedule.data.visibleTasks[0].courseCounts,counts);
+   // The week-2 task is newly generated; course count never fills observation metrics.
+   const submit=await f.page('submission',{taskId:f.task.id});assert.equal(submit.data.fields.find((v:any)=>v.key==='expected').value,'');
+   assert.deepEqual(f.errors,[]);
+ },seed);
+ for(const path of ['cloud-home.wxml','cloud.wxml'])assert.match(readFileSync('miniprogram/templates/'+path,'utf8'),/include src="cloud-task-headcount.wxml"/);
+ const template=readFileSync('miniprogram/templates/cloud-task-headcount.wxml','utf8');assert.match(template,/课表人数/);assert.match(template,/合班合计/);
+});

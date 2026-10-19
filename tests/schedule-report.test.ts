@@ -41,8 +41,11 @@ test('安排表及复核只允许管理员/信息部干事，其他周不套用�
   }
   await assert.rejects(f.call('query',{kind:'scheduleReport',week:3}),/尚无已确认/);
 });
-test('实际XLSX按人合并身份/姓名，多门课平等列出，无课者后七列为空',async()=>{
+test('实际XLSX合并姓名，逐课人数区分合班/零/缺失，无课者后八列为空',async()=>{
   const f=await confirmed(),report=(await f.call('query',{kind:'scheduleReport',week:2})).data.schedule as ScheduleReport;
+  const choices=report.members.find(m=>m.role==='member')!.courses;
+  choices[0].course.expected=64;choices[0].course.classIds=['class-a','class-b'];choices[0].classLabel='甲班 / 乙班';
+  choices[1].course.expected=0;delete (choices[2].course as Partial<typeof choices[2]['course']>).expected;
   const sheet=scheduleSheet(report),buffer=Buffer.from(exportScheduleXlsx(report));
   const files=new Map<string,string>();let at=0;
   while(buffer.readUInt32LE(at)===0x04034b50) {
@@ -52,11 +55,16 @@ test('实际XLSX按人合并身份/姓名，多门课平等列出，无课者后
   }
   const xml=files.get('xl/worksheets/sheet1.xml')!;
   assert.match(xml,/<mergeCell ref="A7:A9"/);assert.match(xml,/<mergeCell ref="B7:B9"/);
+  assert.match(xml,/<mergeCell ref="A1:J1"/);assert.match(xml,/课表人数/);
+  assert.match(xml,/<c r="E7"[^>]*><v>64<\/v><\/c>/);
+  assert.match(xml,/<c r="E8"[^>]*><v>0<\/v><\/c>/);
+  assert.match(xml,/<c r="E9"[^>]*>[\s\S]*?<t[^>]*>未填写<\/t>/);
+  assert.equal(sheet.rows.filter(r=>r[2]==='甲班 / 乙班').length,1,'合班总人数只出现在该门课程的一行');
   assert.equal((xml.match(/样例成员/g)||[]).length,1);
   assert.doesNotMatch(xml,/主要|备选|推荐|autoFilter/);
   assert.match(xml,/专业选修课/);assert.match(xml,/学科必修课/);assert.match(xml,/合成教师-alternate/);
-  const empty=sheet.rows[3];assert.deepEqual(empty,['管理员','样例管理员',null,null,null,null,null,null,null]);
+  const empty=sheet.rows[3];assert.deepEqual(empty,['管理员','样例管理员',null,null,null,null,null,null,null,null]);
   const row4=xml.match(/<row r="4"[\s\S]*?<\/row>/)![0];
-  assert.doesNotMatch(row4,/<c r="[C-I]4"[^>]*>[\s\S]*?<(?:v|t)>[^<]+</);
+  assert.doesNotMatch(row4,/<c r="[C-J]4"[^>]*>[\s\S]*?<(?:v|t)>[^<]+</);
   assert.equal(sheet.rows.length,9);assert.ok(files.has('[Content_Types].xml'));
 });

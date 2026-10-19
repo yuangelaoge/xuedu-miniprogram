@@ -9,6 +9,10 @@ export interface SheetData {
   percentColumns?: number[];
   /** Zero-based columns retained for formulas but hidden in the exported workbook. */
   hiddenColumns?: number[];
+  /** Explicit OOXML ranges, including title ranges, for grouped schedule rows. */
+  merges?: string[];
+  columnWidths?: number[];
+  autoFilter?: boolean;
 }
 export type Cell =
   string | number | null | { formula: string; value: string | number };
@@ -187,7 +191,7 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
       chart = !!s.chart && s.rows.length > 3,
       last = col(Math.max(...s.rows.map((r) => r.length)) - 1);
     const columns = Array.from({ length: Math.max(27, ...s.rows.map(r => r.length)) }, (_, ci) => {
-      const width = ci === 0 ? (s.raw ? 9 : 30) : ci === 1 ? 24 : ci < 4 ? 22 : ci < 23 ? 12 : 34;
+      const width = s.columnWidths?.[ci] ?? (ci === 0 ? (s.raw ? 9 : 30) : ci === 1 ? 24 : ci < 4 ? 22 : ci < 23 ? 12 : 34);
       return `<col min="${ci + 1}" max="${ci + 1}" width="${width}" customWidth="1"${s.hiddenColumns?.includes(ci) ? ' hidden="1"' : ''}/>`;
     }).join("");
     const rows = s.rows
@@ -254,12 +258,11 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
         columns +
         '</cols><sheetData>' +
         rows +
-        '</sheetData><autoFilter ref="A3:' +
-        last +
-        s.rows.length +
-        '"/><mergeCells count="'+(s.groupHeaders?5:2)+'"><mergeCell ref="A1:' +
-        (s.raw ? "AA" : "F") +
-        '1"/>' + (s.groupHeaders ? '<mergeCell ref="A2:D2"/><mergeCell ref="E2:L2"/><mergeCell ref="M2:T2"/><mergeCell ref="U2:Z2"/>' : '<mergeCell ref="A2:'+(s.raw ? 'AA' : 'F')+'2"/>') + '</mergeCells>' +
+        '</sheetData>' +
+        (s.autoFilter === false ? '' : '<autoFilter ref="A3:'+last+s.rows.length+'"/>') +
+        (s.merges ? '<mergeCells count="'+s.merges.length+'">'+s.merges.map(ref=>'<mergeCell ref="'+xml(ref)+'"/>').join('')+'</mergeCells>' :
+          '<mergeCells count="'+(s.groupHeaders?5:2)+'"><mergeCell ref="A1:'+(s.raw ? 'AA' : 'F')+'1"/>' +
+          (s.groupHeaders ? '<mergeCell ref="A2:D2"/><mergeCell ref="E2:L2"/><mergeCell ref="M2:T2"/><mergeCell ref="U2:Z2"/>' : '<mergeCell ref="A2:'+(s.raw ? 'AA' : 'F')+'2"/>')+'</mergeCells>') +
         (chart ? '<drawing r:id="drawing"/>' : "") +
         "</worksheet>",
       spreadsheetType + "worksheet+xml",

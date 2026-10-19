@@ -2,7 +2,8 @@ import { Entity, PageResult, Query, Resource, Workspace } from '../../miniprogra
 
 /** Request-local, server-only read set. Never persisted or returned to the client.
  * Complete only for the selected semester/week (records also include the prior week),
- * its participating classes, and current-epoch members. Used only by the two draft commands.
+ * its participating classes, and current-epoch members. Used by draft generation/adjustment and confirmation.
+ * Schedule export uses only target-week tasks/plans plus active or assigned members.
  */
 export interface SchedulingRead {
   workspace: Workspace;

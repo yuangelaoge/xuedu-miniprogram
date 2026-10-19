@@ -62,6 +62,7 @@ export interface Availability {
   updatedAt: string;
 }
 export interface Task {
+  candidateCourses?: Course[];
   id: string;
   memberId: string;
   memberName: string;

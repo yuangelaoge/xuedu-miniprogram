@@ -1,8 +1,10 @@
 <view class="v2-record-form">
   <view wx:if="{{recordContext}}" class="v2-record-context">
     <view class="row between"><text class="pill">{{recordContext.data.classLabel}}</text><text class="muted small">第 {{recordContext.week}} 周</text></view>
+    <view wx:if="{{formType === 'recordSubmit' && recordOptions.length}}" class="v2-field"><view class="field-label">实际听课课程</view><picker disabled="{{busy}}" range="{{recordOptions}}" range-key="label" value="{{recordOptionIndex}}" bindchange="chooseRecordCourse"><view class="v2-picker">{{recordOptions[recordOptionIndex].label}} ▾</view></picker></view>
     <view class="course-title">{{recordContext.data.course.name}}</view>
     <view class="course-meta">{{recordContext.data.date || recordContext.date}} · 第 {{recordContext.data.course.start}}–{{recordContext.data.course.end}} 节 · {{recordContext.data.course.classroom}}</view>
+    <view class="course-meta">教师：{{recordContext.data.course.teacher}} · 课程性质：{{recordContext.data.course.nature || '未填写'}}</view>
     <view class="course-meta">听课成员：{{recordContext.data.memberName || memberName}}</view>
   </view>
   <view class="section row between"><text class="section-title">01 考勤与课堂状态</text><button size="mini" disabled="{{busy}}" bindtap="zeroRemaining">其余情况均为0</button></view>

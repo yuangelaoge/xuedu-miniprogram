@@ -1,3 +1,5 @@
+import { ScheduleReport, exportScheduleXlsx } from "../../domain/schedule-report";
+import { taskCourseOptions, TaskCourseOption } from "../../domain/v2/task-options";
 import { isManager, canViewAllRecords, canCoordinate, canGeneratePlan, canConfirmPlan, canExportFullXlsx, canAdjustTasks, canExportNames, participatesByDefault } from "../../domain/capabilities";
 import { SummaryReport } from "../../domain/v2/summary-report";
 import { summaryGradeStats } from "../../domain/summary-xlsx";
@@ -113,6 +115,8 @@ export function registerCloudPage(view: View): void {
       semesterId: "", semesterName: "", activeSemesterId: "", semesters: [] as Entity[], semesterOptions: [] as Option[], semesterCursor: "", semesterIndex: 0,
       fixedSemester: "", targetId: "", week: 1, weekData: { tasks: [], occurrences: [] } as WeekData, tasks: [] as Row[],
       record: null as Entity | null, recordFields: [] as { label: string; value: string }[], canEdit: false, versions: [] as Row[], versionCursor: "", photoUrls: [] as string[],
+      recordOptions: [] as (TaskCourseOption & {label:string})[], recordOptionIndex: 0,
+      priorityScope: "", priorityGrade: "", priorityGradeIndex: 0, gradeOptions: ["不特别优先"] as string[],
       formType: "", formTitle: "", formId: "", formVersion: 0, fields: [] as Field[], formExtra: {} as Record<string, unknown>, photoIds: [] as string[], formPhotos: [] as string[],
       impacts: [] as Row[], stats: [] as {grade:string;count:number;valid:number;rate:string}[], statsCount: 0, statsLoaded: false, clearProgress: "", slots: [] as { key: string; label: string; checked: boolean }[], selectedSlots: [] as string[], optedIn: false, availabilityNote: "",
     },
@@ -142,13 +146,13 @@ export function registerCloudPage(view: View): void {
         const identityChanged = !!this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role);
         const home = view === "home" ? boot.home : undefined;
         const admin = member?.data.role === "admin", manager = isManager(member?.data.role);
-        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
+        if (this.data.memberId && (this.data.memberId !== member?.id || this.data.role !== member?.data.role)) this.setData({stats:[],statsLoaded:false,dirty:false,filePath:"",filename:"",pendingCount:0,pendingMore:false,pendingLabel:"",visibleRows:[],visibleTasks:[],record:null,versions:[],photoUrls:[],formPhotos:[],photoIds:[],recordContext:null,recordOptions:[],priorityScope:"",priorityGrade:"",gradeOptions:["不特别优先"],metricFields:[],nameFields:[],feedbackFields:[],rows:[],tasks:[],homeTasks:[],formType:"",fields:[]});
         if(view === "records" && (this.data.memberId !== member?.id || this.data.role !== member?.data.role))this.setData({recordTab:canViewAllRecords(member?.data.role) ? "all" : "mine"});
         this.setData({coordinator:canCoordinate(member?.data.role),canAdjust:canAdjustTasks(member?.data.role),canExportNames:canExportNames(member?.data.role),canGenerate:canGeneratePlan(member?.data.role),canConfirm:canConfirmPlan(member?.data.role),canExportExcel:canExportFullXlsx(member?.data.role),canViewRecords:canViewAllRecords(member?.data.role),officer:member?.data.role === "officer",statusRows:[],statusCursor:"",statusLoaded:false});
         this.setData({ status: boot.status, canInitialize: boot.canInitialize, removed: !!boot.removed, admin, manager, memberName: s(member?.data.name), memberId: member?.id || "", role: s(member?.data.role), activeSemesterId: boot.workspace.activeSemesterId, maintenance: boot.workspace.maintenance });
         this.setData({roleLabel: admin ? "管理员" : manager ? "组部长" : member?.data.role === "officer" ? "信息部干事" : "普通成员", initial: s(member?.data.name).slice(0,1), studentNo: s(member?.data.studentNo)});
         if (!member || !member.data.active) {
-          this.setData({ stats:[],statsLoaded:false,dirty:false,pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], formPhotos:[],photoIds:[],recordContext:null,metricFields:[],nameFields:[],feedbackFields:[],fields: [], formType: "" });
+          this.setData({ stats:[],statsLoaded:false,dirty:false,pendingCount:0,pendingMore:false,pendingLabel:"",filePath:"",filename:"",visibleRows:[],visibleTasks:[],rows: [], tasks: [], homeTasks: [], semesters: [], record: null, versions: [], photoUrls: [], formPhotos:[],photoIds:[],recordContext:null,recordOptions:[],priorityScope:"",priorityGrade:"",gradeOptions:["不特别优先"],metricFields:[],nameFields:[],feedbackFields:[],fields: [], formType: "" });
           if (boot.status !== "needsAdministrator") {
             this.setData({ rows: boot.application ? [row(boot.application)] : [], cursor: "" });
           }
@@ -225,6 +229,13 @@ export function registerCloudPage(view: View): void {
           this.setData({ rows: (more ? this.data.rows : []).concat(response.data.items.map(row)).map(r=>({...r,selected:this.data.selectedApplications.includes(r.id)})), cursor: response.cursor || "" });
         } else if (["home", "schedule", "availability"].includes(view) && semesterId) {
           const w = bundle?.weekData || home?.weekData || (await query<WeekData>("week", semesterId, { week: displayedWeek })).data;
+          if (view === "schedule") {
+            const grades = w.gradeOptions || [];
+            const scope = [boot.workspace.epoch,member.id,semesterId,displayedWeek].join(":");
+            const preferred = scope === this.data.priorityScope ? this.data.priorityGrade : s(w.draft?.data.priorityGrade);
+            const selected = grades.includes(preferred) ? preferred : "";
+            this.setData({priorityScope:scope,priorityGrade:selected,gradeOptions:["不特别优先",...grades],priorityGradeIndex:selected ? grades.indexOf(selected)+1 : 0});
+          }
           const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
           this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,
             taskCount: home?.summary?.taskCount ?? visibleTasks.length, recordCount: home?.summary?.recordCount ?? (w.records || []).length, coverage: home?.summary?.coverage ?? new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",
@@ -492,7 +503,7 @@ export function registerCloudPage(view: View): void {
           } });
         } else if (type === "import") {
           if (!await this.runImport(s(payload.text))) return;
-        } else { const result = await command(type, payload, ["join", "classSave", "rebindRequest", "semesterCreate", "autoApprovalSet"].includes(type) ? "" : type === "semesterParticipants" ? this.data.formId : this.data.semesterId, this.data.formVersion); admitted = type === "join" && result.data.automaticallyApproved === true; this.setData({ impacts: Array.isArray(result.data.impacts) ? (result.data.impacts as Entity[]).map(row) : [] }); }
+        } else { const result = await command(type === "recordSubmit" && this.data.recordOptions.length ? "recordSubmitChoice" : type, payload, ["join", "classSave", "rebindRequest", "semesterCreate", "autoApprovalSet"].includes(type) ? "" : type === "semesterParticipants" ? this.data.formId : this.data.semesterId, this.data.formVersion); admitted = type === "join" && result.data.automaticallyApproved === true; this.setData({ impacts: Array.isArray(result.data.impacts) ? (result.data.impacts as Entity[]).map(row) : [] }); }
         if (type === "recordSubmit") wx.removeStorageSync(draftKey(s(payload.taskId)));
         this.setData({ formType: "", record: null, rows: [], versions: [], versionCursor: "" });
         wx.showToast({ title: "已保存", icon: "success" });
@@ -572,7 +583,13 @@ export function registerCloudPage(view: View): void {
         await this.load();
       } catch (e) { displayError(e); }
     },
-    async generate() { if (this.data.busy || this.data.error || !this.data.canGenerate || !canGeneratePlan(currentBoot().member?.data.role)) return; try { await command("planGenerate", { week: this.data.week }, this.data.semesterId, this.data.weekData.plan?.version || 0); await this.load(); } catch (e) { displayError(e); } },
+    choosePriorityGrade(e: UiEvent) {
+      if(this.data.busy || !this.data.canGenerate)return;
+      const index=Number(e.detail.value);
+      if(!Number.isInteger(index) || index<0 || index>=this.data.gradeOptions.length)return;
+      this.setData({priorityGradeIndex:index,priorityGrade:index ? this.data.gradeOptions[index] : ""});
+    },
+    async generate() { if (this.data.busy || this.data.error || !this.data.canGenerate || !canGeneratePlan(currentBoot().member?.data.role)) return; try { await command("planGenerate", { week: this.data.week, priorityGrade:this.data.priorityGrade }, this.data.semesterId, this.data.weekData.plan?.version || 0); await this.load(); } catch (e) { displayError(e); } },
     async confirmPlan() {
       if (this.data.busy || this.data.error || !this.data.canConfirm || !canConfirmPlan(currentBoot().member?.data.role)) return;
       try { const draft = this.data.weekData.draft; if (!draft) return; const r = await wx.showModal({ title: "确认排班调整", content: "请核对下方草稿任务和未覆盖班级。确认后生效，已完成任务保留。", editable: true, placeholderText: "确认原因" }); if (!r.confirm) return;
@@ -608,18 +625,31 @@ export function registerCloudPage(view: View): void {
     async saveAvailability() { if(this.data.busy)return; this.setData({busy:true}); try { await command("availabilitySave", { week: this.data.week, slots: this.data.selectedSlots, optedIn: participatesByDefault(this.data.role) || this.data.optedIn, note: this.data.availabilityNote }, this.data.semesterId, this.data.weekData.availability?.version || 0); this.setData({busy:false,dirty:false}); syncAvailabilityExitAlert(false); await this.load(); wx.showToast({ title: "已保存", icon: "success" }); } catch (e) { displayError(e); } finally{this.setData({busy:false});} },
     openRecordForm(target: Entity, editing = false) {
       const d = target.data, metrics = d.metrics as Record<string, number> | undefined;
-      this.setData({recordContext:row(target),uploadingPhoto:""});
+      const options = !editing && Array.isArray(d.courseOptions) ? taskCourseOptions(target).map(option=>({...option,
+        label:`${option.course.name} · ${option.date} 第${option.course.start}–${option.course.end}节 · ${option.course.teacher} · ${option.course.classroom}`})) : [];
+      this.setData({recordContext:row(target),uploadingPhoto:"",recordOptions:options,recordOptionIndex:Math.max(0,options.findIndex(o=>o.occurrenceId===d.occurrenceId))});
       this.setData({ formType: editing ? "recordEdit" : "recordSubmit", formTitle: editing ? "更正听课记录" : "填写听课记录", formId: editing ? target.id : "", formVersion: target.version,
         fields: [...METRIC_FIELDS.map(f => field(f.key, f.label, metrics?.[f.key] === -1 ? "信息缺失" : metrics?.[f.key] === undefined ? "" : metrics[f.key])), ...[["absentNames", "旷课名单（没有填无）"], ["leaveNames", "请假名单（没有填无）"], ["evaluation", "班风评价"], ["feedback", "异常情况及反馈"], ["suggestion", "教师建议"], ["otherDescription", "其他情况说明"]].map(([key, label]) => field(key, label, d[key], "textarea")), ...(editing ? [field("reason", "本次更正原因（必填）", "", "textarea")] : [])],
         formExtra: { taskId: editing ? target.taskId || d.taskId : target.id }, photoIds: editing && Array.isArray(d.photos) ? d.photos.map(String) : [], formPhotos: editing ? this.data.photoUrls : [] });
       if (!editing) {
-        const draft = wx.getStorageSync(draftKey(target.id)) as { fields?: Field[] };
+        const draft = wx.getStorageSync(draftKey(target.id)) as { fields?: Field[]; occurrenceId?: string };
+        if (options.length) {
+          const savedIndex=options.findIndex(o=>o.occurrenceId===draft?.occurrenceId);
+          this.applyRecordOption(savedIndex<0 ? this.data.recordOptionIndex : savedIndex);
+        }
         if (Array.isArray(draft?.fields)) this.setData({ fields: this.data.fields.map(f=>{
           const saved=draft.fields!.find(v=>v?.key === f.key);return saved && typeof saved.value === "string" ? {...f,value:saved.value} : f;
         }) });
       }
       this.renderRecordFields();
     },
+    applyRecordOption(index: number) {
+      const option=this.data.recordOptions[index];
+      if (!option || !this.data.recordContext || this.data.formType !== "recordSubmit")return;
+      this.setData({recordOptionIndex:index,formExtra:{...this.data.formExtra,occurrenceId:option.occurrenceId},
+        recordContext:row({...this.data.recordContext,data:{...this.data.recordContext.data,...option}})});
+    },
+    chooseRecordCourse(e: UiEvent) { if(this.data.busy)return;this.applyRecordOption(Number(e.detail.value)); },
     renderRecordFields() {
       if(!["recordSubmit","recordEdit"].includes(this.data.formType))return;
       const metricKeys=new Set<string>(METRIC_FIELDS.map(f=>f.key));
@@ -641,7 +671,7 @@ export function registerCloudPage(view: View): void {
       this.setData({fields:this.data.fields.map(f=>f.key === key ? {...f,value:"无"} : f)});this.renderRecordFields();
     },
     editRecord() { if (this.data.record && this.data.canEdit) this.openRecordForm(this.data.record, true); },
-    saveDraft() { wx.setStorageSync(draftKey(s(this.data.formExtra.taskId)), { fields: this.data.fields }); wx.showToast({ title: "草稿已保存在本机", icon: "success" }); },
+    saveDraft() { wx.setStorageSync(draftKey(s(this.data.formExtra.taskId)), { fields: this.data.fields, occurrenceId:this.data.formExtra.occurrenceId }); wx.showToast({ title: "草稿已保存在本机", icon: "success" }); },
     async choosePhotos() {
       if (this.data.busy) return;
       try {
@@ -701,6 +731,22 @@ export function registerCloudPage(view: View): void {
     },
     async copyReport() { await this.exportReport({currentTarget:{dataset:{kind:"copy"}},detail:{value:""}} as UiEvent); },
     openReport() { if((this.data.canExportExcel || this.data.canExportNames) && !this.data.error && this.data.filePath && this.data.fileOwner === currentBoot().workspace.epoch + ":" + this.data.memberId)openExport(this.data.filePath); },
+    async exportSchedule() {
+      if(this.data.busy || this.data.error || !this.data.canExportExcel || !canExportFullXlsx(currentBoot().member?.data.role) || !this.data.semesterId)return;
+      this.setData({busy:true,filePath:"",filename:""});
+      const semesterId=this.data.semesterId,week=this.data.week;
+      try {
+        const r=await query<{schedule:ScheduleReport;version:number}>("scheduleReport",semesterId,{week});
+        const content=exportScheduleXlsx(r.data.schedule);
+        await query("reportCheck",semesterId,{week,version:r.data.version,format:"schedule"});
+        const filename=`第${week}周-听课安排表-${Date.now()}.xlsx`;
+        const path=await new Promise<string>(resolve=>saveExport(filename,content,resolve,()=>resolve("")));
+        if(!path)return;
+        await query("reportCheck",semesterId,{week,version:r.data.version,format:"schedule"});
+        this.setData({filename,filePath:path,fileOwner:currentBoot().workspace.epoch+":"+this.data.memberId});
+        wx.showToast({title:"安排表已保存",icon:"success"});
+      } catch(e) {displayError(e);} finally {this.setData({busy:false});}
+    },
     async exportReport(e: UiEvent) {
       if(this.data.busy || this.data.error || !this.data.coordinator || !this.data.semesterId)return;
       const kind=e.currentTarget.dataset.kind, xlsx=kind === "xlsx";

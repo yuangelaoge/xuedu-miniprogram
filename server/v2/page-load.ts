@@ -1,4 +1,5 @@
-import { canViewAllRecords } from '../../miniprogram/domain/capabilities';
+import { classGrade } from '../../miniprogram/domain/course-preferences';
+import { canGeneratePlan, canViewAllRecords } from '../../miniprogram/domain/capabilities';
 import { Entity, PageResult, Query, Resource, Workspace } from '../../miniprogram/domain/v2/protocol';
 import { LoadView, PageData, PageLoadRequest } from '../../miniprogram/domain/v2/page-data';
 import { Semester } from '../../miniprogram/domain/types';
@@ -90,8 +91,16 @@ export async function readPageData(request: PageLoadRequest, c: Context): Promis
     } else if (view === 'schedule') {
       const [tasks, plans, occurrences] = await Promise.all([c.all('tasks',visibleFilter),c.all('plans',filter),
         admin ? c.all('occurrences',{eq:{...filter.eq,status:'active'}}) : Promise.resolve([])]);
+      const gradeOptions = new Set<string>();
+      if (canGeneratePlan(actor.data.role)) {
+        const links=await c.all('semester_classes',{eq:{semesterId:selected}});
+        const ids=links.map(link=>link.parentId!);
+        for (let i=0;i<ids.length;i+=100) for (const klass of await c.all('classes',{in:{id:ids.slice(i,i+100)}})) {
+          if (klass.data.active !== false && classGrade(klass.data)) gradeOptions.add(classGrade(klass.data));
+        }
+      }
       const draft = plans.find(p=>p.data.status === 'draft');
-      result.weekData = {semester:clean(semester),tasks:tasks.map(clean),occurrences:occurrences.map(clean),
+      result.weekData = {semester:clean(semester),tasks:tasks.map(clean),occurrences:occurrences.map(clean),...(canGeneratePlan(actor.data.role) ? {gradeOptions:[...gradeOptions].sort()} : {}),
         plan:plans.filter(p=>['confirmed','skipped'].includes(String(p.data.status))).map(clean).pop(),
         draft:draft ? clean(draft) : undefined,uncovered:(draft?.data.uncovered || []) as {label:string;reason:string}[]};
     } else if (['record','submission'].includes(view) && request.targetId) {

@@ -6,6 +6,7 @@ export interface PageLoadRequest {
   week?: number; targetId?: string; cursor?: string; more?: boolean;
 }
 export interface WeekData {
+  gradeOptions?: string[];
   semester?: Entity; tasks: Entity[]; occurrences: Entity[]; records?: Entity[];
   plan?: Entity; draft?: Entity; availability?: Entity | null; uncovered?: { label: string; reason: string }[];
 }

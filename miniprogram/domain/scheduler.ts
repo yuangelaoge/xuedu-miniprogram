@@ -1,3 +1,4 @@
+import { classGrade, isEarlyCourse } from "./course-preferences";
 import { participatesByDefault } from "./capabilities";
 import { AppState, Course, Plan, Task } from "./types";
 import { slotsFor } from "./calendar";
@@ -30,13 +31,14 @@ export function eligible(
   );
 }
 
-// 最大流保证教学班覆盖数量；最小费用依次优化班级轮换和成员轮换。
+// 最大流匹配班级组；费用依次保护班级覆盖、优先年级、班级轮换、成员轮换、非早八。
 // 首版以不重叠教学班为覆盖单位，完整连续节次为一次任务。
 export function generatePlan(
   state: AppState,
   semesterId: string,
   week: number,
   revision: number,
+  priorityGrade = "",
 ): Plan {
   const semester = state.semesters.find((s) => s.id === semesterId);
   if (!semester || week < 1 || week > semester.weeks)
@@ -46,8 +48,8 @@ export function generatePlan(
       c.semesterId === semesterId &&
       c.weeks.includes(week) &&
       c.classIds.some((id) =>
-        semester.grades.includes(
-          state.classes.find((k) => k.id === id)?.grade || "",
+        semester.grades.map(grade => classGrade({grade})).includes(
+          classGrade(state.classes.find((k) => k.id === id) || {}),
         ),
       ),
   );
@@ -74,12 +76,17 @@ export function generatePlan(
   );
   const previousClasses = new Set(previous.flatMap((r) => r.course.classIds));
   const previousMembers = new Set(previous.map((r) => r.memberId));
+  const base = members.length + 1;
+  const memberCost = base, classCost = base ** 2, gradeCost = base ** 3, coverageCost = base ** 4;
+  const largestGroup = Math.max(1, ...groups.map(g => g.courses[0].classIds.length));
+  if (!Number.isSafeInteger(largestGroup * coverageCost * base)) throw new Error("排班规模超出安全计算范围");
   type Edge = {
     to: number;
     rev: number;
     cap: number;
     cost: number;
     course?: Course;
+    options?: Course[];
   };
   const source = 0,
     groupOffset = 1,
@@ -91,8 +98,9 @@ export function generatePlan(
     to: number,
     cost: number,
     course?: Course,
+    options?: Course[],
   ): void => {
-    const forward: Edge = { to, rev: graph[to].length, cap: 1, cost, course };
+    const forward: Edge = { to, rev: graph[to].length, cap: 1, cost, course, options };
     const reverse: Edge = {
       to: from,
       rev: graph[from].length,
@@ -106,18 +114,22 @@ export function generatePlan(
     const repeated = g.courses[0].classIds.some((id) =>
       previousClasses.has(id),
     );
-    add(source, groupOffset + gi, repeated ? members.length + 1 : 0);
+    const preferred = !priorityGrade || g.courses[0].classIds.some(id => classGrade(state.classes.find(c => c.id === id) || {}) === priorityGrade);
+    add(source, groupOffset + gi, (largestGroup - g.courses[0].classIds.length) * coverageCost + (preferred ? 0 : gradeCost) + (repeated ? classCost : 0));
     for (let j = 0; j < members.length; j++) {
       const mi = (j + revision) % members.length;
       const options = g.courses.filter((c) =>
         eligible(state, c, members[mi].id, week),
       );
+      options.sort((a,b) => Number(isEarlyCourse(a)) - Number(isEarlyCourse(b)) || a.weekday-b.weekday || a.start-b.start || a.id.localeCompare(b.id));
+      const best = options.filter(c => isEarlyCourse(c) === isEarlyCourse(options[0] || {start:0}));
+      const recommended = best[revision % best.length];
       if (options.length)
         add(
           groupOffset + gi,
           memberOffset + mi,
-          previousMembers.has(members[mi].id) ? 1 : 0,
-          options[revision % options.length],
+          (previousMembers.has(members[mi].id) ? memberCost : 0) + Number(isEarlyCourse(recommended)),
+          recommended, options,
         );
     }
   });
@@ -159,6 +171,7 @@ export function generatePlan(
         memberId: member.id,
         memberName: member.name,
         course: JSON.parse(JSON.stringify(edge.course)),
+        candidateCourses: JSON.parse(JSON.stringify(edge.options)),
         classLabel: classLabel(state, edge.course.classIds),
       });
     } else

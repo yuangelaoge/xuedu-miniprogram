@@ -1,3 +1,6 @@
+import type { ScheduleReport } from "../../miniprogram/domain/schedule-report";
+import { classGrade, isEarlyCourse, sameClasses } from "../../miniprogram/domain/course-preferences";
+import { taskCourseOptions, TaskCourseOption } from "../../miniprogram/domain/v2/task-options";
 import { createHash } from "node:crypto";
 import { copy, schedulingPage } from "./scheduling-read";
 import { isManager, canViewAllRecords, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
@@ -84,9 +87,13 @@ export function createGatewayV2(deps: DependenciesV2) {
     const readOnly = ["bootstrap", "query", "photoUrls", "clearPreview"].includes(input.operation);
     const hintId = (value: unknown) => readOnly && typeof value === "string" && value.length <= 200 ? value : "";
     const memberHint = hintId(input.readHint?.memberId);
-    const p = input.payload || {};
+    // A distinct command makes new course selection fail closed on an older backend.
+    const p = input.operation === "command" && input.payload?.type === "recordSubmitChoice"
+      ? {...input.payload,type:"recordSubmit"} : input.payload || {};
+    if (input.operation === "command" && input.payload?.type === "recordSubmitChoice") text(p.occurrenceId, "听课课程");
     // Read the permission fence BEFORE speculative rows, then check it again in response().
-    const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust"].includes(String(p.type));
+    const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust", "planConfirm"].includes(String(p.type));
+    const scheduleExport = input.operation === "query" && p.kind === "scheduleReport";
     const membersList = input.operation === "query" && p.kind === "members";
     const recordWrite = input.operation === "photo" || input.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(p.type));
     if (typeof input.requestId === "string" && input.requestId.startsWith("record-v1-")) fail("请求标识使用了保留前缀");
@@ -94,10 +101,10 @@ export function createGatewayV2(deps: DependenciesV2) {
     const digest = recordWrite ? writeDigest([input.operation,input.semesterId,input.expectedVersion,p]) : "";
     const prefetched = recordWrite && repo.recordRead ? await repo.recordRead(identityKey, {
       kind: input.operation === "photo" ? "photo" : p.type, epoch: input.epoch, semesterId: input.semesterId,
-      taskId: p.taskId, id: p.id, photos: p.photos, operationDigest: digest,
-    }) : (scheduling || membersList) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
-      kind: membersList ? "members" : p.type, epoch: input.epoch, semesterId: input.semesterId,
-      week: p.week, requestId: input.requestId, cursor: input.cursor, limit: input.limit, version: p.version,
+      taskId: p.taskId, id: p.id, photos: p.photos, occurrenceId: p.occurrenceId, operationDigest: digest,
+    }) : (scheduling || membersList || scheduleExport) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
+      kind: scheduleExport ? "scheduleReport" : membersList ? "members" : p.type, epoch: input.epoch, semesterId: input.semesterId,
+      week: p.week, id:p.id, requestId: input.requestId, cursor: input.cursor, limit: input.limit, version: p.version,
     }) : null;
     let workspace = prefetched?.workspace || await repo.workspace();
     // Old clients generate fresh request IDs on retry. The same immutable write
@@ -362,8 +369,30 @@ export function createGatewayV2(deps: DependenciesV2) {
         if ((await repo.workspace()).version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({summary:summarizeEntities(semester,week,records,plans.some(v=>v.data.status==='skipped')),version:workspace.version});
       }
+      if (kind === "scheduleReport") {
+        excelExporter(); const semester = await requireSemester(), week = requireWeek(semester);
+        const filter: Query = {eq:{semesterId:semester.id,week}};
+        const [tasks,plans] = await Promise.all([all("tasks",filter),all("plans",filter)]);
+        if (!plans.some(plan=>plan.data.status === "confirmed")) fail("本周尚无已确认的有效听课安排");
+        if (tasks.some(task=>task.data.status === "pendingAdjustment")) fail("本周有待调整任务，请确认调整后再导出");
+        const assigned=tasks.filter(task=>["confirmed","submitted"].includes(String(task.data.status)));
+        const people=await all("members");
+        const entries=new Map<string,ScheduleReport["members"][number]>();
+        for (const m of people) if (m.data.active === true || assigned.some(task=>task.memberId===m.id)) entries.set(m.id,{name:String(m.data.name || ""),role:String(m.data.role),courses:[]});
+        for (const task of assigned) {
+          const m=entries.get(task.memberId!);
+          if (!m) fail("安排中的成员资料缺失，请核对后导出");
+          for (const option of taskCourseOptions(task)) m.courses.push({classLabel:option.classLabel,course:option.course,date:option.date});
+        }
+        const order=["admin","leader","officer","member"];
+        const members=[...entries.values()].sort((a,b)=>order.indexOf(a.role)-order.indexOf(b.role) || a.name.localeCompare(b.name));
+        for (const m of members) m.courses.sort((a,b)=>a.date.localeCompare(b.date) || a.course.start-b.course.start || a.course.name.localeCompare(b.course.name));
+        if ((await repo.workspace()).version !== workspace.version) fail("安排已变化，请重新导出", "VERSION_CONFLICT");
+        const schedule:ScheduleReport={semesterName:String(semester.data.name),week,members};
+        return response({schedule,version:workspace.version});
+      }
       if (kind === "reportCheck") {
-        coordinator(); if (p.format === "xlsx") excelExporter(); else if (["txt", "copy"].includes(String(p.format))) admin(); await requireSemester();
+        coordinator(); if (["xlsx","schedule"].includes(String(p.format))) excelExporter(); else if (["txt", "copy"].includes(String(p.format))) admin(); await requireSemester();
         if (p.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({ valid: true, version: workspace.version });
       }
@@ -663,7 +692,26 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (occurrence.data.status !== "active" || occurrence.semesterId !== semester.id || occurrence.week !== week) fail("上课实例已失效或周次不匹配");
       used.add(who); return m;
     };
-    const taskData = (occurrence: Entity, m: Entity) => ({ occurrenceId: occurrence.id, course: occurrence.data.course, classes: occurrence.data.classes, classLabel: occurrence.data.classLabel,
+    const snapshotOption = (o: Entity): TaskCourseOption => ({occurrenceId:o.id,
+      occurrenceVersion:changes.get("occurrences:" + o.id) ? o.version + 1 : o.version,
+      course:o.data.course as unknown as Course,classes:o.data.classes as unknown[] || [],classLabel:String(o.data.classLabel || ""),date:String(o.date || "")});
+    const validateOption = (task: Entity, option: TaskCourseOption, occurrence: Entity) => {
+      const original = task.data.course as unknown as Course;
+      if (!option || !sameClasses(option.course.classIds, original.classIds) || occurrence.semesterId !== task.semesterId || occurrence.week !== task.week ||
+        occurrence.data.status !== "active" || occurrence.date !== option.date || JSON.stringify(occurrence.data.course) !== JSON.stringify(option.course) ||
+        (option.occurrenceVersion !== undefined && occurrence.version !== option.occurrenceVersion)) fail("课表已变化，请等待任务调整");
+    };
+    const availableOptions = async (primary: Entity, m: Entity, pool: Entity[]) => {
+      const av = (await page("availability", {eq:{semesterId:semester.id,week:primary.week,memberId:m.id},limit:1})).items[0];
+      const options = pool.filter(o => o.data.status === "active" && o.week === primary.week && o.semesterId === semester.id &&
+        sameClasses((o.data.course as unknown as Course).classIds,(primary.data.course as unknown as Course).classIds) &&
+        !(o.data.course as unknown as Course).classIds.includes(String(m.data.classId)) &&
+        slotsFor(o.data.course as unknown as Course).every(slot => (av?.data.slots as string[] || []).includes(slot)))
+        .sort((a,b) => Number(isEarlyCourse(a.data.course as unknown as Course))-Number(isEarlyCourse(b.data.course as unknown as Course)) || String(a.date).localeCompare(String(b.date)) || a.id.localeCompare(b.id));
+      if (!options.length || options.length > 100) fail("可选课程数量无效，请核对本周课表");
+      return options.map(snapshotOption);
+    };
+    const taskData = (occurrence: Entity, m: Entity, options?: TaskCourseOption[]) => ({...(options ? {courseOptions:options} : {}), occurrenceId: occurrence.id, course: occurrence.data.course, classes: occurrence.data.classes, classLabel: occurrence.data.classLabel,
       date: occurrence.date, memberId: m.id, memberName: m.data.name, status: "draft" });
     const updateDraftCoverage = async (plan: Entity) => {
       const week = plan.week!;
@@ -749,9 +797,31 @@ export function createGatewayV2(deps: DependenciesV2) {
       }
       const impacted: Entity[] = [];
       const draftByWeek = new Map<number, Entity>();
+      const handledOptions = new Set<string>();
       for (const occurrence of affected) {
         for (const task of await all("tasks", { eq: { semesterId: semester.id, week: existing.find(e => e.id === occurrence.id)?.week || occurrence.week } })) {
-          if (task.data.occurrenceId !== occurrence.id || !["confirmed", "pendingAdjustment"].includes(String(task.data.status))) continue;
+          if (!["confirmed", "pendingAdjustment"].includes(String(task.data.status))) continue;
+          if (Array.isArray(task.data.courseOptions)) {
+            if (handledOptions.has(task.id) || !taskCourseOptions(task).some(o=>o.occurrenceId===occurrence.id)) continue;
+            handledOptions.add(task.id);
+            task.data.status = "pendingAdjustment"; put("tasks",task); impacted.push(task);
+            let plan = draftByWeek.get(task.week!);
+            if (!plan) { plan=await makeDraft(task.week!,"课程或停调课影响任务，需人工确认"); draftByWeek.set(task.week!,plan); }
+            const currentOptions: Entity[] = [];
+            for (const option of taskCourseOptions(task)) {
+              const change = changes.get("occurrences:"+option.occurrenceId);
+              const row = change?.value ? {...change.value,version:change.expectedVersion} : await get("occurrences",option.occurrenceId,false);
+              if (row && row.data.status === "active" && row.week === task.week && sameClasses((row.data.course as unknown as Course).classIds,(task.data.course as unknown as Course).classIds)) currentOptions.push(row);
+            }
+            const m=(await get("members",task.memberId!))!;
+            const av=(await page("availability",{eq:{semesterId:semester.id,week:task.week,memberId:m.id},limit:1})).items[0];
+            const viable=currentOptions.filter(o=>!(o.data.course as unknown as Course).classIds.includes(String(m.data.classId)) && slotsFor(o.data.course as unknown as Course).every(slot=>(av?.data.slots as string[] || []).includes(slot)))
+              .sort((a,b)=>Number(isEarlyCourse(a.data.course as unknown as Course))-Number(isEarlyCourse(b.data.course as unknown as Course)) || a.id.localeCompare(b.id));
+            if (viable.length) draftTask(plan,task,taskData(viable[0],m,await availableOptions(viable[0],m,viable)));
+            else draftTask(plan,task,{...task.data,cancel:true});
+            continue;
+          }
+          if (task.data.occurrenceId !== occurrence.id) continue;
           task.data.status = "pendingAdjustment"; put("tasks", task); impacted.push(task);
           let plan = draftByWeek.get(task.week!);
           if (!plan) { plan = await makeDraft(task.week!, "课程或停调课影响任务，需人工确认"); draftByWeek.set(task.week!, plan); }
@@ -859,7 +929,14 @@ export function createGatewayV2(deps: DependenciesV2) {
           }
           if (task.data.cancel) { task.data.status = "cancelled"; put("tasks", task); continue; }
           const occurrence = (await get("occurrences", String(task.data.occurrenceId)))!;
-          await eligibleTask(task.memberId!, occurrence, week, used);
+          const options = taskCourseOptions(task);
+          if (!options.length || options.length > 100 || new Set(options.map(o=>o.occurrenceId)).size !== options.length || !options.some(o=>o.occurrenceId===occurrence.id)) fail("草稿候选课程无效");
+          for (const option of options) {
+            const candidate = (await get("occurrences", option.occurrenceId))!;
+            validateOption(task, option, candidate);
+            await eligibleTask(task.memberId!, candidate, week, new Set(used));
+          }
+          used.add(task.memberId!);
           if (JSON.stringify(task.data.course) !== JSON.stringify(occurrence.data.course) || task.data.date !== occurrence.date) fail("课程已变化，请重新生成草稿");
           task.data.status = "confirmed"; put("tasks", task);
         }
@@ -891,14 +968,18 @@ export function createGatewayV2(deps: DependenciesV2) {
           if (change.cancel === true) { if (!original) fail("取消须指定原任务"); draftTask(plan, original, { ...original.data, cancel: true }); continue; }
           const occurrence = (await get("occurrences", text(change.occurrenceId || original?.data.occurrenceId, "上课实例")))!;
           const m = await eligibleTask(text(change.memberId || original?.memberId, "成员"), occurrence, week, used);
-          const data = taskData(occurrence, m);
+          const pool = await all("occurrences", {eq:{semesterId:semester.id,week}});
+          const data = taskData(occurrence, m, await availableOptions(occurrence,m,pool));
           if (original) draftTask(plan, original, data); else add("tasks", data, { semesterId: semester.id, week, memberId: m.id, parentId: plan.id });
         }
         await updateDraftCoverage(plan);
         audit(type, plan.id, { reason: why }); return commit();
       }
       const participants = await all("semester_classes", { eq: { semesterId: semester.id } });
-      const activeClassIds = (await classesFor(participants.map(c => c.parentId!))).filter(c => c.data.active !== false).map(c => c.id);
+      const activeClasses = (await classesFor(participants.map(c => c.parentId!))).filter(c => c.data.active !== false);
+      const activeClassIds = activeClasses.map(c=>c.id);
+      const priorityGrade = text(p.priorityGrade ?? "", "优先年级", 10, true);
+      if (priorityGrade && !activeClasses.some(c=>classGrade(c.data)===priorityGrade)) fail("优先年级不属于本学期参与班级");
       const occurrences = (await all("occurrences", { eq: { semesterId: semester.id, week } })).filter(o => o.data.status === "active" && (o.data.course as unknown as Course).classIds.every(id => activeClassIds.includes(id)));
       const previous = week > 1 ? await all("records", { eq: { semesterId: semester.id, week: week - 1 } }) : [];
       const completed = tasks.filter(t => t.data.status === "submitted");
@@ -907,15 +988,16 @@ export function createGatewayV2(deps: DependenciesV2) {
       const members = await all("members"); const availability = await all("availability", { eq: { semesterId: semester.id, week } });
       const relatedClassIds = Array.from(new Set(occurrences.flatMap(o => (o.data.course as unknown as Course).classIds)));
       const classes = await classesFor(relatedClassIds);
-      const state: AppState = { schema: 1, activeSemesterId: semester.id, actorId: member().id, semesters: [{ ...sem, grades: Array.from(new Set(classes.map(c => String(c.data.grade)))) }], classes: classes.map(c => ({ id: c.id, ...c.data } as any)), members: members.filter(m => !used.has(m.id)).map(m => ({ id: m.id, ...m.data } as any)), applications: [], courses: occurrences.filter(o => !(o.data.course as unknown as Course).classIds.some(id => covered.has(id))).map(o => ({ ...(o.data.course as unknown as Course), id: o.id })), availability: availability.map(a => ({ ...a.data, semesterId: a.semesterId, week: a.week, memberId: a.memberId } as any)), plans: [], drafts: [], records: previous.map(r => ({ ...r.data, id: r.id, semesterId: r.semesterId, week: r.week, memberId: r.memberId } as any)), audit: [], generation: 0 };
-      const generated = generatePlan(state, semester.id, week, workspace.version);
-      const plan = await makeDraft(week, "生成排班"); plan.data.uncovered = generated.uncovered;
+      const state: AppState = { schema: 1, activeSemesterId: semester.id, actorId: member().id, semesters: [{ ...sem, grades: Array.from(new Set(classes.map(c => classGrade(c.data)))) }], classes: classes.map(c => ({ id: c.id, ...c.data, grade:classGrade(c.data) } as any)), members: members.filter(m => !used.has(m.id)).map(m => ({ id: m.id, ...m.data } as any)), applications: [], courses: occurrences.filter(o => !(o.data.course as unknown as Course).classIds.some(id => covered.has(id))).map(o => ({ ...(o.data.course as unknown as Course), id: o.id })), availability: availability.map(a => ({ ...a.data, semesterId: a.semesterId, week: a.week, memberId: a.memberId } as any)), plans: [], drafts: [], records: previous.map(r => ({ ...r.data, id: r.id, semesterId: r.semesterId, week: r.week, memberId: r.memberId } as any)), audit: [], generation: 0 };
+      const generated = generatePlan(state, semester.id, week, workspace.version, priorityGrade);
+      const plan = await makeDraft(week, "生成排班"); plan.data.uncovered = generated.uncovered; plan.data.priorityGrade = priorityGrade;
       const replacing = tasks.filter(t => ["confirmed", "pendingAdjustment"].includes(String(t.data.status)));
       for (const task of replacing) draftTask(plan, task, { ...task.data, cancel: true });
       for (const task of generated.tasks) {
         const occurrence = occurrences.find(o => o.id === task.course.id)!;
         const m = members.find(m => m.id === task.memberId)!;
-        add("tasks", taskData(occurrence, m), { semesterId: semester.id, week, memberId: m.id, parentId: plan.id });
+        if ((task.candidateCourses || [task.course]).length > 100) fail("单个任务候选课程超过100门，请核对课表");
+        add("tasks", taskData(occurrence, m, (task.candidateCourses || [task.course]).map(c=>snapshotOption(occurrences.find(o=>o.id===c.id)!))), { semesterId: semester.id, week, memberId: m.id, parentId: plan.id });
       }
       audit(type, plan.id); return commit();
     }
@@ -924,11 +1006,14 @@ export function createGatewayV2(deps: DependenciesV2) {
         const task = (await get("tasks", text(p.taskId, "任务标识")))!; expected(task);
         if (task.semesterId !== semester.id || task.memberId !== member().id) fail("只能提交本人任务", "FORBIDDEN");
         if (task.data.status !== "confirmed") fail("任务尚未生效、待调整或已提交");
-        const occurrence = (await get("occurrences", String(task.data.occurrenceId)))!;
-        if (occurrence.data.status !== "active" || occurrence.date !== task.data.date || JSON.stringify(occurrence.data.course) !== JSON.stringify(task.data.course)) fail("课表已变化，请等待任务调整");
+        const selectedId = text(p.occurrenceId ?? task.data.occurrenceId, "听课课程");
+        const option = taskCourseOptions(task).find(o=>o.occurrenceId===selectedId);
+        if (!option) fail("只能选择本任务分配的课程", "FORBIDDEN");
+        const occurrence = (await get("occurrences", selectedId))!;
+        validateOption(task, option, occurrence);
         if ((await page("records", { eq: { taskId: task.id }, limit: 1 })).items.length) fail("该任务已有记录");
         const observed = await observation(undefined, task.id);
-        const record = add("records", { ...observed, course: task.data.course, classes: task.data.classes, classLabel: task.data.classLabel, memberName: task.data.memberName, date: task.data.date, firstSubmittedAt: at, createdAt: at, correctedAt: "", revision: 1 }, { semesterId: semester.id, week: task.week, memberId: member().id, taskId: task.id, date: String(task.data.date) });
+        const record = add("records", { ...observed, course: option.course, classes: option.classes, classLabel: option.classLabel, memberName: task.data.memberName, date: option.date, selectedOccurrenceId:selectedId, assignment:{occurrenceId:task.data.occurrenceId,course:task.data.course,classes:task.data.classes,classLabel:task.data.classLabel,date:task.data.date}, firstSubmittedAt: at, createdAt: at, correctedAt: "", revision: 1 }, { semesterId: semester.id, week: task.week, memberId: member().id, taskId: task.id, date: option.date });
         add("record_versions", { ...record.data, reason: "首次提交", actorId: member().id, editedAt: at, recordVersion: 1 }, { semesterId: semester.id, week: task.week, memberId: member().id, recordId: record.id });
         for (const id of observed.photos as string[]) { const photo = (await get("photos", id))!; photo.recordId = record.id; put("photos", photo); }
         task.data.status = "submitted"; put("tasks", task); audit(type, record.id); return commit();
@@ -940,7 +1025,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (now - Date.parse(String(record.data.firstSubmittedAt)) >= DAY || now < Date.parse(String(record.data.firstSubmittedAt))) fail("首次提交已满24小时，请联系管理员纠错", "EDIT_WINDOW_CLOSED");
       }
       const why = reason();
-      for (const key of ["memberId", "taskId", "semesterId", "course", "date", "firstSubmittedAt", "createdAt", "classes"]) if (p[key] !== undefined) fail("不能修改记录归属或首次提交时间");
+      for (const key of ["memberId", "taskId", "semesterId", "course", "date", "firstSubmittedAt", "createdAt", "classes", "occurrenceId", "selectedOccurrenceId", "assignment", "courseOptions"]) if (p[key] !== undefined) fail("不能修改记录归属或首次提交时间");
       const observed = await observation(record.id, record.taskId);
       record.data = { ...record.data, ...observed, correctedAt: at, revision: Number(record.data.revision) + 1 };
       put("records", record);

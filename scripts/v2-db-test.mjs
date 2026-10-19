@@ -4,7 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 // Disposable local Docker database only. No connection string or cloud credential accepted.
 const pagesOnly = process.argv.includes('--pages');
-const records = process.argv.includes('--records');
+const options = process.argv.includes('--options');
+const records = process.argv.includes('--records') || options;
 const scheduling = process.argv.includes('--scheduling');
 const officer = process.argv.includes('--officer') || scheduling || records;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -28,8 +29,9 @@ try {
   if (officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/007-information-officer.sql')), stdio:['pipe','ignore','inherit'] });
   if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/008-officer-record-access.sql')), stdio:['pipe','ignore','inherit'] });
   if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/009-scheduling-read.sql')), stdio:['pipe','ignore','inherit'] });
-  if (records) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/010-record-read.sql')), stdio:['pipe','ignore','inherit'] });
-  const result = spawnSync(process.execPath, ['--import','tsx','--test',records ? 'tests/v2-record-rpc.test.ts' : scheduling ? 'tests/v2-scheduling-rpc.test.ts' : pagesOnly ? 'tests/v2-page-rpc.test.ts' : 'tests/v2-database-postgres.test.ts'], { cwd:root, env:{...process.env,XUEDU_LOCAL_PG_CONTAINER:container},stdio:'inherit' });
+  if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/010-record-read.sql')), stdio:['pipe','ignore','inherit'] });
+  if (pagesOnly || officer) execFileSync('docker', ['exec', '-i', container, 'psql', '-U', 'postgres', '-v', 'ON_ERROR_STOP=1'], { input: readFileSync(resolve(root,'server/migrations/011-task-course-options.sql')), stdio:['pipe','ignore','inherit'] });
+  const result = spawnSync(process.execPath, ['--import','tsx','--test',options ? 'tests/v2-course-options-pg.test.ts' : records ? 'tests/v2-record-rpc.test.ts' : scheduling ? 'tests/v2-scheduling-rpc.test.ts' : pagesOnly ? 'tests/v2-page-rpc.test.ts' : 'tests/v2-database-postgres.test.ts'], { cwd:root, env:{...process.env,XUEDU_LOCAL_PG_CONTAINER:container},stdio:'inherit' });
   process.exitCode = result.status === 0 ? 0 : 1;
 } catch (e) { console.error('Local PostgreSQL test failed:', e.message); process.exitCode=1; }
 finally { if(started) docker(['rm','-f',container]); }

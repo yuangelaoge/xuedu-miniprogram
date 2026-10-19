@@ -121,9 +121,10 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 | week | 必须，week | 兼容目标周查询；普通成员/干事的任务和记录仍限本人，全组记录使用records/report；availability对所有角色均只返回本人 |
 | report | 必须，week，reportVersion可选 | 管理员/组部长/干事读取目标周记录及仅该周state；format=xlsx仅管理员/干事，txt/copy仅管理员；不含无课时段 |
 | excelReport | 必须，week | 管理员/信息部干事；同样的完整Excel数据，含原始记录，availability为空 |
+| scheduleReport | 必须，week | 管理员/信息部干事；仅目标周已确认安排的课程快照及全部有效成员，无安排成员 courses=[]；返回 schedule、version；存在待调整任务时拒绝 |
 | namesReport | 必须，week | 仅管理员；TXT/复制名单所需数据 |
 | summaryReport | 必须，week | 管理员/组部长/干事；班级聚合统计，兼容旧客户端；新版干事Excel使用excelReport |
-| reportCheck | 必须，version，format可选 | 管理员/组部长/干事核对版本；format=xlsx仅管理员/干事，txt/copy仅管理员，返回valid或冲突 |
+| reportCheck | 必须，version，format可选 | 管理员/组部长/干事核对版本；format=xlsx/schedule仅管理员/干事，txt/copy仅管理员，返回valid或冲突 |
 
 autoApproval 的 setting 保存 enabled、expiresAt、updatedBy、updatedByName、updatedAt。到期不需要后台任务修改该行，active 始终按服务器时间计算，客户端不可只读 enabled 判断。非管理员 bootstrap 不返回该配置。自动入组 SQL 还用数据库时钟检查截止，并校验成员、绑定、申请与审计四项的关系；到期或冲突全事务回滚。详见 [限时入组说明](AUTO-APPROVAL.md)。
 
@@ -154,11 +155,12 @@ payload必须含type。下表其他字段也在payload，epoch/requestId/semeste
 | courseDisable | id,effectiveDate | 课程；管理员，必须semesterId，新增停用版本 |
 | exceptionSave | courseId,date,kind=`cancel/move/extra`,reason；非cancel可newDate/start/end/classroom | **课程**版本；管理员，必须semesterId |
 | availabilitySave | week,slots,optedIn,note | 本人该周无课时间或新建0；有效成员，必须semesterId |
-| planGenerate | week | 该周当前confirmed或skipped plan版本；没有则0；管理员/信息部干事 |
+| planGenerate | week，priorityGrade可选（空串表示不特别优先） | 该周当前confirmed或skipped plan版本；没有则0；管理员/信息部干事；年级限当前学期有效参与班级 |
 | taskAdjust | week,reason,changes | 同上当前正式计划版本；仅管理员 |
 | planConfirm | id=草稿计划ID | 草稿plan版本；仅管理员（包括调整、取消、跳过草稿） |
 | planSkip | week,reason | 当前confirmed或skipped plan版本；没有则0；仅管理员 |
 | recordSubmit | taskId,metrics,photos及观察字段 | **任务**版本；任务本人，必须semesterId |
+| recordSubmitChoice | taskId,occurrenceId,metrics,photos及观察字段 | **任务**版本；任务本人；occurrenceId必须来自该任务已分配的courseOptions，事务核对实际实例版本 |
 | recordEdit | id=记录ID,reason,metrics,photos及观察字段 | **记录**版本；本人不足24小时或管理员，必须semesterId |
 
 课程维护返回 `impacts`（被标待调整任务），客户端展示清单及自动生成的调整草稿，不自动确认。生效日期必须在学期范围内；参与班级须先加入当期、停用班级不可新建课程。cancel停课、move调日期/节次/教室、extra补课。跨周调整分别生成原周取消和新周补排草稿，新周重新检验可用时间。

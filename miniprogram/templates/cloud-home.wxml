@@ -41,22 +41,7 @@
     <view class="home-section-title">我的本周任务</view>
     <view class="home-section-link" hover-class="home-pressed" data-target="schedule" bindtap="navigate" role="button">全部安排<view class="home-chevron"></view></view>
   </view>
-  <view wx:for="{{homeTasks}}" wx:key="id" class="home-task">
-    <view class="task-topline">
-      <view class="task-class">{{item.classLabel}}</view>
-      <view class="task-status {{item.done ? 'task-status-done' : ''}}"><view class="task-status-dot"></view>{{item.done ? '已提交' : '待完成'}}</view>
-    </view>
-    <view class="task-course">{{item.course.name}}</view>
-    <view class="task-detail"><text class="task-detail-label">时间</text><text class="task-detail-value">{{item.timeLabel}}</text></view>
-    <view class="task-detail"><text class="task-detail-label">地点</text><text class="task-detail-value">{{item.course.classroom}}</text></view>
-    <view class="task-detail"><text class="task-detail-label">教师</text><text class="task-detail-value">{{item.course.teacher}}</text></view>
-    <include src="cloud-task-headcount.wxml" />
-    <view class="task-bottom">
-      <text class="task-hint">{{item.done ? '本次听课已记录' : '听课后记得上传签字表'}}</text>
-      <button wx:if="{{!item.done}}" class="task-button" hover-class="home-pressed" data-id="{{item.id}}" bindtap="open">填写记录<text class="button-arrow">→</text></button>
-      <button wx:else class="task-button task-button-done" hover-class="home-pressed" data-id="{{item.recordId}}" data-target="record" bindtap="open">查看记录<text class="button-arrow">→</text></button>
-    </view>
-  </view>
+  <view wx:for="{{homeTasks}}" wx:key="id" class="home-task"><include src="cloud-home-task.wxml" /></view>
   <view wx:if="{{!tasks.length}}" class="home-empty">
     <view class="empty-paper" aria-hidden="true">
       <view class="empty-paper-line"></view><view class="empty-paper-line short-line"></view>
@@ -65,6 +50,14 @@
     <view class="home-empty-title">{{skipped ? '本周已跳过听课' : '本周暂无个人任务'}}</view>
     <view class="home-empty-description">{{skipped ? '本周无需听课，后续安排请留意周次更新' : '先填好无课时间，安排确认后会显示在这里'}}</view>
   </view>
+
+  <block wx:if="{{semesterId}}">
+    <view class="home-section-heading"><view class="home-section-title">我的下周任务</view><view wx:if="{{nextWeek <= maxWeek}}" class="muted small">第 {{nextWeek}} 周</view></view>
+    <view wx:for="{{homeNextTasks}}" wx:key="id" class="home-task"><include src="cloud-home-task.wxml" /></view>
+    <view wx:if="{{nextWeekLoading}}" class="home-empty-description">正在加载下周任务…</view>
+    <view wx:elif="{{nextWeekError}}" class="v2-load-error" bindtap="loadNextWeek" role="button">{{nextWeekError}} · 点击重试</view>
+    <view wx:elif="{{!homeNextTasks.length}}" class="home-empty-description">{{nextWeekMessage}}</view>
+  </block>
 
   <block wx:if="{{manager}}">
     <view class="home-section-heading">

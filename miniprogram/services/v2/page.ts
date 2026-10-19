@@ -8,7 +8,7 @@ import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protoc
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
-import { WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive, pageFreshnessKey } from "./client";
+import { Boot, WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive, pageFreshnessKey } from "./client";
 import { runtime } from "../../config/runtime";
 import { ImportPlan, planCourseImport } from "./import-batch";
 import { syncAvailabilityExitAlert } from "../availability-exit";
@@ -34,6 +34,10 @@ const row = (e: Entity): Row => {
     detail: [e.data.studentNo, e.data.classLabel, e.data.approvalMode === "automatic" ? "自动通过 · " + localTime(s(e.data.reviewedAt)) : "", course?.name, e.data.grade, e.data.major, e.data.teacher || course?.teacher, e.data.date || e.date, course ? `第${course.start}–${course.end}节 ${course.classroom || ""}` : "", e.data.reason, e.data.detail, e.data.correctedAt ? "更正于 " + s(e.data.correctedAt) : ""].filter(Boolean).join(" · "),
     status: s(e.data.status), statusLabel: statusLabels[s(e.data.status)] || s(e.data.status), active: e.data.active !== false, role: s(e.data.role), cancel: e.data.cancel === true, replaces: !!e.data.replacesTaskId, historyFields: e.data.metrics ? METRIC_FIELDS.map(f => ({label:f.label,value:(e.data.metrics as Record<string,number>)[f.key] === -1 ? "信息缺失" : s((e.data.metrics as Record<string,number>)[f.key])})) : [] };
 };
+const homeTask = (t: Entity, records: Entity[] = []) => ({...row(t), classLabel:s(t.data.classLabel),
+  course:(t.data.course || {}) as Record<string,unknown>,
+  timeLabel:s(t.data.date || t.date) + " · 第" + s((t.data.course as Record<string,unknown>)?.start) + "–" + s((t.data.course as Record<string,unknown>)?.end) + "节",
+  done:t.data.status === "submitted", recordId:records.find(r=>r.taskId===t.id)?.id || ""});
 const field = (key: string, label: string, value: unknown = "", kind = "text", options: Option[] = []): Field => ({ key, label, value: s(value), kind, options, selected: Array.isArray(value) ? value.map(String) : [] });
 const numberFields = new Set(["expected", "actual", "late", "early", "sleep", "phone", "talk", "other", "start", "end", "weekday", "weeksCount", "days", "periods", "week"]);
 function rangeList(value: string): number[] {
@@ -98,7 +102,7 @@ export async function previewAuthorizedImages(urls: string[], index = 0): Promis
 export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   let availabilityVisible = true;
-  let loadedAt = 0, loadedKey = "";
+  let loadedAt = 0, loadedKey = "", nextWeekLoad = 0;
   Page({
     data: {
       metricFields: [] as Field[], nameFields: [] as Field[], feedbackFields: [] as Field[], recordContext: null as Row | null, uploadingPhoto: "",
@@ -107,7 +111,8 @@ export function registerCloudPage(view: View): void {
       pendingCount: 0, pendingMore: false, pendingLabel: "", searchText: "", applicationFilter: "pending", visibleRows: [] as Row[], visibleTasks: [] as Row[],
       dirty: false, weekInitialized: false, maxWeek: 60, filename: "", filePath: "", fileOwner: "",
       modeLabel: "云端试用", roleLabel: "", initial: "", className: "", studentNo: "", dates: "", availabilityReady: false,
-      homeTasks: [] as (Row & {classLabel:string;course:Record<string,unknown>;timeLabel:string;done:boolean;recordId:string})[], taskCount: 0, recordCount: 0, coverage: 0, skipped: false,
+      homeTasks: [] as ReturnType<typeof homeTask>[],
+      homeNextTasks: [] as ReturnType<typeof homeTask>[], nextWeek:0, nextWeekLoading:false, nextWeekError:"", nextWeekMessage:"", taskCount: 0, recordCount: 0, coverage: 0, skipped: false,
       availabilityDays: [] as {n:number;name:string}[], availabilityRows: [] as {n:number;cells:{key:string;selected:boolean}[]}[],
       recordTab: "all", weekTotal: 0, weekSubmitted: 0, weekProgress: 0,
       eyebrow: ({home:"",schedule:"WEEKLY SCHEDULE",records:"WEEKLY REPORTS",profile:"MY WORKSPACE",manage:"MANAGEMENT",join:"JOIN US",record:"OBSERVATION RECORD",submission:"CLASSROOM OBSERVATION",availability:"YOUR AVAILABILITY",courses:"COURSE CATALOG"})[view],
@@ -135,10 +140,11 @@ export function registerCloudPage(view: View): void {
       return this.load();
     },
     onHide() { availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); },
-    onUnload() { availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); if (view === "availability") syncAvailabilityExitAlert(false); },
+    onUnload() { nextWeekLoad++; availabilityVisible = false; if (autoExpiryTimer) clearTimeout(autoExpiryTimer); if (view === "availability") syncAvailabilityExitAlert(false); },
     onPullDownRefresh() { void this.load().finally(() => wx.stopPullDownRefresh()); },
     async load(more = false): Promise<void> {
       if (this.data.busy) return;
+      if (view === "home") { nextWeekLoad++; this.setData({homeNextTasks:[],nextWeekLoading:false,nextWeekError:"",nextWeekMessage:""}); }
       this.setData({ busy: true, reviewMode: reviewActive(), refreshing: this.data.hasLoaded && !more, loadingInitial: !this.data.hasLoaded && ["home", "schedule", "records", "profile"].includes(view), error: "", statsLoaded: this.data.hasLoaded && this.data.statsLoaded });
       try {
         const boot = view === "home" ? await bootstrap(true) : await pageBootstrap({
@@ -243,7 +249,7 @@ export function registerCloudPage(view: View): void {
           const visibleTasks = (w.tasks || []).filter(t => ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
           this.setData({ weekData: w, tasks: (w.tasks || []).map(row), availabilityReady: !!w.availability,
             taskCount: home?.summary?.taskCount ?? visibleTasks.length, recordCount: home?.summary?.recordCount ?? (w.records || []).length, coverage: home?.summary?.coverage ?? new Set((w.records || []).map(r => s(r.data.classLabel))).size, skipped: w.plan?.data.status === "skipped",
-            homeTasks: visibleTasks.filter(t => t.memberId === member.id).map(t => ({...row(t), classLabel:s(t.data.classLabel), course:(t.data.course || {}) as Record<string,unknown>, timeLabel:s(t.data.date || t.date) + " · 第" + s((t.data.course as Record<string,unknown>)?.start) + "–" + s((t.data.course as Record<string,unknown>)?.end) + "节", done:t.data.status === "submitted", recordId:(w.records || []).find(r => r.taskId === t.id)?.id || ""})) });
+            homeTasks: visibleTasks.filter(t => t.memberId === member.id).map(t=>homeTask(t,w.records)) });
           if (view === "availability") {
             const days = Number(w.semester?.data.days || selectedSemester?.data.days || 5), periods = Number(w.semester?.data.periods || selectedSemester?.data.periods || 14);
             const own = w.availability;
@@ -274,7 +280,31 @@ export function registerCloudPage(view: View): void {
         if (view === "availability" && availabilityVisible) syncAvailabilityExitAlert(this.data.dirty);
         if (!this.data.error) { loadedAt = Date.now(); loadedKey = pageFreshnessKey(); }
       }
+      if (view === "home" && this.data.memberId && this.data.semesterId && !this.data.error && !this.data.maintenance) await this.loadNextWeek();
       if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats(true);
+    },
+    async loadNextWeek() {
+      if (view !== "home" || this.data.busy || this.data.nextWeekLoading || !this.data.memberId || !this.data.semesterId || this.data.error || this.data.maintenance)return;
+      let session: Boot;
+      try { session=currentBoot(); } catch { this.setData({homeNextTasks:[],nextWeekError:"请刷新首页后重试"}); return; }
+      const week=this.data.week+1,semesterId=this.data.semesterId,memberId=this.data.memberId;
+      const epoch=session.workspace.epoch,permissions=session.workspace.permissionsVersion,token=++nextWeekLoad;
+      this.setData({nextWeek:week,homeNextTasks:[],nextWeekError:"",nextWeekMessage:""});
+      if(week>this.data.maxWeek){this.setData({nextWeekMessage:"本学期没有下周"});return;}
+      this.setData({nextWeekLoading:true});
+      const current=()=>{try{return token===nextWeekLoad && this.data.memberId===memberId && this.data.semesterId===semesterId && currentBoot().workspace.epoch===epoch && currentBoot().member?.id===memberId;}catch{return false;}};
+      try {
+        // Use the existing single-RPC schedule reader without changing the saved page/session.
+        const result=await call<Boot>("bootstrap",{payload:{fastPage:true,page:{view:"schedule",semesterId,week}}});
+        if(!current())return;
+        const boot=result.data,page=boot.page;
+        if(boot.workspace.epoch!==epoch || boot.workspace.permissionsVersion!==permissions || boot.member?.id!==memberId || !boot.member.data.active)throw new Error("身份或权限已变化，请刷新首页");
+        if(boot.workspace.maintenance)throw new Error("业务数据正在维护，请稍后重试");
+        if(!page?.weekData || page.semester?.id!==semesterId || page.week!==week)throw new Error("下周安排暂时无法读取，请重试");
+        const w=page.weekData,tasks=w.tasks.filter(t=>t.memberId===memberId && ["confirmed","submitted","pendingAdjustment"].includes(s(t.data.status)));
+        this.setData({homeNextTasks:tasks.map(t=>homeTask(t,w.records)),nextWeekMessage:w.plan?.data.status==="skipped" ? "下周已跳过听课" : !w.plan ? "下周安排尚未发布" : "下周暂无个人任务"});
+      }catch(e){if(current())this.setData({homeNextTasks:[],nextWeekError:e instanceof Error ? e.message : "下周任务加载失败，请重试"});}
+      finally{if(token===nextWeekLoad)this.setData({nextWeekLoading:false});}
     },
     async more() { await this.load(true); },
     async moreSemesters() {

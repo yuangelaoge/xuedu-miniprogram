@@ -1,0 +1,15 @@
+    <view class="task-topline">
+      <view class="task-class">{{item.classLabel}}</view>
+      <view class="task-status {{item.done ? 'task-status-done' : ''}}"><view class="task-status-dot"></view>{{item.done ? '已提交' : item.status === 'pendingAdjustment' ? '待调整' : '待完成'}}</view>
+    </view>
+    <view class="task-course">{{item.course.name}}</view>
+    <view class="task-detail"><text class="task-detail-label">时间</text><text class="task-detail-value">{{item.timeLabel}}</text></view>
+    <view class="task-detail"><text class="task-detail-label">地点</text><text class="task-detail-value">{{item.course.classroom}}</text></view>
+    <view class="task-detail"><text class="task-detail-label">教师</text><text class="task-detail-value">{{item.course.teacher}}</text></view>
+    <include src="cloud-task-headcount.wxml" />
+    <view class="task-bottom">
+      <text class="task-hint">{{item.done ? '本次听课已记录' : '听课后记得上传签字表'}}</text>
+      <button wx:if="{{item.status === 'confirmed'}}" class="task-button" hover-class="home-pressed" data-id="{{item.id}}" bindtap="open">填写记录<text class="button-arrow">→</text></button>
+      <button wx:elif="{{item.done && item.recordId}}" class="task-button task-button-done" hover-class="home-pressed" data-id="{{item.recordId}}" data-target="record" bindtap="open">查看记录<text class="button-arrow">→</text></button>
+      <button wx:else class="task-button task-button-done" data-target="schedule" bindtap="navigate">查看安排<text class="button-arrow">→</text></button>
+    </view>

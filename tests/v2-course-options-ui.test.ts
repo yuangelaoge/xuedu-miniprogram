@@ -64,6 +64,24 @@ test('普通干事首页/正式任务逐门显示课表人数，合班合计、�
    const submit=await f.page('submission',{taskId:f.task.id});assert.equal(submit.data.fields.find((v:any)=>v.key==='expected').value,'');
    assert.deepEqual(f.errors,[]);
  },seed);
- for(const path of ['cloud-home.wxml','cloud.wxml'])assert.match(readFileSync('miniprogram/templates/'+path,'utf8'),/include src="cloud-task-headcount.wxml"/);
+ for(const path of ['cloud-home-task.wxml','cloud.wxml'])assert.match(readFileSync('miniprogram/templates/'+path,'utf8'),/include src="cloud-task-headcount.wxml"/);
  const template=readFileSync('miniprogram/templates/cloud-task-headcount.wxml','utf8');assert.match(template,/课表人数/);assert.match(template,/合班合计/);
 });
+test('首页本周/下周任务分开，下周只显示本人已生效任务，学期末不再请求',async()=>ui(async f=>{
+ const home=await f.page('home');assert.equal(home.data.week,1);assert.equal(home.data.nextWeek,2);
+ assert.deepEqual(home.data.homeTasks.map((t:any)=>t.id),['review-task-open']);
+ assert.deepEqual(home.data.homeNextTasks.map((t:any)=>t.id),[f.task.id]);assert.equal(home.data.homeNextTasks[0].courseCounts.length,3);
+ assert.equal(home.data.nextWeekError,'');assert.equal(home.data.nextWeekLoading,false);
+ const reads=f.calls.filter((c:any)=>c.operation==='bootstrap' && c.payload.page?.view==='schedule');
+ assert.equal(reads.length,1);assert.equal(reads[0].payload.fastPage,true);assert.equal(reads[0].payload.page.week,2);
+ home.setData({maxWeek:1});const count=f.calls.length;await home.loadNextWeek();assert.equal(f.calls.length,count);
+ assert.deepEqual(home.data.homeNextTasks,[]);assert.equal(home.data.nextWeekMessage,'本学期没有下周');
+ f.who('admin');const admin=await f.page('home');assert.deepEqual(admin.data.homeNextTasks,[],'管理员首页也只显示本人任务');
+}));
+test('下周读取失败不清空本周卡片，独立重试可恢复',async()=>ui(async f=>{
+ const g=globalThis as any,original=g.wx.cloud.callFunction;
+ g.wx.cloud.callFunction=async(args:any)=>args.data.payload?.page?.view==='schedule' ? {result:{ok:false,error:'网络暂不可用'}} : original(args);
+ const home=await f.page('home');assert.equal(home.data.error,'');assert.equal(home.data.loadingInitial,false);assert.equal(home.data.homeTasks.length,1);
+ assert.equal(home.data.nextWeekError,'网络暂不可用');assert.deepEqual(home.data.homeNextTasks,[]);
+ g.wx.cloud.callFunction=original;await home.loadNextWeek();assert.equal(home.data.homeNextTasks.length,1);assert.equal(home.data.nextWeekError,'');
+}));

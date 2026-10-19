@@ -37,10 +37,10 @@ async function fixture(work: (f: any) => Promise<void>) {
     records: [e('record', data, recordIndexes)], record_versions: [e('version-one', { ...data, actorId: 'member', recordVersion: 1, reason: '首次提交' }, { ...recordIndexes, recordId: 'record' })],
     photos: [e('photo', { storageId: 'pg://xuedu-photos/cloud/epoch-boundary/photo.jpg' }, { ...recordIndexes, recordId: 'record' })],
   });
-  const reads: {resource:string;method:string}[] = [];
+  const reads: {resource:string;method:string;query?:any}[] = [];
   for (const method of ['get','query','count'] as const) {
     const original = repository[method].bind(repository) as any;
-    (repository as any)[method] = (...args:any[]) => { reads.push({resource:args[0],method}); return original(...args); };
+    (repository as any)[method] = (...args:any[]) => { reads.push({resource:args[0],method,query:args[1]}); return original(...args); };
   }
   let who = 'owner', registered: any, sequence = 0;
   const errors: string[] = [], calls: any[] = [], modalCalls: any[] = [];
@@ -132,17 +132,18 @@ test('V2边界：页面查看新学期草稿不启用全组，另一账号默认
 }));
 
 
-test('首页启动合并：一次请求返回当前学期和周数据，刷新仍只请求一次', async () => fixture(async f => {
+test('首页启动合并：本周保持一次请求，下周独立一次读取', async () => fixture(async f => {
   const home = await f.page('home');
   assert.equal(home.data.error, '');
-  assert.equal(f.calls.length, 1);
+  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls[1].payload.page.week,2);
   assert.equal(f.calls[0].payload.includeHome, true);
   assert.equal(home.data.week, 1, '当前周以服务端时间为准');
   assert.equal(home.data.semesterId, 'semester');
   assert.equal(home.data.taskCount, 1);
   assert.equal(home.data.recordCount, 1);
   await home.load();
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 4);
   f.who('member-wechat');
   const member = await f.page('home');
   assert.equal(member.data.error, '');
@@ -178,7 +179,8 @@ test('首页启动合并：兼容尚未支持附带首页数据的旧后端', as
   wx.cloud.callFunction = ({data}:any) => invoke({data: data.operation === 'bootstrap' ? {...data, payload:{}} : data});
   const home = await f.page('home');
   assert.equal(home.data.error, '');
-  assert.equal(f.calls.length, 3);
+  assert.equal(f.calls.length, 4);
+  assert.match(home.data.nextWeekError,/无法读取/);
   assert.equal(home.data.semesterId, 'semester');
 }));
 
@@ -276,12 +278,13 @@ test('页面合并：旧轮次先更新身份上下文并丢弃旧选择，旧�
   await assert.rejects(f.gateway({protocolVersion:2,operation:'bootstrap',epoch:'old-epoch',payload:{page:{view:'records',semesterId:'deleted-semester',more:true}}},{OPENID:'owner',APPID:'app'}),/业务数据已变化/);
 }));
 
-test('加载加速：首页不读课程实例和已审核申请，刷新发送读取提示', async () => fixture(async f => {
+test('加载加速：本周不读课程实例，下周仅目标周，已审核申请不读取', async () => fixture(async f => {
   const home = await f.page('home');
   assert.equal(home.data.error, '');
   assert.equal(home.data.taskCount, 1);
   assert.equal(home.data.recordCount, 1);
-  assert.ok(!f.reads.some((r:any) => ['occurrences','applications'].includes(r.resource)));
+  assert.ok(!f.reads.some((r:any) => r.resource==='applications'));
+  assert.ok(f.reads.filter((r:any)=>r.resource==='occurrences').every((r:any)=>r.query?.eq?.week===home.data.nextWeek));
   await home.load();
   assert.deepEqual(f.calls.at(-1).readHint, {memberId:'admin',semesterId:'semester'});
 }));
@@ -340,12 +343,12 @@ test('加载加速：短时返回不请求，手动刷新、到期、写入和�
     let before = f.calls.length;
     await home.onShow();await home.onShow();
     assert.equal(f.calls.length,before);
-    await home.load();assert.equal(f.calls.length,++before);
-    now += 15000;await home.onShow();assert.equal(f.calls.length,++before);
+    await home.load();before+=2;assert.equal(f.calls.length,before);
+    now += 15000;await home.onShow();before+=2;assert.equal(f.calls.length,before);
     await command('availabilitySave',{week:1,slots:[],optedIn:false,note:'合成保存'},'semester',0);
-    before = f.calls.length;await home.onShow();assert.equal(f.calls.length,before+1);
+    before = f.calls.length;await home.onShow();assert.equal(f.calls.length,before+2);
     f.who('member-wechat');await f.page('profile');
-    before=f.calls.length;await home.onShow();assert.equal(f.calls.length,before+1);
+    before=f.calls.length;await home.onShow();assert.equal(f.calls.length,before+2);
     assert.equal(home.data.memberId,'member');assert.equal(home.data.admin,false);
   } finally {Date.now=originalNow;}
 }));
@@ -365,5 +368,6 @@ test('单次数据库首页：使用服务端汇总，精简记录仍可打开�
   f.who('member-wechat');const home=await f.page('home');
   assert.equal(home.data.error,'');assert.equal(home.data.taskCount,87);assert.equal(home.data.recordCount,69);assert.equal(home.data.coverage,24);
   assert.equal(home.data.homeTasks.find((t:any)=>t.id==='pending-task').recordId,'record');
-  assert.equal(f.calls.length,1);
+  assert.equal(f.calls.filter((c:any)=>c.payload?.includeHome).length,1);
+  assert.equal(f.calls.length,2);
 }));

@@ -39,14 +39,17 @@
     <view wx:if="{{view === 'schedule' || view === 'records' && semesterId || view === 'availability'}}" class="week-switch"><view class="week-arrow" data-delta="-1" bindtap="moveWeek">‹</view><view class="week-center"><view class="week-title">{{semesterId ? '第 ' + week + ' 周' : '尚未启用学期'}}</view><view class="week-dates">{{dates}}</view></view><view class="week-arrow" data-delta="1" bindtap="moveWeek">›</view></view>
     <view wx:if="{{view === 'schedule'}}" class="row" style="justify-content:flex-end;margin-top:22rpx"><text class="link" data-target="courses" bindtap="navigate">课程总表 ›</text></view>
     <view wx:if="{{coordinator && semesterId && (view === 'schedule' || view === 'records')}}" class="card">
-      <button class="v2-submission-status-button" disabled="{{busy}}" bindtap="submissionStatus">查看第 {{week}} 周提交状态</button>
+      <view class="{{view === 'schedule' ? 'v2-week-actions' : ''}}">
+        <button class="v2-submission-status-button" disabled="{{busy}}" bindtap="submissionStatus">查看第 {{week}} 周提交状态</button>
+        <button wx:if="{{view === 'schedule' && canExportExcel}}" disabled="{{busy || weekData.plan.data.status !== 'confirmed'}}" bindtap="exportSchedule">导出听课安排表 Excel</button>
+      </view>
+      <view wx:if="{{view === 'schedule' && canExportExcel && filePath}}" class="notice v2-report-file"><view class="muted small">已保存：{{filename}}</view><view class="link" bindtap="openReport">打开／分享文件 ›</view></view>
       <view wx:if="{{statusLoaded}}" class="muted small">仅显示提交状态；无任务、未报名管理人员和跳过周不计漏交。</view>
       <view wx:for="{{statusRows}}" wx:key="id" class="v2-row">{{item.name}} · {{item.className}}<view>无课时间：{{item.availability}} · 听课记录：{{item.record}}</view></view>
       <button wx:if="{{statusCursor}}" disabled="{{busy}}" data-more="true" bindtap="submissionStatus">继续加载名单</button>
     </view>
     <block wx:if="{{view === 'schedule'}}">
       <view wx:if="{{(canGenerate || canAdjust) && semesterId}}" class="card"><view class="section-title">排班工作台</view><view class="subtitle small">非本班 · 每人至多一次 · 人工确认后生效</view><view wx:if="{{canGenerate}}" class="v2-field"><view class="field-label">优先年级</view><picker range="{{gradeOptions}}" value="{{priorityGradeIndex}}" disabled="{{busy}}" bindchange="choosePriorityGrade"><view class="v2-picker">{{gradeOptions[priorityGradeIndex]}} ▾</view></picker><view class="muted small">仅用于本次第 {{week}} 周草稿，其他年级仍会安排。</view></view><view class="v2-actions"><button wx:if="{{canGenerate}}" disabled="{{busy}}" bindtap="generate">{{weekData.plan || weekData.draft ? "重新生成草稿" : "生成排班草稿"}}</button><button wx:if="{{canAdjust}}" disabled="{{busy}}" bindtap="adjust">补排任务</button><button wx:if="{{admin}}" disabled="{{busy}}" bindtap="skipWeek">跳过本周</button></view></view>
-      <view wx:if="{{canExportExcel && semesterId}}" class="card"><button disabled="{{busy || weekData.plan.data.status !== 'confirmed'}}" bindtap="exportSchedule">导出听课安排表 Excel</button><view wx:if="{{filePath}}" class="notice v2-report-file"><view class="muted small">已保存：{{filename}}</view><view class="link" bindtap="openReport">打开／分享文件 ›</view></view></view>
       <view wx:if="{{weekData.draft}}" class="v2-card">
         <view class="v2-title">待人工确认的调整草稿</view><view class="notice warn">草稿尚未生效{{weekData.plan ? "，原正式安排仍保留" : ""}}。由管理员核对并确认生效。</view><view>{{weekData.draft.data.reason}}</view><view wx:if="{{weekData.draft.data.priorityGrade}}">优先年级：{{weekData.draft.data.priorityGrade}}</view>
         <view wx:for="{{tasks}}" wx:key="id" wx:if="{{item.status === 'draft' && item.parentId === weekData.draft.id}}" class="v2-row"><view>{{item.label}}</view><view>{{item.detail}}</view><view wx:if="{{!item.cancel && item.data.courseOptions.length}}">同班课程 {{item.data.courseOptions.length}} 门，任选一门提交</view><view>{{item.cancel ? '取消原任务' : '拟安排'}}{{item.replaces ? '（替换原任务）' : ''}}</view></view>

@@ -1,3 +1,4 @@
+import { MAX_PHOTO_BYTES, MAX_PHOTO_BASE64_LENGTH, MAX_RECORD_PHOTOS, photoBytes } from "../../miniprogram/domain/photo-limits";
 import type { ScheduleReport } from "../../miniprogram/domain/schedule-report";
 import { classGrade, isEarlyCourse, sameClasses } from "../../miniprogram/domain/course-preferences";
 import { taskCourseOptions, TaskCourseOption } from "../../miniprogram/domain/v2/task-options";
@@ -74,7 +75,8 @@ export function createGatewayV2(deps: DependenciesV2) {
     if (!input || input.protocolVersion !== 2) fail("请更新小程序", "UPGRADE_REQUIRED");
     const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(input.operation)) fail("请更新小程序", "UPGRADE_REQUIRED");
-    if (JSON.stringify(input).length > 1200000) fail("单次请求过大");
+    const requestLimit = input.operation === "photo" ? MAX_PHOTO_BASE64_LENGTH + 16384 : 1200000;
+    if (JSON.stringify(input).length > requestLimit) fail("单次请求过大");
     if (input.operation === "bootstrap" && input.payload?.fastPage === true && repo.bootstrapPage &&
         (input.payload.includeHome === true || ["schedule","records","profile","courses","availability"].includes(String((input.payload.page as PageLoadRequest | undefined)?.view)))) {
       const fast = await repo.bootstrapPage(context.OPENID, {...input.payload,epoch:input.epoch},context.OPENID === deps.bootstrapOpenid);
@@ -220,7 +222,11 @@ export function createGatewayV2(deps: DependenciesV2) {
     };
     const observation = async (recordId?: string, taskId?: string) => {
       const metrics = p.metrics as Metrics; if (!metrics || typeof metrics !== "object") fail("请填写观察数据"); validateMetrics(metrics);
-      const photos = strings(p.photos, "照片", 3); if (!photos.length) fail("每份记录需要1至3张照片");
+      const photos = strings(p.photos, "照片", 3);
+      // Existing multi-photo records may retain their original attachments during text corrections.
+      const previousPhotos = recordId ? (await get("records", recordId))?.data.photos as string[] | undefined : undefined;
+      const unchangedLegacy = previousPhotos && previousPhotos.length > MAX_RECORD_PHOTOS && photos.length === previousPhotos.length && photos.every(id => previousPhotos.includes(id));
+      if (photos.length !== MAX_RECORD_PHOTOS && !unchangedLegacy) fail("每份记录需上传1张签字照片");
       for (const id of photos) {
         const photo = (await get("photos", id))!;
         if (recordId && photo.recordId === recordId) continue;
@@ -437,8 +443,10 @@ export function createGatewayV2(deps: DependenciesV2) {
       const record = (await page("records", { eq: { taskId: task.id }, limit: 1 })).items[0];
       if (task.memberId !== member().id && member().data.role !== "admin") fail("不可上传他人任务照片", "FORBIDDEN");
       if (record && member().data.role !== "admin" && (now - Date.parse(String(record.data.firstSubmittedAt)) >= DAY || now < Date.parse(String(record.data.firstSubmittedAt)))) fail("本人修改期限已过");
-      const base64 = text(p.base64, "照片内容", 700000);
-      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64) || base64.length * 3 / 4 > 512000) fail("单张照片不得超过500KB");
+      if (typeof p.base64 === "string" && p.base64.length > MAX_PHOTO_BASE64_LENGTH) fail("单张照片不得超过2MB");
+      const base64 = text(p.base64, "照片内容", MAX_PHOTO_BASE64_LENGTH);
+      if (base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) fail("照片内容无效");
+      if (photoBytes(base64) > MAX_PHOTO_BYTES) fail("单张照片不得超过2MB");
       text(input.requestId, "请求标识", 200);
       // Identical content for the same owner/task/epoch has one immutable path,
       // including when storage succeeds but metadata registration times out.

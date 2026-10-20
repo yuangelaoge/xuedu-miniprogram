@@ -171,8 +171,8 @@ export function submitRecord(state: AppState, record: Observation): void {
     throw new Error("只能提交自己的已确认任务");
   if (state.records.some((r) => r.taskId === task.id))
     throw new Error("这次任务已提交，请勿重复提交");
-  if (!record.photos.length || record.photos.some((p) => !p.trim()))
-    throw new Error("请上传包含老师签字的听课表照片");
+  if (record.photos.length !== 1 || record.photos.some((p) => !p.trim()))
+    throw new Error("请上传1张包含老师签字的听课表照片");
   validateMetrics(record.metrics);
   if (!record.absentNames.trim() || !record.leaveNames.trim())
     throw new Error("请填写旷课和请假名单；确实没有填“无”，不清楚填“信息缺失”");

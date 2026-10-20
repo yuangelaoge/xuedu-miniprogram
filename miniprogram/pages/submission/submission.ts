@@ -1,3 +1,4 @@
+import { MAX_PHOTO_BYTES } from "../../domain/photo-limits";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, command, run, runAsync, notifyError, draftPrefix } from "../../services/store";
@@ -124,13 +125,14 @@ if (cloudEnabled()) registerCloudPage("submission"); else memberPage({
     this.setData({ [e.currentTarget.dataset.key]: "无" });
   },
   choosePhoto() {
-    if (this.data.busy) return;
+    if (this.data.busy || this.data.photos.length >= 1) return;
     wx.chooseMedia({
-      count: 3 - this.data.photos.length,
+      count: 1 - this.data.photos.length,
       mediaType: ["image"],
       sizeType: ["compressed"],
       sourceType: ["camera", "album"],
       success: (res) => {
+        if (res.tempFiles.length > 1 || res.tempFiles.some(file => file.size > MAX_PHOTO_BYTES)) { wx.showToast({title:"请选择1张2MB以内的照片",icon:"none"}); return; }
         this.setData({ busy: true });
         const added: string[] = [];
         const save = (i: number): void => {

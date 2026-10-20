@@ -38,6 +38,7 @@ test('V2更正：分组共用字段与原因，草稿只恢复已知文字，实
 }));
 test('V2照片：选择中缩略图、上传锁定、授权后预览；纠错和详情每次刷新临时链接',async()=>fixture(async f=>{
  const p=await f.page('submission',{taskId:'task'});f.holdUpload();const uploading=p.choosePhotos();while(!p.data.uploadingPhoto)await new Promise(r=>setImmediate(r));assert.equal(p.data.uploadingPhoto,'/selected-photo');assert.equal(p.data.busy,true);await p.choosePhotos();assert.equal(p.data.busy,true);assert.equal(p.data.uploadingPhoto,'/selected-photo');p.previewUploadingPhoto();assert.equal(f.previews[0].current,'/selected-photo');p.removePhoto({currentTarget:{dataset:{index:'0'}}});assert.equal(p.data.photoIds.length,0);f.releaseUpload();await uploading;assert.equal(p.data.photoIds.length,1);assert.equal(p.data.uploadingPhoto,'');
+ await p.choosePhotos();assert.match(f.errors.pop(),/最多1张/);assert.equal(f.uploadCount(),1);
  await p.previewFormPhoto({currentTarget:{dataset:{index:'0'}}});assert.match(f.previews.at(-1).current,/synthetic.invalid/);assert.equal(f.calls.at(-1).operation,'photoUrls');
  const detail=await f.page('record',{id:'record'});const old=detail.data.photoUrls[0];detail.editRecord();await detail.previewFormPhoto({currentTarget:{dataset:{index:'0'}}});assert.notEqual(detail.data.formPhotos[0],old);const newUrl=detail.data.formPhotos[0];await detail.previewPhoto({currentTarget:{dataset:{url:old}}});assert.notEqual(detail.data.photoUrls[0],newUrl);
  f.who('other');const before=f.previews.length;await detail.previewFormPhoto({currentTarget:{dataset:{index:'0'}}});assert.equal(f.previews.length,before);assert.match(f.errors.pop(),/他人照片/);
@@ -68,4 +69,12 @@ test('未修改的旧更正页：成功回包丢失后重复保存不增加历�
  assert.equal((await f.repo.get('records','record')).version,2);
  assert.equal((await f.repo.query('record_versions',{eq:{recordId:'record'}})).items.length,2);
  const writes=f.calls.filter((c:any)=>c.payload?.type==='recordEdit');assert.notEqual(writes[0].requestId,writes[1].requestId);
+}));
+
+test('照片前端恰好2MB直接上传，超过2MB压缩后仍过大拒绝',async()=>fixture(async f=>{
+ const g=globalThis as any,p=await f.page('submission',{taskId:'task'});let size=2*1024*1024,compressed=0;
+ g.wx.getFileSystemManager=()=>({readFileSync:()=>Buffer.alloc(size).toString('base64')});
+ g.wx.compressImage=async()=>{compressed++;return {tempFilePath:'/compressed'};};
+ await p.choosePhotos();assert.equal(f.uploadCount(),1);assert.equal(compressed,0);
+ p.removePhoto({currentTarget:{dataset:{index:0}}});size++;await p.choosePhotos();assert.equal(compressed,1);assert.match(f.errors.pop(),/2MB/);assert.equal(f.uploadCount(),1);assert.equal(p.data.photoIds.length,0);
 }));

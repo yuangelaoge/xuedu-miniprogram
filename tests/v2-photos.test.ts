@@ -69,7 +69,7 @@ test("photo adapter rejects invalid paths, overlarge images, malformed signature
   const f = setup();
   await assert.rejects(f.photos.upload("cloud/old-epoch/../future.jpg", "aGVsbG8="), /业务目录/);
   await assert.rejects(f.photos.upload("public/file.jpg", "aGVsbG8="), /业务目录/);
-  await assert.rejects(f.photos.upload("cloud/old-epoch/large.jpg", Buffer.alloc(512001).toString("base64")), /500KB/);
+  await assert.rejects(f.photos.upload("cloud/old-epoch/large.jpg", Buffer.alloc(2 * 1024 * 1024 + 1).toString("base64")), /2MB/);
   f.uploadFailure(true); await assert.rejects(f.call("photo", { taskId: "task", base64: "aGVsbG8=" }), /照片上传失败/);
   assert.equal((await f.repository.query("photos", {})).items.length, 0);
   f.signatures([{ path: "cloud/old-epoch/photo.jpg", fullSignedURL: "http://unsafe.example/photo.jpg" }]);
@@ -131,4 +131,37 @@ test("content-addressed retries reuse one object; changed bytes use a different 
   await f.call("photo",{taskId:"task",base64});assert.equal(f.files.size,1);
   await f.call("photo",{taskId:"task",base64:Buffer.from([255,216,1,255,217]).toString("base64")});assert.equal(f.files.size,2);
   await f.photos.upload("cloud/old-epoch/legacy.jpg",base64);assert.equal(f.uploaded.at(-1)!.options.upsert,false);
+});
+
+ test("photo limits accept exactly 2MiB and reject larger payloads and multiple attachments", async () => {
+  const f=setup(), limit=2*1024*1024;
+  const uploaded=await f.call("photo",{taskId:"task",base64:Buffer.alloc(limit).toString("base64")});
+  assert.equal(f.uploaded[0].bytes.byteLength,limit);
+  await assert.rejects(f.call("photo",{taskId:"task",base64:Buffer.alloc(limit+1).toString("base64")}),/2MB/);
+  assert.equal(f.uploaded.length,1);
+  const second=await f.call("photo",{taskId:"task",base64:"aGVsbG8="});
+  const metrics={expected:30,actual:30,late:0,early:0,sleep:0,phone:0,talk:0,other:0};
+  for(const photos of [[],[uploaded.data.fileID,second.data.fileID]])await assert.rejects(f.call("command",{type:"recordSubmit",taskId:"task",metrics,photos},{expectedVersion:1}),/1张/);
+  await f.call("command",{type:"recordSubmit",taskId:"task",metrics,photos:[uploaded.data.fileID]},{expectedVersion:1});
+ });
+
+test("existing multi-photo records keep attachments on correction; replacement is limited to one", async () => {
+ const f=setup(), metrics={expected:30,actual:30,late:0,early:0,sleep:0,phone:0,talk:0,other:0};
+ const a=await f.call("photo",{taskId:"task",base64:"aGVsbG8="}),b=await f.call("photo",{taskId:"task",base64:"d29ybGQ="});
+ const submitted=await f.call("command",{type:"recordSubmit",taskId:"task",metrics,photos:[a.data.fileID]},{expectedVersion:1});
+ const record=(submitted.data.changed as Entity[]).find(e=>e.data.firstSubmittedAt)!;
+ const w=await f.repository.workspace(), second=(await f.repository.get("photos",String(b.data.fileID)))!;
+ const attachments=[a.data.fileID,b.data.fileID];
+ await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:"wx-admin",actorId:"admin",requestId:"synthetic-legacy",reads:[],changes:[
+  {resource:"records",id:record.id,expectedVersion:record.version,value:{...record,version:record.version+1,data:{...record.data,photos:attachments}}},
+  {resource:"photos",id:second.id,expectedVersion:second.version,value:{...second,version:second.version+1,recordId:record.id}},
+ ],result:{}});
+ await f.call("command",{type:"recordEdit",id:record.id,metrics,photos:attachments,reason:"只更正文字",feedback:"合成核对"},{expectedVersion:record.version+1});
+ assert.deepEqual((await f.repository.get("records",record.id))!.data.photos,attachments);
+ const third=await f.call("photo",{taskId:"task",base64:"dGhpcmQ="});
+ await assert.rejects(f.call("command",{type:"recordEdit",id:record.id,metrics,photos:[a.data.fileID,third.data.fileID],reason:"替换"},{expectedVersion:record.version+2}),/1张/);
+ await f.call("command",{type:"recordEdit",id:record.id,metrics,photos:[third.data.fileID],reason:"替换"},{expectedVersion:record.version+2});
+ const versions=(await f.repository.query("record_versions",{eq:{recordId:record.id}})).items;
+ assert.ok(versions.some(v=>JSON.stringify(v.data.photos)===JSON.stringify(attachments)));
+ assert.equal(f.removed.length,0);
 });

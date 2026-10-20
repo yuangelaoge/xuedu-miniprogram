@@ -1,3 +1,4 @@
+import { MAX_PHOTO_BASE64_LENGTH } from "../../miniprogram/domain/photo-limits";
 import { createHmac, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { ApiRequest, ApiResponse, Commit, RESOURCES } from "../../miniprogram/domain/v2/protocol";
 import { BusinessError, createGatewayV2 } from "./gateway";
@@ -61,7 +62,7 @@ export function createReviewGateway(deps: ReviewDependencies) {
     if (!deps.enabled || !/^([a-f0-9]{64})$/i.test(deps.sessionKey) || !Number.isFinite(Date.parse(deps.accessUntil)) || !/^scrypt\$16384\$8\$1\$[A-Za-z0-9_-]{22}\$[A-Za-z0-9_-]{43}$/.test(deps.passwordHash)) fail("CONFIGURATION", "审核体验尚未启用");
     const now = deps.now?.() ?? Date.now(), until = Date.parse(deps.accessUntil);
     if (now >= until) fail("REVIEW_EXPIRED", "审核体验已到期");
-    if (JSON.stringify(input).length > 1200000) fail("INVALID_REQUEST", "请求过大");
+    if (JSON.stringify(input).length > (input.operation === "photo" ? MAX_PHOTO_BASE64_LENGTH + 16384 : 1200000)) fail("INVALID_REQUEST", "请求过大");
     const digest = createHmac("sha256", Buffer.from(deps.sessionKey, "hex")).update(context.OPENID).digest("hex");
     if (input.operation === "reviewLogin") {
       const valid = input.payload?.username === "审核老师辛苦了" && verifyReviewPassword(input.payload?.password, deps.passwordHash);

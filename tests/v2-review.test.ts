@@ -56,11 +56,12 @@ test('审核样例照片不保存原图；角色切换和写入仅更新对应�
   const x=setup(); await x.call('reviewLogin',{payload:{username:'审核老师辛苦了',password}});
   await x.call('reviewRole',{payload:{role:'member'}});
   const boot=await x.call('bootstrap',{review:true});
-  const photo=await x.call('photo',{review:true,epoch:boot.epoch,semesterId:'review-semester',requestId:'photo-1',payload:{taskId:'review-task-open',base64:'aGVsbG8='}});
+  const selectedBytes=Buffer.alloc(2*1024*1024,17).toString('base64');
+  const photo=await x.call('photo',{review:true,epoch:boot.epoch,semesterId:'review-semester',requestId:'photo-1',payload:{taskId:'review-task-open',base64:selectedBytes}});
   assert.ok(photo.data.photoId);
   const digest=[...x.store.sessions.keys()][0], state=x.store.sessions.get(digest)!;
   assert.ok(state.snapshot.rows.photos?.some(row=>row.id===photo.data.photoId));
-  assert.doesNotMatch(JSON.stringify(state.snapshot),/aGVsbG8=/);
+  assert.equal(JSON.stringify(state.snapshot).includes(selectedBytes),false);
   const urls=await x.call('photoUrls',{review:true,epoch:boot.epoch,semesterId:'review-semester',payload:{ids:[photo.data.photoId]}});
   assert.deepEqual(urls.data.urls,['/assets/review-signature.png']);
   const submit=await x.call('command',{review:true,epoch:boot.epoch,semesterId:'review-semester',expectedVersion:1,requestId:'submit-1',payload:{type:'recordSubmit',taskId:'review-task-open',metrics:{expected:32,actual:31,late:0,early:0,sleep:0,phone:0,talk:0,other:0},photos:[photo.data.photoId],absentNames:'',leaveNames:'',evaluation:'审核样例正常',feedback:'',suggestion:'',otherDescription:''}});

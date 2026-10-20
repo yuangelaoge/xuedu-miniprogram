@@ -1,3 +1,4 @@
+import { MAX_PHOTO_BYTES, MAX_RECORD_PHOTOS, photoBytes } from "../../domain/photo-limits";
 import { ScheduleReport, exportScheduleXlsx } from "../../domain/schedule-report";
 import { courseHeadcountText } from "../../domain/course-headcount";
 import { taskCourseOptions, TaskCourseOption } from "../../domain/v2/task-options";
@@ -710,13 +711,14 @@ export function registerCloudPage(view: View): void {
       if (this.data.busy) return;
       try {
         this.setData({ busy: true });
-        if (this.data.photoIds.length >= 3) throw new Error("每份记录最多3张照片");
-        const chosen = await wx.chooseMedia({ count: 3 - this.data.photoIds.length, mediaType: ["image"], sizeType: ["compressed"] });
+        if (this.data.photoIds.length >= MAX_RECORD_PHOTOS) throw new Error("每份记录最多1张照片，请先移除原照片");
+        const chosen = await wx.chooseMedia({ count: MAX_RECORD_PHOTOS - this.data.photoIds.length, mediaType: ["image"], sizeType: ["compressed"] });
+        if (chosen.tempFiles.length > MAX_RECORD_PHOTOS - this.data.photoIds.length) throw new Error("每份记录最多1张照片");
         for (const image of chosen.tempFiles) {
           this.setData({uploadingPhoto:image.tempFilePath});
           let path = image.tempFilePath, base64 = s(wx.getFileSystemManager().readFileSync(path, "base64"));
-          if (base64.length > 680000) { const compressed = await wx.compressImage({ src: path, quality: 65 }); path = compressed.tempFilePath; base64 = s(wx.getFileSystemManager().readFileSync(path, "base64")); }
-          if (base64.length > 680000) throw new Error("请裁剪照片至约500KB以内，并保证签字清晰");
+          if (photoBytes(base64) > MAX_PHOTO_BYTES) { const compressed = await wx.compressImage({ src: path, quality: 65 }); path = compressed.tempFilePath; base64 = s(wx.getFileSystemManager().readFileSync(path, "base64")); }
+          if (photoBytes(base64) > MAX_PHOTO_BYTES) throw new Error("请裁剪照片至2MB以内，并保证签字清晰");
           const response = await call<{ fileID: string }>("photo", { requestId: requestId(), semesterId: this.data.semesterId, payload: { taskId: this.data.formExtra.taskId, recordId: this.data.formType === "recordEdit" ? this.data.formId : undefined, base64 } });
           this.setData({ photoIds: this.data.photoIds.concat(response.data.fileID), formPhotos: this.data.formPhotos.concat(path),uploadingPhoto:"" });
         }

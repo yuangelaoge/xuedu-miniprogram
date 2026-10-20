@@ -1,3 +1,4 @@
+import { MAX_PHOTO_BYTES } from "../../miniprogram/domain/photo-limits";
 interface Result { data: unknown; error: unknown }
 interface Bucket {
   list(path: string, options: { limit: number; withDelimiter: boolean }): PromiseLike<Result>;
@@ -16,7 +17,7 @@ export function createPhotos(bucket: Bucket, decode: (base64: string) => Uint8Ar
   return {
     async upload(path: string, base64: string): Promise<string> {
       const safe = key(path), bytes = decode(base64);
-      if (bytes.byteLength > 512000) throw new Error("照片过大，请压缩至500KB内");
+      if (bytes.byteLength > MAX_PHOTO_BYTES) throw new Error("照片过大，请压缩至2MB内");
       const result = await bucket.upload(safe, bytes, { contentType: safe.endsWith(".png") ? "image/png" : "image/jpeg", upsert: /^cloud\/[a-zA-Z0-9-]+\/stable-[a-f0-9]{64}\.jpg$/.test(path) });
       if (result.error) throw new Error("照片上传失败");
       return ID_PREFIX + safe;

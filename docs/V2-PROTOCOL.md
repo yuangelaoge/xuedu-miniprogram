@@ -169,11 +169,11 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 
 无课时段格式为 `weekday:period`，例如 `1:3`；管理员/部长参与排班需该周 optedIn=true 和完整空闲。taskAdjust的changes每条为 `{ taskId?, memberId?, occurrenceId?, cancel? }`：转派提供原taskId与新memberId，取消提供taskId/cancel:true，补排省略taskId并给成员和实例。一批最多100条。调整先生成draft，planConfirm再检验班级、完整节次、当周一次和已完成任务占用；并发原任务改变则拒绝。
 
-观察字段：`metrics`为expected/actual/late/early/sleep/phone/talk/other，`absentNames/leaveNames/otherDescription/evaluation/feedback/suggestion`为文本，`photos`为1–3个已登记照片ID。修改不能提交memberId/taskId/semesterId/course/date/firstSubmittedAt/createdAt/classes等归属字段。首次提交和各次更正均保存record_versions；后续更正不重开24小时窗口。部长仅能在窗口内改本人记录，不获得他人纠错权限。
+观察字段：`metrics`为expected/actual/late/early/sleep/phone/talk/other，`absentNames/leaveNames/otherDescription/evaluation/feedback/suggestion`为文本，`photos`为1个已登记照片ID；既有多照片记录可原样保留附件进行文字更正，替换照片时限1张。修改不能提交memberId/taskId/semesterId/course/date/firstSubmittedAt/createdAt/classes等归属字段。首次提交和各次更正均保存record_versions；后续更正不重开24小时窗口。部长仅能在窗口内改本人记录，不获得他人纠错权限。
 
 ## 照片
 
-`photo`：epoch、semesterId、requestId，payload `{ taskId, base64 }`。不接受任意目标路径；服务器检查任务归属/管理员纠错资格、期限与约500KB限制，写入服务端派生的 `cloud/<epoch>/stable-<hash>.jpg` 私有路径并登记（旧 UUID 路径继续可读），返回 `photoId`（`fileID`为同一业务ID兼容字段）。随后recordSubmit/Edit引用此ID；不能跨记录引用照片。上传成功而登记失败可能留下该轮次孤儿文件，维护扫描固定轮次目录处理。
+`photo`：epoch、semesterId、requestId，payload `{ taskId, base64 }`。不接受任意目标路径；服务器检查任务归属/管理员纠错资格、期限与单张2MB（2×1024×1024字节）限制，写入服务端派生的 `cloud/<epoch>/stable-<hash>.jpg` 私有路径并登记（旧 UUID 路径继续可读），返回 `photoId`（`fileID`为同一业务ID兼容字段）。随后recordSubmit/Edit引用此ID；不能跨记录引用照片。上传成功而登记失败可能留下该轮次孤儿文件，维护扫描固定轮次目录处理。
 
 `photoUrls`：epoch、semesterId，payload `{ recordId, versionId? }` 获取当前/历史版本照片；也支持 `{ ids:[业务照片ID] }`（最多30），逐张检查归属。未提交照片仅上传者可读取；已提交照片遵循原记录权限：管理员/组部长/信息部干事可查看全组，普通成员仅本人；干事可读历史版本照片，但不能代他人上传或修改。只返回短时签名URL，历史照片继续保留到统一业务清空。
 

@@ -170,9 +170,10 @@ test('审核体验 leader 禁止所有排班草稿和文件导出，保留查看
  const photos=await x.call('photoUrls',{...base,payload:{recordId:'review-record'}});assert.ok((photos.data.urls as any[]).length);
 
  assert.ok((await x.call('query',{...base,payload:{kind:'summaryReport',week:1}})).data.summary);
- await assert.rejects(x.call('query',{...base,payload:{kind:'namesReport',week:1}}),/仅管理员/);
+ const officerNames=exportTxt((await x.call('query',{...base,payload:{kind:'namesReport',week:1}})).data.state as any,1);
  await assert.rejects(x.call('command',{...base,requestId:'officer-adjust',expectedVersion:0,payload:{type:'taskAdjust',week:2,changes:[]}}),/仅管理员/);
  await x.call('reviewRole',{payload:{role:'admin'}});
  assert.ok((await x.call('query',{...base,payload:{kind:'excelReport',week:1}})).data.state);
- assert.match(exportTxt((await x.call('query',{...base,payload:{kind:'namesReport',week:1}})).data.state as any,1),/审核样例/);
+ assert.match(officerNames,/审核样例/);
+ assert.equal(exportTxt((await x.call('query',{...base,payload:{kind:'namesReport',week:1}})).data.state as any,1),officerNames);
 });

@@ -152,19 +152,23 @@ test('刷新失败或审核全局到期后，旧管理员页面不得保留生�
  await reports.load();assert.equal(reports.data.error,'');assert.equal(reports.data.canExportExcel,true);
 }));
 
-test('干事全组列表、详情与完整 Excel 共用管理员导出器，TXT 和管理操作仍关闭',async()=>fixture(async f=>{
+test('信息部干事名单 TXT、复制和完整 Excel 与管理员一致，管理操作仍关闭',async()=>fixture(async f=>{
  const w=await f.repo.workspace();
  await f.repo.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'officer-ui-seed',reads:[],changes:[
   {resource:'members',id:'officer',expectedVersion:0,value:{id:'officer',epoch:w.epoch,version:1,studentNo:'003',data:{role:'officer',name:'合成干事',studentNo:'003',classId:'c',active:true}}},
   {resource:'bindings',id:'bo',expectedVersion:0,value:{id:'bo',epoch:w.epoch,version:1,memberId:'officer',identityKey:'officer',data:{}}},
  ],result:{}});
- const admin=await f.page('records');await admin.exportReport(event({kind:'xlsx'}));const expected=f.written[0].data;
+ const admin=await f.page('records');await admin.exportReport(event({kind:'xlsx'}));const expected=f.written[0].data;await admin.copyReport();const expectedNames=f.copied[0];
  f.who('officer');const page=await f.page('records');assert.equal(page.data.manager,false);assert.equal(page.data.canViewRecords,true);assert.equal(page.data.recordTab,'all');assert.equal(page.data.visibleRows[0].memberId,'member');assert.equal(page.data.weekSubmitted,1);assert.equal(page.data.weekTotal,2);
- const before=f.calls.length;await page.copyReport();await page.exportReport(event({kind:'txt'}));assert.equal(f.calls.length,before);
- await page.exportReport(event({kind:'xlsx'}));assert.deepEqual(Buffer.from(f.written[1].data),Buffer.from(expected));
+ assert.equal(page.data.canExportNames,true);
+ const namesStart=f.calls.length;await page.copyReport();await page.exportReport(event({kind:'txt'}));
+ assert.equal(f.copied[1],expectedNames);assert.equal(f.written[1].data,'\ufeff'+expectedNames);
+ assert.equal(f.calls.slice(namesStart).filter((c:any)=>c.payload?.kind==='namesReport').length,2);
+ assert.equal(f.calls.slice(namesStart).filter((c:any)=>c.payload?.kind==='reportCheck'&&c.payload.format==='txt').length,3);
+ const before=f.calls.length;await page.exportReport(event({kind:'xlsx'}));assert.deepEqual(Buffer.from(f.written[2].data),Buffer.from(expected));
  const exportCalls=f.calls.slice(before);assert.ok(exportCalls.some((c:any)=>c.payload?.kind==='excelReport'));assert.ok(!exportCalls.some((c:any)=>c.payload?.kind==='summaryReport'));assert.equal(exportCalls.filter((c:any)=>c.payload?.kind==='reportCheck'&&c.payload.format==='xlsx').length,2);
  const detail=await f.page('record',{id:'record',semesterId:'semester'});assert.equal(detail.data.record.id,'record');assert.equal(detail.data.canEdit,false);assert.ok(f.calls.some((c:any)=>c.operation==='photoUrls'&&c.payload.recordId==='record'));
  const availability=await f.page('availability');assert.deepEqual(availability.data.selectedSlots,[]);assert.equal(availability.data.availabilityNote,'');
  const schedule=await f.page('schedule');assert.equal(schedule.data.canGenerate,true);assert.equal(schedule.data.canConfirm,false);assert.equal(schedule.data.canAdjust,false);
- assert.equal(f.copied.length,0);assert.deepEqual(f.errors,[]);
+ assert.equal(f.copied.length,2);assert.deepEqual(f.errors,[]);
 }));

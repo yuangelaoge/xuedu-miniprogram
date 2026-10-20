@@ -119,12 +119,12 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 | task | 必须，id | 本人或管理人员；`{ task }` |
 | record | 必须，id | `{ record, canEdit }`；普通成员仅本人，管理员/组部长/干事可查看全组；读取不授予修改权限 |
 | week | 必须，week | 兼容目标周查询；普通成员/干事的任务和记录仍限本人，全组记录使用records/report；availability对所有角色均只返回本人 |
-| report | 必须，week，reportVersion可选 | 管理员/组部长/干事读取目标周记录及仅该周state；format=xlsx仅管理员/干事，txt/copy仅管理员；不含无课时段 |
+| report | 必须，week，reportVersion可选 | 管理员/组部长/干事读取目标周记录及仅该周state；format=xlsx仅管理员/干事，txt/copy仅管理员/信息部干事；不含无课时段 |
 | excelReport | 必须，week | 管理员/信息部干事；同样的完整Excel数据，含原始记录，availability为空 |
 | scheduleReport | 必须，week | 管理员/信息部干事；仅目标周已确认安排的课程快照及全部有效成员，无安排成员 courses=[]；返回 schedule、version；存在待调整任务时拒绝 |
-| namesReport | 必须，week | 仅管理员；TXT/复制名单所需数据 |
+| namesReport | 必须，week | 仅管理员/信息部干事；TXT/复制名单所需数据 |
 | summaryReport | 必须，week | 管理员/组部长/干事；班级聚合统计，兼容旧客户端；新版干事Excel使用excelReport |
-| reportCheck | 必须，version，format可选 | 管理员/组部长/干事核对版本；format=xlsx/schedule仅管理员/干事，txt/copy仅管理员，返回valid或冲突 |
+| reportCheck | 必须，version，format可选 | 管理员/组部长/干事核对版本；format=xlsx/schedule仅管理员/干事，txt/copy仅管理员/信息部干事，返回valid或冲突 |
 
 autoApproval 的 setting 保存 enabled、expiresAt、updatedBy、updatedByName、updatedAt。到期不需要后台任务修改该行，active 始终按服务器时间计算，客户端不可只读 enabled 判断。非管理员 bootstrap 不返回该配置。自动入组 SQL 还用数据库时钟检查截止，并校验成员、绑定、申请与审计四项的关系；到期或冲突全事务回滚。详见 [限时入组说明](AUTO-APPROVAL.md)。
 
@@ -198,7 +198,7 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 ## 2026-10-03 最新角色读取与导出权限（本地源码）
 
 - 组部长仍禁止生成/确认任何排班或调整草稿、完整Excel、TXT和复制名单；保留全组记录、照片和统计阅读。
-- 信息部干事新增全组记录、历史版本、签字照片读取，以及与管理员一致的完整Excel；TXT/复制名单仍仅管理员。具体无课时段只读本人，提交状态只返回已提交/未提交等状态。
+- 信息部干事新增全组记录、历史版本、签字照片读取，以及与管理员一致的完整Excel；TXT/复制名单于 2026-10-20 按用户确认扩展为管理员与信息部干事可用。具体无课时段只读本人，提交状态只返回已提交/未提交等状态。
 - 干事仅可生成普通排班草稿，不能确认或调整任务、修改他人记录、处理成员审核任免、维护课程学期或清空。
 - 查询与图片授权通过可信微信/审核会话及当前有效角色；记录分页50、最多100，报表内部取完目标周全部分页，私有照片通过短时签名链接访问。
 - 快速页面读取配套迁移008，保留006历史脚本；page-load与普通查询同步。008只替换服务端读取RPC，不修改业务行、角色分配或权限写入规则。详见 [信息部干事读取权限](OFFICER-RECORD-ACCESS.md)。

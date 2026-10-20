@@ -16,9 +16,9 @@
 
 ## 实现与兼容
 
-- `canAdjustTasks`、`canExportNames` 均只准 admin；前端相关按钮、共享 handler 和 taskAdjust 表单提交同步限制。组部长不显示排班工作台和汇总导出空卡片，不删除统计页、首页“查看汇总”、提交状态和自身听课入口。
+- `canAdjustTasks` 只准 admin；`canExportNames` 于 2026-10-20 按用户确认准许 admin/officer；前端相关按钮、共享 handler 和 taskAdjust 表单提交同步限制。组部长不显示排班工作台和汇总导出空卡片，不删除统计页、首页“查看汇总”、提交状态和自身听课入口。
 - 云端 `taskAdjust`（补排、转派、取消）与 `planConfirm` 均仅管理员。移除普通成员仍按既有规则自动取消该成员未完成任务，这是保留的成员管理行为，不开放任意调整。
-- 完整Excel用excelReport，准管理员/干事；名单TXT/复制用namesReport，仅管理员。通用report和reportCheck的format=xlsx允许管理员/干事，txt/copy仍仅管理员；生成前后核对版本。
+- 完整Excel用excelReport，准管理员/干事；名单TXT/复制用namesReport，2026-10-20 扩展为管理员/信息部干事。通用report和reportCheck的format=xlsx允许管理员/干事，txt/copy于 2026-10-20 扩展为管理员/信息部干事；生成前后核对版本。
 - 普通report保留管理员/组部长/干事阅读；新版干事导出复用完整Excel，summaryReport保留统计与旧客户端兼容。其taskAdjust和namesReport仍被拒绝。
 - 取消系统输出不承诺阻止使用者自行整理已获准查看的数据；旧前端可能用通用 report 在本机生成文件，因此需要同步更新前端和后端。
 - cloud 与审核体验共用 V2 gateway 限制；本地 demo 的 TXT、复制、Excel handler 与入口同步收紧。组部长范围不变；干事读取扩展另配008迁移更新快速RPC，与page-load一致。

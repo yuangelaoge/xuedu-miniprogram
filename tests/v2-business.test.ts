@@ -302,7 +302,22 @@ test('officer reads all records, private photos and full Excel but no foreign av
  await f.call('query',{kind:'reportCheck',format:'xlsx',version:full.data.version},{who:'oo'});
  await f.call('query',{kind:'report',format:'xlsx',week:2},{who:'oo'});
  await f.call('query',{kind:'report',week:2},{who:'oo'});
- for(const payload of [{kind:'namesReport',week:2},{kind:'report',week:2,format:'txt'},{kind:'report',week:2,format:'copy'},{kind:'reportCheck',format:'txt',version:full.data.version},{kind:'reportCheck',format:'copy',version:full.data.version}])await assert.rejects(f.call('query',payload,{who:'oo'}),/仅管理员/);
+ const adminNames=await f.call('query',{kind:'namesReport',week:2});
+ for(const payload of [{kind:'namesReport',week:2},{kind:'report',week:2,format:'txt'},{kind:'report',week:2,format:'copy'}]) {
+   const names=await f.call('query',payload,{who:'oo'});
+   assert.equal(exportTxt(names.data.state as any,2),exportTxt(adminNames.data.state as any,2));
+   assert.deepEqual(names.data.records,adminNames.data.records);
+   await assert.rejects(f.call('query',payload,{who:'om'}),/仅管理员/);
+ }
+ assert.equal((await f.call('query',{kind:'namesReport',week:1},{who:'oo'})).data.records.length,0);
+ await assert.rejects(f.call('query',{kind:'namesReport',week:2},{who:'oo',semesterId:'missing'}),/对象不存在/);
+ await assert.rejects(f.call('query',{kind:'namesReport',week:21},{who:'oo'}),/周/);
+ for(const format of ['txt','copy']) {
+   await f.call('query',{kind:'reportCheck',format,version:full.data.version},{who:'oo'});
+   await assert.rejects(f.call('query',{kind:'reportCheck',format,version:0},{who:'oo'}),/变化/);
+   await assert.rejects(f.call('query',{kind:'reportCheck',format,version:full.data.version},{who:'om'}),/协作|仅管理员/);
+ }
+ await assert.rejects(f.call('query',{kind:'report',format:'txt',week:2,reportVersion:0},{who:'oo'}),/变化/);
  const week=await f.call('query',{kind:'week',week:2},{who:'oo'});assert.equal(week.data.availability,null);assert.equal(week.data.records.length,0);
  for(const payload of [{kind:'task',id:'t1'},{kind:'members'},{kind:'applications'},{kind:'availability',memberId:'member'}])await assert.rejects(f.call('query',payload,{who:'oo'}),/权限|不可|管理|查询类型/);
  await assert.rejects(f.call('command',{type:'recordEdit',id:record.id,reason:'越权更正',metrics,photos:['p1']},{who:'oo',expectedVersion:record.version}),/不可|本人|无权/);
@@ -378,6 +393,7 @@ test('officer record pagination is complete, reports match admin including empty
  assert.equal((await f.call('query',{kind:'records',week:2},{who:'oo'})).data.items.length,0);
  await assert.rejects(f.call('photoUrls',{ids:['p1']},{who:'oo'}),/不可/);
  await assert.rejects(f.call('query',{kind:'excelReport',week:2},{who:'oo'}),/仅管理员/);
+ for(const payload of [{kind:'namesReport',week:2},{kind:'report',format:'copy',week:2},{kind:'reportCheck',format:'txt',version:0}])await assert.rejects(f.call('query',payload,{who:'oo'}),/仅管理员|协作/);
  await f.call('command',{type:'memberRemove',id:'officer',reason:'合成停用'},{expectedVersion:2});
  await assert.rejects(f.call('query',{kind:'record',id:record.id},{who:'oo'}),/通过审核/);
 });

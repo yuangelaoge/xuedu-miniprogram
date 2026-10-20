@@ -3,7 +3,7 @@ import { classGrade, isEarlyCourse, sameClasses } from "../../miniprogram/domain
 import { taskCourseOptions, TaskCourseOption } from "../../miniprogram/domain/v2/task-options";
 import { createHash } from "node:crypto";
 import { copy, schedulingPage } from "./scheduling-read";
-import { isManager, canViewAllRecords, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
+import { isManager, canViewAllRecords, canExportNames, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
 import { summarizeEntities } from "./summary-report";
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { Repository } from "./repository";
@@ -155,6 +155,7 @@ export function createGatewayV2(deps: DependenciesV2) {
     const coordinator = () => { const a = member(); if (!canCoordinate(a.data.role)) fail("没有协作权限", "FORBIDDEN"); return a; };
     const recordReader = () => { const a = member(); if (!canViewAllRecords(a.data.role)) fail("没有全组记录查看权限", "FORBIDDEN"); return a; };
     const excelExporter = () => { const a = member(); if (!canExportFullXlsx(a.data.role)) fail("仅管理员或信息部干事可导出完整Excel", "FORBIDDEN"); return a; };
+    const namesExporter = () => { const a = member(); if (!canExportNames(a.data.role)) fail("仅管理员或信息部干事可导出名单", "FORBIDDEN"); return a; };
     const admin = () => { const a = member(); if (a.data.role !== "admin") fail("仅管理员可操作", "FORBIDDEN"); return a; };
     const epoch = () => { if (input.epoch !== workspace.epoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT"); };
     const mutable = () => { epoch(); if (workspace.maintenance) fail("业务数据正在维护，请稍后再试", "MAINTENANCE"); };
@@ -392,7 +393,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         return response({schedule,version:workspace.version});
       }
       if (kind === "reportCheck") {
-        coordinator(); if (["xlsx","schedule"].includes(String(p.format))) excelExporter(); else if (["txt", "copy"].includes(String(p.format))) admin(); await requireSemester();
+        coordinator(); if (["xlsx","schedule"].includes(String(p.format))) excelExporter(); else if (["txt", "copy"].includes(String(p.format))) namesExporter(); await requireSemester();
         if (p.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({ valid: true, version: workspace.version });
       }
@@ -406,7 +407,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         member(); const semester = await requireSemester(); const week = requireWeek(semester);
         const filter: Query = { eq: { semesterId: semester.id, week } };
         if (kind === "report" || kind === "excelReport" || kind === "namesReport") {
-          if (kind === "namesReport" || ["txt", "copy"].includes(String(p.format))) admin();
+          if (kind === "namesReport" || ["txt", "copy"].includes(String(p.format))) namesExporter();
           else if (kind === "excelReport" || p.format === "xlsx") excelExporter();
           recordReader(); if (p.reportVersion !== undefined && p.reportVersion !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
           const records = await all("records", filter);

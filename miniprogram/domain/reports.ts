@@ -10,7 +10,7 @@ export function weekRecords(state: AppState, week: number): Observation[] {
   );
 }
 export function exportTxt(state: AppState, week: number): string {
-  requireRole(state, ["admin"]);
+  requireRole(state, ["admin", "officer"]);
   const semester = state.semesters.find(
       (s) => s.id === state.activeSemesterId,
     )!,

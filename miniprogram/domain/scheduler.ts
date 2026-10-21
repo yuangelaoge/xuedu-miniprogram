@@ -31,8 +31,40 @@ export function eligible(
   );
 }
 
-// 最大流匹配班级组；费用依次保护班级覆盖、优先年级、班级轮换、成员轮换、非早八。
-// 首版以不重叠教学班为覆盖单位，完整连续节次为一次任务。
+// Additive lexicographic costs: no scalar weights, so lower-priority totals
+// cannot outweigh even one unit of a higher-priority objective.
+// Administrative coverage, grade, class/member rotation, early class,
+// then people with >=2 options, then total distinct options (both maximized).
+type Cost = [number, number, number, number, number, number, number];
+const zeroCost = (): Cost => [0, 0, 0, 0, 0, 0, 0];
+function plusCost(a: Cost, b: Cost): Cost {
+  return a.map((value, i) => {
+    const sum = value + b[i];
+    if (!Number.isSafeInteger(sum)) throw new Error("排班规模超出安全计算范围");
+    return sum;
+  }) as Cost;
+}
+function lessCost(a: Cost, b: Cost): boolean {
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i];
+  return false;
+}
+// Within the selected week, duplicate IDs or identical class/teacher/lesson/
+// place/time entries represent one choice. Counts/labels do not create options.
+function uniqueWeeklyCourses(courses: Course[]): Course[] {
+  const ids = new Map<string, string>(), lessons = new Set<string>();
+  return courses.filter(c => {
+    const key = JSON.stringify([c.semesterId, c.classIds.slice().sort(), c.name,
+      c.teacher, c.classroom, c.weekday, c.start, c.end]);
+    if (ids.has(c.id) && ids.get(c.id) !== key) throw new Error("同一课程标识对应不同课程，请核对课表");
+    ids.set(c.id, key);
+    if (lessons.has(key)) return false;
+    lessons.add(key);
+    return true;
+  });
+}
+
+// Maximum cardinality matching still comes first; disjoint class groups
+// preserve administrative coverage via the first cost component.
 export function generatePlan(
   state: AppState,
   semesterId: string,
@@ -43,7 +75,7 @@ export function generatePlan(
   const semester = state.semesters.find((s) => s.id === semesterId);
   if (!semester || week < 1 || week > semester.weeks)
     throw new Error("请选择有效周次");
-  const courses = state.courses.filter(
+  const courses = uniqueWeeklyCourses(state.courses.filter(
     (c) =>
       c.semesterId === semesterId &&
       c.weeks.includes(week) &&
@@ -52,7 +84,7 @@ export function generatePlan(
           classGrade(state.classes.find((k) => k.id === id) || {}),
         ),
       ),
-  );
+  ));
   const groups: { key: string; courses: Course[] }[] = [];
   courses.forEach((c) => {
     const key = c.classIds.slice().sort().join("|");
@@ -76,15 +108,16 @@ export function generatePlan(
   );
   const previousClasses = new Set(previous.flatMap((r) => r.course.classIds));
   const previousMembers = new Set(previous.map((r) => r.memberId));
-  const base = members.length + 1;
-  const memberCost = base, classCost = base ** 2, gradeCost = base ** 3, coverageCost = base ** 4;
   const largestGroup = Math.max(1, ...groups.map(g => g.courses[0].classIds.length));
-  if (!Number.isSafeInteger(largestGroup * coverageCost * base)) throw new Error("排班规模超出安全计算范围");
+  // A simple residual path uses at most |V|-1 edges; each component is an
+  // integer bounded by max(group size, options). Check sums again on relaxation.
+  if (!Number.isSafeInteger((groups.length + members.length + 1) * Math.max(largestGroup, courses.length, 1)))
+    throw new Error("排班规模超出安全计算范围");
   type Edge = {
     to: number;
     rev: number;
     cap: number;
-    cost: number;
+    cost: Cost;
     course?: Course;
     options?: Course[];
   };
@@ -96,7 +129,7 @@ export function generatePlan(
   const add = (
     from: number,
     to: number,
-    cost: number,
+    cost: Cost,
     course?: Course,
     options?: Course[],
   ): void => {
@@ -105,7 +138,7 @@ export function generatePlan(
       to: from,
       rev: graph[from].length,
       cap: 0,
-      cost: -cost,
+      cost: cost.map(value => -value) as Cost,
     };
     graph[from].push(forward);
     graph[to].push(reverse);
@@ -115,7 +148,7 @@ export function generatePlan(
       previousClasses.has(id),
     );
     const preferred = !priorityGrade || g.courses[0].classIds.some(id => classGrade(state.classes.find(c => c.id === id) || {}) === priorityGrade);
-    add(source, groupOffset + gi, (largestGroup - g.courses[0].classIds.length) * coverageCost + (preferred ? 0 : gradeCost) + (repeated ? classCost : 0));
+    add(source, groupOffset + gi, [largestGroup - g.courses[0].classIds.length, preferred ? 0 : 1, repeated ? 1 : 0, 0, 0, 0, 0]);
     for (let j = 0; j < members.length; j++) {
       const mi = (j + revision) % members.length;
       const options = g.courses.filter((c) =>
@@ -128,23 +161,25 @@ export function generatePlan(
         add(
           groupOffset + gi,
           memberOffset + mi,
-          (previousMembers.has(members[mi].id) ? memberCost : 0) + Number(isEarlyCourse(recommended)),
+          [0, 0, 0, previousMembers.has(members[mi].id) ? 1 : 0, Number(isEarlyCourse(recommended)), options.length >= 2 ? -1 : 0, -options.length],
           recommended, options,
         );
     }
   });
-  members.forEach((_, mi) => add(memberOffset + mi, sink, 0));
+  members.forEach((_, mi) => add(memberOffset + mi, sink, zeroCost()));
   while (true) {
-    const distance = graph.map(() => Infinity),
-      parentNode = graph.map(() => -1),
-      parentEdge = graph.map(() => -1);
-    distance[source] = 0;
+    const distance: (Cost | null)[] = graph.map(() => null);
+    const parentNode = graph.map(() => -1), parentEdge = graph.map(() => -1);
+    distance[source] = zeroCost();
     for (let round = 0; round < graph.length - 1; round++) {
       let changed = false;
       graph.forEach((edges, from) =>
         edges.forEach((edge, ei) => {
-          if (edge.cap && distance[from] + edge.cost < distance[edge.to]) {
-            distance[edge.to] = distance[from] + edge.cost;
+          const previous = distance[from];
+          if (!edge.cap || !previous) return;
+          const candidate = plusCost(previous, edge.cost), current = distance[edge.to];
+          if (!current || lessCost(candidate, current)) {
+            distance[edge.to] = candidate;
             parentNode[edge.to] = from;
             parentEdge[edge.to] = ei;
             changed = true;

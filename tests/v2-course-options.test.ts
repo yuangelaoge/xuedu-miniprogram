@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {optionFixture,generateOptions,optionMetrics,changed} from './helpers/course-options';
+import {matchingOptionSeed,optionFixture,generateOptions,optionMetrics,changed} from './helpers/course-options';
 import { taskCourseOptions } from '../miniprogram/domain/v2/task-options';
 import { AppState,Course } from '../miniprogram/domain/types';
 import { reportSheets } from '../miniprogram/domain/reports';
@@ -72,4 +72,25 @@ test('确认重查每个候选的可用时段；优先年级仅目标周草稿�
  await assert.rejects(f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version}),/完整可用/);
  assert.equal((await f.repo.get('plans',plan.id))!.data.status,'draft');
  assert.equal((await f.repo.get('plans','review-plan-1'))!.data.priorityGrade,undefined);
+});
+
+test('优化只生成草稿：确认前正式安排不变，已提交成员/班级冻结，既有前端候选结构兼容',async()=>{
+ const f=optionFixture(matchingOptionSeed()),{plan,task}=await generateOptions(f);
+ const draftTasks=(await f.repo.query('tasks',{eq:{parentId:plan.id}})).items;
+ assert.deepEqual(draftTasks.map(t=>taskCourseOptions(t).length),[3,3]);assert.ok(draftTasks.every(t=>t.data.status==='draft'));
+ assert.equal(taskCourseOptions(task)[0].course.classIds[0],'review-class-b');
+ await f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version});
+ const confirmed=(await f.repo.query('tasks',{eq:{week:2}})).items;
+ const another=await f.call('command',{type:'planGenerate',week:2},{expectedVersion:(await f.repo.get('plans',plan.id))!.version});
+ assert.deepEqual((await f.repo.query('tasks',{eq:{week:2,status:'confirmed'}})).items,confirmed);
+ const next=changed(another,e=>e.data.status==='draft'&&e.data.uncovered!==undefined);
+ await f.call('command',{type:'planConfirm',id:next.id},{expectedVersion:next.version});
+ const current=(await f.repo.query('tasks',{eq:{week:2,memberId:'review-member',status:'confirmed'}})).items[0];
+ const pic=await f.call('photo',{taskId:current.id,base64:'aGVsbG8='},{who:'member'});
+ const submitted=await f.call('command',{type:'recordSubmitChoice',taskId:current.id,occurrenceId:taskCourseOptions(current)[2].occurrenceId,metrics:optionMetrics,photos:[pic.data.fileID]},{who:'member',expectedVersion:current.version});
+ const record=changed(submitted,e=>!!e.data.firstSubmittedAt),frozen=(await f.repo.get('tasks',current.id))!;
+ const regenerated=await f.call('command',{type:'planGenerate',week:2},{expectedVersion:(await f.repo.get('plans',next.id))!.version});
+ const pending=(regenerated.data.changed as typeof frozen[]).filter(e=>e.memberId&&e.data.courseOptions&&!e.data.cancel);
+ assert.equal(pending.length,1);assert.ok(pending.every(t=>t.memberId!=='review-member'&&taskCourseOptions(t).every(o=>!o.course.classIds.includes('review-class-b'))));
+ assert.deepEqual(await f.repo.get('tasks',current.id),frozen);assert.deepEqual(await f.repo.get('records',record.id),record);
 });

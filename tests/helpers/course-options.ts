@@ -45,3 +45,26 @@ export async function generateOptions(f:ReturnType<typeof optionApi>, priorityGr
  const task=changed(draft,e=>e.memberId==='review-member' && e.data.courseOptions!==undefined);
  return {plan,task};
 }
+
+/** Two eligible people / two class groups: swapping 1+1 yields 3+3. */
+export function matchingOptionSeed() {
+ const seed=optionSeed(),epoch=seed.workspace.epoch,sid=seed.workspace.activeSemesterId;
+ const row=(id:string,data:Record<string,unknown>,extra:Partial<Entity>={}):Entity=>({id,epoch,version:1,data,...extra});
+ seed.rows.classes=[...seed.rows.classes!,row('own-member',{name:'本人甲班',grade:'25',major:'其他',active:true}),row('own-officer',{name:'本人乙班',grade:'25',major:'其他',active:true})];
+ seed.rows.classes[0].data.grade='25';
+ seed.rows.members!.find(m=>m.id==='review-member')!.data.classId='own-member';
+ seed.rows.members!.find(m=>m.id==='review-officer')!.data.classId='own-officer';
+ const times=[[1,3],[2,3],[3,3],[4,3],[5,3],[2,5]];
+ seed.rows.courses=times.map(([weekday,start],i)=>{
+  const id='matching-'+i,c:Course={id,semesterId:sid,name:'合成课'+i,teacher:'合成教师',nature:'必修',classIds:[seed.rows.classes![i<3?0:1].id],classroom:'合成教室',weekday,start,end:start+1,weeks:[2],expected:32};
+  return row(id,{name:c.name,course:c,active:true},{semesterId:sid});
+ });
+ seed.rows.course_versions=seed.rows.courses.map(c=>row(c.id+'-v1',{course:c.data.course,active:true,sequence:1},{semesterId:sid,parentId:c.id,date:'2026-10-19'}));
+ seed.rows.occurrences=seed.rows.courses.map(c=>{
+  const course=c.data.course as unknown as Course,date='2026-10-'+(25+course.weekday),schoolClass=seed.rows.classes!.find(k=>k.id===course.classIds[0])!;
+  return row(c.id+':'+date,{course,status:'active',classes:[{id:schoolClass.id,...schoolClass.data}],classLabel:schoolClass.data.name,date,originalDate:date},{semesterId:sid,week:2,parentId:c.id,date});
+ });
+ seed.rows.availability=[['review-member',[0,3,4,5]],['review-officer',[0,1,2,3]]].map(([id,indices])=>row('available-'+id,{slots:(indices as number[]).flatMap(i=>{const [d,p]=times[i];return [`${d}:${p}`,`${d}:${p+1}`];}),optedIn:true,note:''},{semesterId:sid,week:2,memberId:String(id)}));
+ for(const resource of ['tasks','plans','records','record_versions','photos'] as const)seed.rows[resource]=[];
+ return seed;
+}

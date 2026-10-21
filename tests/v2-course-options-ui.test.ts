@@ -14,7 +14,7 @@ async function ui(work:(f:any)=>Promise<void>,seed=optionSeed()) {
  g.Page=(p:any)=>definition=p;
  g.wx={getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:unknown)=>storage.set(k,v),removeStorageSync:(k:string)=>storage.delete(k),showToast(){},
   async showModal(p:any){if(p.showCancel===false)errors.push(p.content);return {confirm:true};},async chooseMedia(){return {tempFiles:[{tempFilePath:'/synthetic-photo'}]};},
-  env:{USER_DATA_PATH:'/synthetic-export'},getFileSystemManager(){return {readFileSync(){return 'aGVsbG8=';},writeFile(p:any){files.push(p);p.success();p.complete();}};},cloud:{init(){},async callFunction({data}:any){calls.push(data);try{return {result:{ok:true,data:await f.call(data.operation,data.payload,{...data,who})}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
+  env:{USER_DATA_PATH:'/synthetic-export'},getFileSystemManager(){return {readFileSync(){return 'aGVsbG8=';},writeFile(p:any){files.push(p);p.success();p.complete();}};},cloud:{init(){},CDN(){return 'http://vweixinf.tc.qq.com/301/synthetic';},async callFunction({data}:any){calls.push(data);try{return {result:{ok:true,data:await f.call(data.operation,data.payload,{...data,who})}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
  const page=async(view:any,q:any={})=>{registerCloudPage(view);const p={...definition,data:structuredClone(definition.data),setData(v:any,callback?:()=>void){Object.assign(this.data,v);callback?.();}};p.onLoad({semesterId:'review-semester',week:'2',...q});await p.load();assert.equal(p.data.error,'');return p;};
  try {await work({...f,task,page,storage,calls,errors,files,who:(v:typeof who)=>who=v});}
  finally {g.wx=oldWx;g.Page=oldPage;Object.assign(runtime,oldRuntime);}
@@ -64,7 +64,8 @@ test('普通干事首页/正式任务逐门显示课表人数，合班合计、�
    const submit=await f.page('submission',{taskId:f.task.id});assert.equal(submit.data.fields.find((v:any)=>v.key==='expected').value,'');
    assert.deepEqual(f.errors,[]);
  },seed);
- for(const path of ['cloud-home-task.wxml','cloud.wxml'])assert.match(readFileSync('miniprogram/templates/'+path,'utf8'),/include src="cloud-task-headcount.wxml"/);
+ assert.match(readFileSync('miniprogram/templates/cloud.wxml','utf8'),/include src="cloud-task-headcount.wxml"/);
+ assert.match(readFileSync('miniprogram/templates/cloud-home-task.wxml','utf8'),/task.courseCounts/);
  const template=readFileSync('miniprogram/templates/cloud-task-headcount.wxml','utf8');assert.match(template,/课表人数/);assert.match(template,/合班合计/);
 });
 test('首页本周/下周任务分开，下周只显示本人已生效任务，学期末不再请求',async()=>ui(async f=>{

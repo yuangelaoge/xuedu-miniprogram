@@ -1,4 +1,5 @@
 import { runtime } from "../../config/runtime";
+import { PHOTO_REQUEST_BYTES, jsonBytes, photoBytes } from "../../domain/photo-limits";
 import { ApiRequest, ApiResponse, Entity, Workspace } from "../../domain/v2/protocol";
 import { PageData, PageLoadRequest, WeekData } from "../../domain/v2/page-data";
 export { WeekData } from "../../domain/v2/page-data";
@@ -49,8 +50,20 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   if (!["bootstrap", "query", "photoUrls", "clearPreview"].includes(operation)) pageRevision++;
   const page = options.payload?.page as PageLoadRequest | undefined;
   const readHint = boot?.member ? { memberId: boot.member.id, semesterId: options.semesterId || page?.semesterId || boot.workspace.activeSemesterId } : undefined;
-  const response = await wx.cloud.callFunction({ name: runtime.functionName, data: { protocolVersion: 2, operation, epoch: epoch || undefined, readHint, review: reviewActive(), ...options } });
+  const data = { protocolVersion: 2, operation, epoch: epoch || undefined, readHint, review: reviewActive(), ...options };
+  const photoOperation = operation === 'photo' || operation === 'photoFile';
+  const requestBytes = photoOperation ? jsonBytes(data) : 0;
+  if (requestBytes > PHOTO_REQUEST_BYTES) throw new Error('照片传输数据过大，请重新添加照片以使用文件传输');
+  const response = await wx.cloud.callFunction({ name: runtime.functionName, data }).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String((error as {errMsg?:string})?.errMsg || error);
+    if (photoOperation && /data exceed max size/i.test(message)) {
+      const bytes = operation === 'photoFile' ? Number(options.payload?.bytes || 0) : typeof options.payload?.base64 === 'string' ? photoBytes(options.payload.base64) : 0;
+      throw new Error(`微信拒绝了照片上传请求（图片${Math.ceil(bytes/1024)}KB，请求${Math.ceil(requestBytes/1024)}KB）。请保留原图并反馈此提示，未提交听课记录。`);
+    }
+    throw error;
+  });
   const result = response.result as unknown as { ok: boolean; data?: ApiResponse<T>; error?: string; code?: string };
+  if (operation === 'photoFile' && result?.code === 'UPGRADE_REQUIRED') throw new Error('云端照片上传服务尚未更新，请联系管理员，暂未提交听课记录');
   if (!result?.ok || !result.data) { pageRevision++; if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw new Error(result?.error || "云端请求失败，请刷新重试"); }
   if (result.data.protocolVersion !== 2) throw new Error("请更新小程序，云端协议不匹配");
   if (startedGeneration !== generation) throw new Error("业务数据轮次已变化，请刷新后重试");

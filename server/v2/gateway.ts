@@ -1,4 +1,4 @@
-import { MAX_PHOTO_BYTES, MAX_PHOTO_BASE64_LENGTH, MAX_RECORD_PHOTOS, photoBytes } from "../../miniprogram/domain/photo-limits";
+import { MAX_PHOTO_BYTES, MAX_PHOTO_BASE64_LENGTH, MAX_RECORD_PHOTOS, PHOTO_REQUEST_BYTES, photoBytes } from "../../miniprogram/domain/photo-limits";
 import type { ScheduleReport } from "../../miniprogram/domain/schedule-report";
 import { classGrade, isEarlyCourse, sameClasses } from "../../miniprogram/domain/course-preferences";
 import { taskCourseOptions, TaskCourseOption } from "../../miniprogram/domain/v2/task-options";
@@ -17,6 +17,7 @@ import { validateMetrics } from "../../miniprogram/domain/metrics";
 import { weekDate, currentWeek, boundedWeek, slotsFor } from "../../miniprogram/domain/calendar";
 
 export interface PhotosV2 {
+  readTemporary?(url: string, bytes: number, timeoutMs: number): Promise<string>;
   upload(path: string, base64: string): Promise<string>;
   urls(ids: string[]): Promise<string[]>;
   list(prefix: string, limit: number): Promise<string[]>;
@@ -71,11 +72,12 @@ export function createGatewayV2(deps: DependenciesV2) {
   const requireExecution = () => { if (!executionConfigured) fail("请配置与云函数实际执行上限一致的 maxExecutionMs", "CONFIGURATION"); };
   const repo = deps.repository;
   return async (input: ApiRequest, context: { OPENID?: string; APPID?: string }): Promise<ApiResponse> => {
+    const startedAt = Date.now();
     if (!context.OPENID || context.APPID !== deps.appid) fail("微信身份无效", "UNAUTHENTICATED");
     if (!input || input.protocolVersion !== 2) fail("请更新小程序", "UPGRADE_REQUIRED");
-    const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
+    const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoFile", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(input.operation)) fail("请更新小程序", "UPGRADE_REQUIRED");
-    const requestLimit = input.operation === "photo" ? MAX_PHOTO_BASE64_LENGTH + 16384 : 1200000;
+    const requestLimit = input.operation === "photoFile" ? PHOTO_REQUEST_BYTES : input.operation === "photo" ? MAX_PHOTO_BASE64_LENGTH + 16384 : 1200000;
     if (JSON.stringify(input).length > requestLimit) fail("单次请求过大");
     if (input.operation === "bootstrap" && input.payload?.fastPage === true && repo.bootstrapPage &&
         (input.payload.includeHome === true || ["schedule","records","profile","courses","availability"].includes(String((input.payload.page as PageLoadRequest | undefined)?.view)))) {
@@ -97,12 +99,16 @@ export function createGatewayV2(deps: DependenciesV2) {
     const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust", "planConfirm"].includes(String(p.type));
     const scheduleExport = input.operation === "query" && p.kind === "scheduleReport";
     const membersList = input.operation === "query" && p.kind === "members";
-    const recordWrite = input.operation === "photo" || input.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(p.type));
+    const photoWrite = input.operation === "photo" || input.operation === "photoFile";
+    const recordWrite = photoWrite || input.operation === "command" && ["recordSubmit", "recordEdit"].includes(String(p.type));
     if (typeof input.requestId === "string" && input.requestId.startsWith("record-v1-")) fail("请求标识使用了保留前缀");
     if (recordWrite) text(input.requestId, "请求标识", 200);
-    const digest = recordWrite ? writeDigest([input.operation,input.semesterId,input.expectedVersion,p]) : "";
+    // CDN addresses can change on retry. A single upload request keeps its receipt;
+    // the final private storage path is still derived from the actual image content.
+    const digestPayload = input.operation === "photoFile" ? {taskId:p.taskId,recordId:p.recordId,bytes:p.bytes,uploadId:input.requestId} : p;
+    const digest = recordWrite ? writeDigest([input.operation,input.semesterId,input.expectedVersion,digestPayload]) : "";
     const prefetched = recordWrite && repo.recordRead ? await repo.recordRead(identityKey, {
-      kind: input.operation === "photo" ? "photo" : p.type, epoch: input.epoch, semesterId: input.semesterId,
+      kind: photoWrite ? "photo" : p.type, epoch: input.epoch, semesterId: input.semesterId,
       taskId: p.taskId, id: p.id, photos: p.photos, occurrenceId: p.occurrenceId, operationDigest: digest,
     }) : (scheduling || membersList || scheduleExport) && repo.schedulingRead ? await repo.schedulingRead(identityKey, {
       kind: scheduleExport ? "scheduleReport" : membersList ? "members" : p.type, epoch: input.epoch, semesterId: input.semesterId,
@@ -437,21 +443,34 @@ export function createGatewayV2(deps: DependenciesV2) {
       }
       fail("查询类型无效");
     }
-    if (input.operation === "photo") {
+    if (photoWrite) {
       requireExecution(); mutable(); member(); const task = (await get("tasks", text(p.taskId, "任务标识")))!;
       if (task.semesterId !== input.semesterId) fail("学期不匹配");
       const record = (await page("records", { eq: { taskId: task.id }, limit: 1 })).items[0];
       if (task.memberId !== member().id && member().data.role !== "admin") fail("不可上传他人任务照片", "FORBIDDEN");
       if (record && member().data.role !== "admin" && (now - Date.parse(String(record.data.firstSubmittedAt)) >= DAY || now < Date.parse(String(record.data.firstSubmittedAt)))) fail("本人修改期限已过");
-      if (typeof p.base64 === "string" && p.base64.length > MAX_PHOTO_BASE64_LENGTH) fail("单张照片不得超过2MB");
-      const base64 = text(p.base64, "照片内容", MAX_PHOTO_BASE64_LENGTH);
+      let base64: string;
+      if (input.operation === "photoFile") {
+        if (p.base64 !== undefined) fail("文件传输不能同时携带照片正文");
+        const file = text(p.file, "临时照片地址", 4096), bytes = integer(p.bytes, "照片大小", 1, MAX_PHOTO_BYTES);
+        if (!deps.photos.readTemporary) fail("云端照片传输尚未配置", "CONFIGURATION");
+        const timeout = Math.min(1500, deps.maxExecutionMs - (Date.now() - startedAt) - 800);
+        if (timeout < 100) fail("照片接收暂时繁忙，请重新添加照片", "PHOTO_TRANSFER_FAILED");
+        try { base64 = await deps.photos.readTemporary(file, bytes, timeout); }
+        catch (_) { fail("照片文件接收失败，请重新添加照片后重试", "PHOTO_TRANSFER_FAILED"); }
+        if (photoBytes(base64) !== bytes) fail("照片文件不完整，请重新添加照片", "PHOTO_TRANSFER_FAILED");
+      } else {
+        if (typeof p.base64 === "string" && p.base64.length > MAX_PHOTO_BASE64_LENGTH) fail("单张照片不得超过5MB");
+        base64 = text(p.base64, "照片内容", MAX_PHOTO_BASE64_LENGTH);
+      }
       if (base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) fail("照片内容无效");
-      if (photoBytes(base64) > MAX_PHOTO_BYTES) fail("单张照片不得超过2MB");
+      if (photoBytes(base64) > MAX_PHOTO_BYTES) fail("单张照片不得超过5MB");
       text(input.requestId, "请求标识", 200);
       // Identical content for the same owner/task/epoch has one immutable path,
       // including when storage succeeds but metadata registration times out.
       const fileHash = createHash("sha256").update(JSON.stringify([workspace.epoch,identityKey,task.id,base64])).digest("hex");
-      const path = `cloud/${workspace.epoch}/stable-${fileHash}.jpg`;
+      const extension = input.operation === "photoFile" && base64.startsWith("iVBORw0KGgo") ? "png" : "jpg";
+      const path = `cloud/${workspace.epoch}/stable-${fileHash}.${extension}`;
       const storageId = await deps.photos.upload(path, base64);
       const photo = add("photos", { storageId, path, createdAt: at }, { semesterId: task.semesterId, memberId: member().id, taskId: task.id });
       // A failed commit leaves an orphan only inside this fixed epoch directory; maintenance sweeps it.

@@ -1,4 +1,5 @@
-import { MAX_PHOTO_BYTES, MAX_RECORD_PHOTOS, photoBytes } from "../../domain/photo-limits";
+import { MAX_RECORD_PHOTOS } from "../../domain/photo-limits";
+import { preparePhoto, uploadPreparedPhoto } from "./photo-upload";
 import { ScheduleReport, exportScheduleXlsx } from "../../domain/schedule-report";
 import { courseHeadcountText } from "../../domain/course-headcount";
 import { taskCourseOptions, TaskCourseOption } from "../../domain/v2/task-options";
@@ -716,10 +717,9 @@ export function registerCloudPage(view: View): void {
         if (chosen.tempFiles.length > MAX_RECORD_PHOTOS - this.data.photoIds.length) throw new Error("每份记录最多1张照片");
         for (const image of chosen.tempFiles) {
           this.setData({uploadingPhoto:image.tempFilePath});
-          let path = image.tempFilePath, base64 = s(wx.getFileSystemManager().readFileSync(path, "base64"));
-          if (photoBytes(base64) > MAX_PHOTO_BYTES) { const compressed = await wx.compressImage({ src: path, quality: 65 }); path = compressed.tempFilePath; base64 = s(wx.getFileSystemManager().readFileSync(path, "base64")); }
-          if (photoBytes(base64) > MAX_PHOTO_BYTES) throw new Error("请裁剪照片至2MB以内，并保证签字清晰");
-          const response = await call<{ fileID: string }>("photo", { requestId: requestId(), semesterId: this.data.semesterId, payload: { taskId: this.data.formExtra.taskId, recordId: this.data.formType === "recordEdit" ? this.data.formId : undefined, base64 } });
+          const photo = await preparePhoto(image.tempFilePath), {path} = photo;
+          this.setData({uploadingPhoto:path});
+          const response = await uploadPreparedPhoto(photo, this.data.semesterId, String(this.data.formExtra.taskId || ""), this.data.formType === "recordEdit" ? this.data.formId : undefined);
           this.setData({ photoIds: this.data.photoIds.concat(response.data.fileID), formPhotos: this.data.formPhotos.concat(path),uploadingPhoto:"" });
         }
       } catch (e) { if(!(e && typeof e === "object" && "errMsg" in e && /cancel/.test(String(e.errMsg))))displayError(e); } finally { this.setData({ busy: false,uploadingPhoto:"" }); }

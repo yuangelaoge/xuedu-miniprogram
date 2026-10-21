@@ -17,8 +17,8 @@ async function fixture(work:(f:any)=>Promise<void>){
  const record={...data,metrics,photos:['existing'],absentNames:'无',leaveNames:'同学甲',firstSubmittedAt:'2026-09-07T00:00:00Z',createdAt:'2026-09-07T00:00:00Z',revision:1};
  const repo=new MemoryRepository(w,{members:[e('admin',{name:'管理员',role:'admin',active:true,classId:'class-00',studentNo:'001'},{studentNo:'001'}),e('member',{name:'合成成员',role:'member',active:true,classId:'class-01',studentNo:'002'},{studentNo:'002'}),e('other',{name:'其他成员',role:'member',active:true,classId:'class-01',studentNo:'003'},{studentNo:'003'})],bindings:[e('ba',{},{identityKey:'owner',memberId:'admin'}),e('bm',{},{identityKey:'member',memberId:'member'}),e('bo',{},{identityKey:'other',memberId:'other'})],classes:Array.from({length:51},(_,i)=>e('class-'+String(i).padStart(2,'0'),{name:i===50?'另一年级班':'合成班'+i,grade:i===50?'25':'26',major:'计算机',active:true})),semesters:[e('s',{name:'合成学期',startDate:'2026-09-07',weeks:20,days:5,periods:14})],courses:[e('c',{name:course.name,course,active:true},{semesterId:'s'}),e('last',{name:'另一课程',course:{...course,name:'另一课程',teacher:'另一老师',classIds:['class-50']},active:true},{semesterId:'s'})],tasks:[e('task',{...data,status:'confirmed',occurrenceId:'occ'},{memberId:'member',semesterId:'s',week:1}),e('old-task',{...data,status:'submitted'},{memberId:'member',semesterId:'s',week:1})],occurrences:[e('occ',{...data,status:'active'},{semesterId:'s',week:1,date:'2026-09-07'})],records:[e('record',record,{memberId:'member',semesterId:'s',week:1,taskId:'old-task'})],record_versions:[e('old-version',{...record,recordVersion:1},{memberId:'member',semesterId:'s',week:1,taskId:'old-task',recordId:'record'})],photos:[e('existing',{storageId:'private-existing'},{semesterId:'s',memberId:'member',taskId:'old-task',recordId:'record'})]});
  let loseReply='',uploadCount=0;let who='member',definition:any,urlRevision=0,hold:Promise<void>|undefined,release:()=>void=()=>{};const calls:any[]=[],previews:any[]=[],errors:string[]=[];const storage=new Map();
- const gateway=createGatewayV2({repository:repo,appid:'app',bootstrapOpenid:'owner',maxExecutionMs:3000,uuid:()=>`form-${++serial}`,now:()=>Date.parse('2026-09-07T01:00:00Z'),photos:{async upload(path){uploadCount++;if(hold)await hold;return path;},async urls(ids){return ids.map(id=>`https://synthetic.invalid/${++urlRevision}/${id}`);},async list(){return [];},async delete(){}}});
- g.Page=(p:any)=>definition=p;g.wx={getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:any)=>storage.set(k,v),removeStorageSync:(k:string)=>storage.delete(k),showToast(){},async showModal(o:any){if(o.showCancel===false)errors.push(o.content);return {confirm:true};},previewImage(o:any){previews.push(o);},async chooseMedia(){return {tempFiles:[{tempFilePath:'/selected-photo'}]};},getFileSystemManager(){return {readFileSync(){return 'aGVsbG8=';}};},cloud:{init(){},async callFunction({data}:any){calls.push(data);try{const result=await gateway(data,{OPENID:who,APPID:'app'});if(loseReply===(data.operation==='command'?data.payload.type:data.operation)){loseReply='';throw new Error('模拟回包丢失');}return {result:{ok:true,data:result}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
+ const gateway=createGatewayV2({repository:repo,appid:'app',bootstrapOpenid:'owner',maxExecutionMs:3000,uuid:()=>`form-${++serial}`,now:()=>Date.parse('2026-09-07T01:00:00Z'),photos:{async readTemporary(url){return g.wx.getFileSystemManager().readFileSync(decodeURIComponent(new URL(url).pathname.replace(/^\/301/,'')),'base64');},async upload(path){uploadCount++;if(hold)await hold;return path;},async urls(ids){return ids.map(id=>`https://synthetic.invalid/${++urlRevision}/${id}`);},async list(){return [];},async delete(){}}});
+ g.Page=(p:any)=>definition=p;g.wx={getStorageSync:(k:string)=>storage.get(k),setStorageSync:(k:string,v:any)=>storage.set(k,v),removeStorageSync:(k:string)=>storage.delete(k),showToast(){},async showModal(o:any){if(o.showCancel===false)errors.push(o.content);return {confirm:true};},previewImage(o:any){previews.push(o);},async chooseMedia(){return {tempFiles:[{tempFilePath:'/selected-photo'}]};},getFileSystemManager(){return {readFileSync(){return 'aGVsbG8=';}};},cloud:{init(){},CDN({filePath}:any){return 'http://vweixinf.tc.qq.com/301'+encodeURI(filePath);},async callFunction({data}:any){calls.push(data);try{const result=await gateway(data,{OPENID:who,APPID:'app'});if(loseReply===(data.operation==='command'?data.payload.type:data.operation)){loseReply='';throw new Error('模拟回包丢失');}return {result:{ok:true,data:result}};}catch(e){return {result:{ok:false,error:(e as Error).message}};}}}};
  const page=async(view:any,q:any={})=>{registerCloudPage(view);const p={...definition,data:structuredClone(definition.data),setData(v:any){Object.assign(this.data,v);}};p.onLoad({semesterId:'s',week:'1',...q});await p.load();assert.equal(p.data.error,'');return p;};
  try{await work({repo,page,calls,previews,errors,storage,loseReply:(kind:string)=>loseReply=kind,uploadCount:()=>uploadCount,who:(v:string)=>who=v,holdUpload:()=>{hold=new Promise(r=>release=r);},releaseUpload:()=>{release();hold=undefined;}});}finally{release();g.wx=oldWx;g.Page=oldPage;Object.assign(runtime,oldRuntime);}
 }
@@ -50,12 +50,12 @@ test('V2课程：年级依照班级资料、保持分页，补加载后按年级
  p.courseDetails({currentTarget:{dataset:{id:'last'}}});assert.match(f.errors.pop(),/有效周次：1、2/);assert.equal(f.calls.filter((c:any)=>c.operation==='command').length,0);
 }));
 
-test('未修改的旧页面：照片和提交回包丢失后，新编号重试复用成功结果',async()=>fixture(async f=>{
+test('照片回包丢失后复用上传编号，提交回包丢失后新编号也复用成功结果',async()=>fixture(async f=>{
  const p=await f.page('submission',{taskId:'task'});
  p.input(ev('expected','20'));p.input(ev('actual','19'));p.zeroRemaining();
- f.loseReply('photo');await p.choosePhotos();assert.match(f.errors.pop(),/模拟回包丢失/);assert.equal(p.data.photoIds.length,0);
+ f.loseReply('photoFile');await p.choosePhotos();assert.match(f.errors.pop(),/模拟回包丢失/);assert.equal(p.data.photoIds.length,0);
  await p.choosePhotos();assert.equal(p.data.photoIds.length,1);assert.equal(f.uploadCount(),1);
- const photos=f.calls.filter((c:any)=>c.operation==='photo');assert.notEqual(photos[0].requestId,photos[1].requestId);
+ const photos=f.calls.filter((c:any)=>c.operation==='photoFile');assert.equal(photos[0].requestId,photos[1].requestId);
  f.loseReply('recordSubmit');await p.saveForm();assert.match(f.errors.pop(),/模拟回包丢失/);assert.equal(p.data.formType,'recordSubmit');
  await p.saveForm();assert.deepEqual(f.errors,[]);
  const writes=f.calls.filter((c:any)=>c.payload?.type==='recordSubmit');assert.notEqual(writes[0].requestId,writes[1].requestId);
@@ -71,10 +71,11 @@ test('未修改的旧更正页：成功回包丢失后重复保存不增加历�
  const writes=f.calls.filter((c:any)=>c.payload?.type==='recordEdit');assert.notEqual(writes[0].requestId,writes[1].requestId);
 }));
 
-test('照片前端恰好2MB直接上传，超过2MB压缩后仍过大拒绝',async()=>fixture(async f=>{
- const g=globalThis as any,p=await f.page('submission',{taskId:'task'});let size=2*1024*1024,compressed=0;
- g.wx.getFileSystemManager=()=>({readFileSync:()=>Buffer.alloc(size).toString('base64')});
+test('照片表单允许5MB原图，压缩后上传；超过5MB不发请求',async()=>fixture(async f=>{
+ const g=globalThis as any,p=await f.page('submission',{taskId:'task'});let size=5*1024*1024,compressed=0;
+ g.wx.getFileSystemManager=()=>({readFileSync:(path:string)=>Buffer.alloc(path==='/compressed'?300*1024:size).toString('base64')});
  g.wx.compressImage=async()=>{compressed++;return {tempFilePath:'/compressed'};};
- await p.choosePhotos();assert.equal(f.uploadCount(),1);assert.equal(compressed,0);
- p.removePhoto({currentTarget:{dataset:{index:0}}});size++;await p.choosePhotos();assert.equal(compressed,1);assert.match(f.errors.pop(),/2MB/);assert.equal(f.uploadCount(),1);assert.equal(p.data.photoIds.length,0);
+ await p.choosePhotos();assert.equal(f.uploadCount(),1);assert.equal(compressed,1);
+ const upload=f.calls.find((c:any)=>c.operation==='photoFile');assert.equal(upload.payload.bytes,300*1024);assert.equal(upload.payload.base64,undefined);assert.match(upload.payload.file,/compressed/);
+ p.removePhoto({currentTarget:{dataset:{index:0}}});size++;await p.choosePhotos();assert.equal(compressed,1);assert.match(f.errors.pop(),/5MB/);assert.equal(f.uploadCount(),1);assert.equal(p.data.photoIds.length,0);
 }));

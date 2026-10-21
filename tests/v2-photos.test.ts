@@ -6,7 +6,7 @@ import { MemoryRepository, EMPTY_WORKSPACE } from "../server/v2/memory";
 import { ApiRequest, CLEAR_CONFIRMATION, Entity } from "../miniprogram/domain/v2/protocol";
 const prefix = "pg://xuedu-photos/";
 const row = (id: string, data: Record<string, unknown>, extra: Partial<Entity> = {}): Entity => ({ id, epoch: "old-epoch", version: 1, data, ...extra });
-function setup() {
+function setup(role = "admin", taskOwner = "admin") {
   const files = new Map<string, Uint8Array>();
   const uploaded: { path: string; bytes: Uint8Array; options: { contentType: string; upsert: boolean } }[] = [];
   const removed: string[][] = [], listed: { path: string; limit: number; withDelimiter: boolean }[] = [], signed: { paths: string[]; expires: number }[] = [];
@@ -36,12 +36,13 @@ function setup() {
   const photos = createPhotos(bucket, value => new Uint8Array(Buffer.from(value, "base64")));
   const course = { id: "course", semesterId: "semester", name: "课程", teacher: "教师", nature: "必修", classIds: ["class"], classroom: "101", weekday: 1, start: 1, end: 2, weeks: [1], expected: 30 };
   const repository = new MemoryRepository({ ...EMPTY_WORKSPACE, epoch: "old-epoch", version: 1, activeSemesterId: "semester", maxExecutionMs: 3000 }, {
-    members: [row("admin", { role: "admin", active: true, classId: "class", name: "管理员", studentNo: "001" }, { studentNo: "001" })],
+    members: [row("admin", { role, active: true, classId: "class", name: "管理员", studentNo: "001" }, { studentNo: "001" }),
+      ...(role === "admin" ? [] : [row("backup-admin", {role:"admin",active:true,classId:"class",name:"管理人员",studentNo:"002"},{studentNo:"002"})])],
     bindings: [row("binding", {}, { identityKey: "wx-admin", memberId: "admin" })],
     classes: [row("class", { name: "班级", grade: "25", major: "自动化", active: true })],
     semesters: [row("semester", { name: "学期", startDate: "2026-09-07", weeks: 20, days: 7, periods: 14, edition: "", grades: ["25"] })],
     occurrences: [row("occurrence", { course, status: "active" }, { semesterId: "semester", week: 1, date: "2026-09-07" })],
-    tasks: [row("task", { course, classes: [{ id: "class", name: "班级", grade: "25", major: "自动化" }], occurrenceId: "occurrence", date: "2026-09-07", status: "confirmed", memberName: "管理员" }, { semesterId: "semester", week: 1, memberId: "admin" })],
+    tasks: [row("task", { course, classes: [{ id: "class", name: "班级", grade: "25", major: "自动化" }], occurrenceId: "occurrence", date: "2026-09-07", status: "confirmed", memberName: "管理员" }, { semesterId: "semester", week: 1, memberId: taskOwner })],
   });
   let id = 0, now = Date.parse("2026-09-07T03:00:00Z");
   const gateway = createGatewayV2({ repository, appid: "app", bootstrapOpenid: "wx-admin", photos, maxExecutionMs: 3000, uuid: () => "uuid-" + ++id, now: () => now });
@@ -69,7 +70,7 @@ test("photo adapter rejects invalid paths, overlarge images, malformed signature
   const f = setup();
   await assert.rejects(f.photos.upload("cloud/old-epoch/../future.jpg", "aGVsbG8="), /业务目录/);
   await assert.rejects(f.photos.upload("public/file.jpg", "aGVsbG8="), /业务目录/);
-  await assert.rejects(f.photos.upload("cloud/old-epoch/large.jpg", Buffer.alloc(2 * 1024 * 1024 + 1).toString("base64")), /2MB/);
+  await assert.rejects(f.photos.upload("cloud/old-epoch/large.jpg", Buffer.alloc(5 * 1024 * 1024 + 1).toString("base64")), /5MB/);
   f.uploadFailure(true); await assert.rejects(f.call("photo", { taskId: "task", base64: "aGVsbG8=" }), /照片上传失败/);
   assert.equal((await f.repository.query("photos", {})).items.length, 0);
   f.signatures([{ path: "cloud/old-epoch/photo.jpg", fullSignedURL: "http://unsafe.example/photo.jpg" }]);
@@ -133,11 +134,11 @@ test("content-addressed retries reuse one object; changed bytes use a different 
   await f.photos.upload("cloud/old-epoch/legacy.jpg",base64);assert.equal(f.uploaded.at(-1)!.options.upsert,false);
 });
 
- test("photo limits accept exactly 2MiB and reject larger payloads and multiple attachments", async () => {
-  const f=setup(), limit=2*1024*1024;
+ test("photo limits accept exactly 5MiB and reject larger payloads and multiple attachments", async () => {
+  const f=setup(), limit=5*1024*1024;
   const uploaded=await f.call("photo",{taskId:"task",base64:Buffer.alloc(limit).toString("base64")});
   assert.equal(f.uploaded[0].bytes.byteLength,limit);
-  await assert.rejects(f.call("photo",{taskId:"task",base64:Buffer.alloc(limit+1).toString("base64")}),/2MB/);
+  await assert.rejects(f.call("photo",{taskId:"task",base64:Buffer.alloc(limit+1).toString("base64")}),/5MB/);
   assert.equal(f.uploaded.length,1);
   const second=await f.call("photo",{taskId:"task",base64:"aGVsbG8="});
   const metrics={expected:30,actual:30,late:0,early:0,sleep:0,phone:0,talk:0,other:0};
@@ -164,4 +165,61 @@ test("existing multi-photo records keep attachments on correction; replacement i
  const versions=(await f.repository.query("record_versions",{eq:{recordId:record.id}})).items;
  assert.ok(versions.some(v=>JSON.stringify(v.data.photos)===JSON.stringify(attachments)));
  assert.equal(f.removed.length,0);
+});
+
+test('file transfer registers only verified bytes; retry with a renewed CDN URL replays one receipt', async () => {
+  const f=setup(), image=Buffer.alloc(310*1024);image.set([255,216,255,217]);
+  const downloads:string[]=[];
+  f.photos.readTemporary=async(url,bytes)=>{downloads.push(url);assert.equal(bytes,image.length);return image.toString('base64');};
+  const payload={taskId:'task',file:'http://vweixinf.tc.qq.com/301/synthetic?ticket=private-test',bytes:image.length};
+  const first=await f.call('photoFile',payload,{requestId:'file-request'});
+  const retry=await f.call('photoFile',{...payload,file:'http://vweixinf.tc.qq.com/301/renewed'},{requestId:'file-request'});
+  assert.equal(first.data.fileID,retry.data.fileID);assert.equal(downloads.length,1);assert.equal(f.uploaded.length,1);
+  assert.deepEqual(Buffer.from(f.uploaded[0].bytes),image);
+  assert.equal((await f.repository.query('photos',{})).items.length,1);
+  assert.ok(!JSON.stringify(f.repository.snapshot()).includes('private-test'));
+});
+
+test('file downloads happen only after task ownership, epoch and semester checks',async()=>{
+  for(const [role,owner,extra] of [['member','someone-else',{}],['member','admin',{epoch:'stale'}],['member','admin',{semesterId:'wrong'}]] as const){
+    const f=setup(role,owner);let downloads=0;
+    f.photos.readTemporary=async()=>{downloads++;return 'unused';};
+    await assert.rejects(f.call('photoFile',{taskId:'task',file:'http://vweixinf.tc.qq.com/301/synthetic',bytes:4},extra));
+    assert.equal(downloads,0);assert.equal(f.uploaded.length,0);
+  }
+});
+
+test('failed/incomplete file download creates no photo row or success receipt; retry can succeed',async()=>{
+  const f=setup();let attempts=0;
+  f.photos.readTemporary=async()=>{if(++attempts===1)throw new Error('private transport details');return Buffer.from([255,216,255,217]).toString('base64');};
+  const payload={taskId:'task',file:'http://vweixinf.tc.qq.com/301/synthetic',bytes:4};
+  await assert.rejects(f.call('photoFile',payload,{requestId:'retry-file'}),error=>{
+    assert.match((error as Error).message,/照片文件接收失败/);assert.doesNotMatch((error as Error).message,/private|https/);return true;
+  });
+  assert.equal(f.uploaded.length,0);assert.equal((await f.repository.query('photos',{})).items.length,0);
+  assert.equal((await f.repository.query('requests',{})).items.length,0);
+  await f.call('photoFile',payload,{requestId:'retry-file'});assert.equal(f.uploaded.length,1);
+  await assert.rejects(f.call('photoFile',{...payload,bytes:5}),/照片文件不完整/);assert.equal(f.uploaded.length,1);
+});
+
+test('new file transport preserves PNG content type and disallows oversized/ambiguous payloads',async()=>{
+  const f=setup(),png=Buffer.from([137,80,78,71,13,10,26,10,0]);let downloads=0;
+  f.photos.readTemporary=async()=>{downloads++;return png.toString('base64');};
+  const payload={taskId:'task',file:'http://vweixinf.tc.qq.com/301/synthetic',bytes:png.length};
+  await f.call('photoFile',payload);
+  assert.match(f.uploaded[0].path,/\.png$/);assert.equal(f.uploaded[0].options.contentType,'image/png');assert.equal(f.uploaded[0].options.upsert,true);
+  await assert.rejects(f.call('photoFile',{...payload,bytes:5*1024*1024+1}),/照片大小/);
+  await assert.rejects(f.call('photoFile',{...payload,base64:'aGVsbG8='}),/不能同时/);
+  assert.equal(downloads,1);
+});
+
+test('expired member record edits cannot download or register replacement files',async()=>{
+  const f=setup('member');let downloads=0;
+  const photo=await f.call('photo',{taskId:'task',base64:'aGVsbG8='});
+  const metrics={expected:30,actual:30,late:0,early:0,sleep:0,phone:0,talk:0,other:0};
+  await f.call('command',{type:'recordSubmit',taskId:'task',metrics,photos:[photo.data.fileID]},{expectedVersion:1});
+  f.advance(24*60*60*1000);
+  f.photos.readTemporary=async()=>{downloads++;return 'unused';};
+  await assert.rejects(f.call('photoFile',{taskId:'task',file:'http://vweixinf.tc.qq.com/301/synthetic',bytes:4}),/修改期限已过/);
+  assert.equal(downloads,0);
 });

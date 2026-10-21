@@ -30,7 +30,7 @@ export function optionSeed() {
 export function optionApi(repository:Repository) {
  let serial=0,uploads=0;
  const api=createGatewayV2({repository,appid:'app',bootstrapOpenid:'unused',maxExecutionMs:3000,now:()=>optionNow,uuid:()=>`options-${++serial}`,
-  photos:{async upload(path){uploads++;return path;},async list(){return [];},async delete(){},async urls(ids){return ids.map(id=>'https://synthetic.invalid/'+id);}}});
+  photos:{async readTemporary(url,bytes){if(url!=='http://vweixinf.tc.qq.com/301/synthetic'||bytes!==5)throw Error('Unexpected synthetic photo');return 'aGVsbG8=';},async upload(path){uploads++;return path;},async list(){return [];},async delete(){},async urls(ids){return ids.map(id=>'https://synthetic.invalid/'+id);}}});
  const call=(operation:string,payload:Record<string,unknown>,extra:Partial<ApiRequest> & {who?:'admin'|'member'|'leader'|'officer'}={})=>{
   const {who='admin',...rest}=extra;
   return api({protocolVersion:2,operation,epoch:'review-options',semesterId:'review-semester',requestId:'client-'+ ++serial,expectedVersion:0,payload,...rest},{OPENID:reviewIdentity('options',who),APPID:'app'});

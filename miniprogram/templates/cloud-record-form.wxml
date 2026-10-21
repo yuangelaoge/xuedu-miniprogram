@@ -17,8 +17,9 @@
   <view wx:for="{{nameFields}}" wx:key="key" class="v2-field"><view class="row between"><view class="field-label">{{item.label}}</view><button size="mini" disabled="{{busy}}" data-key="{{item.key}}" bindtap="noNames">{{item.key === 'absentNames' ? '无人旷课' : '无人请假'}}</button></view><textarea disabled="{{busy}}" value="{{item.value}}" data-key="{{item.key}}" bindinput="input" placeholder="填写姓名；无人填无，不清楚填信息缺失；合班请注明班级" maxlength="1000"/></view>
   <view class="section-title section">03 观察与反馈{{formType === 'recordEdit' ? '及更正原因' : ''}}</view>
   <view wx:for="{{feedbackFields}}" wx:key="key" class="v2-field"><view class="v2-label">{{item.label}}</view><textarea disabled="{{busy}}" value="{{item.value}}" data-key="{{item.key}}" bindinput="input" maxlength="1000"/></view>
-  <view class="section row between"><text class="section-title">04 签字照片</text><text class="pill amber">1张 · 2MB内 · 必传</text></view>
-  <view class="muted small">点击照片放大核对老师签字。移除只调整本次提交，历史版本照片继续保留。</view>
+  <view class="section row between"><text class="section-title">04 签字照片</text><text class="pill amber">1张 · 5MB内 · 必传</text></view>
+  <view class="muted small">照片上传前会自动压缩，点击预览核对压缩后的老师签字是否清晰。移除只调整本次提交，历史版本照片继续保留。</view>
+  <canvas type="2d" id="photo-upload-canvas" style="position:fixed;left:-10000px;top:-10000px;width:2048px;height:2048px;pointer-events:none;" />
   <view class="v2-photos"><view wx:for="{{formPhotos}}" wx:key="*this" class="v2-form-photo"><image src="{{item}}" mode="aspectFill" data-index="{{index}}" bindtap="previewFormPhoto"/><view class="muted small">已上传／已保存</view><button size="mini" disabled="{{busy}}" data-index="{{index}}" bindtap="removePhoto">移除</button></view><view wx:if="{{uploadingPhoto}}" class="v2-form-photo"><image src="{{uploadingPhoto}}" mode="aspectFill" bindtap="previewUploadingPhoto"/><view class="muted small">已选择，正在上传…</view></view></view>
   <button disabled="{{busy || photoIds.length >= 1}}" bindtap="choosePhotos">拍照／从相册添加</button>
   <button wx:if="{{formType === 'recordSubmit'}}" disabled="{{busy}}" bindtap="saveDraft">保存本机文字草稿</button><view wx:if="{{formType === 'recordSubmit'}}" class="muted small">草稿仅保存文字；关闭页面后需重新添加照片。</view>

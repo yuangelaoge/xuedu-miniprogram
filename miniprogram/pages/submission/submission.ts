@@ -132,7 +132,7 @@ if (cloudEnabled()) registerCloudPage("submission"); else memberPage({
       sizeType: ["compressed"],
       sourceType: ["camera", "album"],
       success: (res) => {
-        if (res.tempFiles.length > 1 || res.tempFiles.some(file => file.size > MAX_PHOTO_BYTES)) { wx.showToast({title:"请选择1张2MB以内的照片",icon:"none"}); return; }
+        if (res.tempFiles.length > 1 || res.tempFiles.some(file => file.size > MAX_PHOTO_BYTES)) { wx.showToast({title:"请选择1张5MB以内的照片",icon:"none"}); return; }
         this.setData({ busy: true });
         const added: string[] = [];
         const save = (i: number): void => {

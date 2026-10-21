@@ -11,7 +11,7 @@ export async function uploadRecordPhotos(paths: string[], taskId: string): Promi
       photo = await new Promise<string>((resolve, reject) => wx.compressImage({ src: path, quality: 65, success: r => resolve(r.tempFilePath), fail: reject }));
       data = String(wx.getFileSystemManager().readFileSync(photo, "base64"));
     }
-    if (photoBytes(data) > MAX_PHOTO_BYTES) throw new Error("照片较大，请裁剪表格后重新选择（每张 2MB 内），并确保签字清晰");
+    if (photoBytes(data) > MAX_PHOTO_BYTES) throw new Error("照片较大，请裁剪表格后重新选择（每张 5MB 内），并确保签字清晰");
     const uploaded = await cloudCall<{ fileID: string }>("photo", { base64: data, taskId, epoch: currentSnapshot().epoch });
     result.push(uploaded.fileID);
   }

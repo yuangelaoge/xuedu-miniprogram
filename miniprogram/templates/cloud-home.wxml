@@ -1,3 +1,4 @@
+<import src="cloud-home-task.wxml" />
 <view class="home-page">
   <view class="home-heading">
     <view class="home-welcome">
@@ -41,7 +42,7 @@
     <view class="home-section-title">我的本周任务</view>
     <view class="home-section-link" hover-class="home-pressed" data-target="schedule" bindtap="navigate" role="button">全部安排<view class="home-chevron"></view></view>
   </view>
-  <view wx:for="{{homeTasks}}" wx:key="id" class="home-task"><include src="cloud-home-task.wxml" /></view>
+  <view wx:for="{{homeTasks}}" wx:for-item="homeTask" wx:key="id" class="home-task"><template is="cloud-home-task" data="{{task: homeTask}}" /></view>
   <view wx:if="{{!tasks.length}}" class="home-empty">
     <view class="empty-paper" aria-hidden="true">
       <view class="empty-paper-line"></view><view class="empty-paper-line short-line"></view>
@@ -53,7 +54,7 @@
 
   <block wx:if="{{semesterId}}">
     <view class="home-section-heading"><view class="home-section-title">我的下周任务</view><view wx:if="{{nextWeek <= maxWeek}}" class="muted small">第 {{nextWeek}} 周</view></view>
-    <view wx:for="{{homeNextTasks}}" wx:key="id" class="home-task"><include src="cloud-home-task.wxml" /></view>
+    <view wx:for="{{homeNextTasks}}" wx:for-item="nextTask" wx:key="id" class="home-task"><template is="cloud-home-task" data="{{task: nextTask}}" /></view>
     <view wx:if="{{nextWeekLoading}}" class="home-empty-description">正在加载下周任务…</view>
     <view wx:elif="{{nextWeekError}}" class="v2-load-error" bindtap="loadNextWeek" role="button">{{nextWeekError}} · 点击重试</view>
     <view wx:elif="{{!homeNextTasks.length}}" class="home-empty-description">{{nextWeekMessage}}</view>

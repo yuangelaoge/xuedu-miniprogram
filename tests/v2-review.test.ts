@@ -56,7 +56,7 @@ test('审核样例照片不保存原图；角色切换和写入仅更新对应�
   const x=setup(); await x.call('reviewLogin',{payload:{username:'审核老师辛苦了',password}});
   await x.call('reviewRole',{payload:{role:'member'}});
   const boot=await x.call('bootstrap',{review:true});
-  const selectedBytes=Buffer.alloc(2*1024*1024,17).toString('base64');
+  const selectedBytes=Buffer.alloc(5*1024*1024,17).toString('base64');
   const photo=await x.call('photo',{review:true,epoch:boot.epoch,semesterId:'review-semester',requestId:'photo-1',payload:{taskId:'review-task-open',base64:selectedBytes}});
   assert.ok(photo.data.photoId);
   const digest=[...x.store.sessions.keys()][0], state=x.store.sessions.get(digest)!;

@@ -1,5 +1,7 @@
 # 排班匹配中的备选数量优化
 
+发布更新（2026-10-21）：d2b11ce 已合入私有 main 并部署既有 xueduTrial；未上传前端、执行 SQL 或生成线上排班。以下“未推送、部署”为开发交付阶段状态，最新证据见 [部署记录](DEPLOYMENT-2026-10-21-MATCHING.md)。
+
 ## 范围与规则
 
 基于本地 main `0d48a79`（1.3.3 发布记录），在独立分支 `codex/schedule-candidate-matching` 开发。只调整共享 scheduler 与相应测试、文档；无新接口、前端页面或数据库结构变更。

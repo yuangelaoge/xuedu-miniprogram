@@ -6,9 +6,9 @@ import { runtime } from '../miniprogram/config/runtime';
 import {readFileSync} from 'node:fs';
 const event=(value:string,key='')=>({currentTarget:{dataset:{key}},detail:{value}});
 let serial=0;
-async function ui(work:(f:any)=>Promise<void>,seed=optionSeed()) {
+async function ui(work:(f:any)=>Promise<void>,seed=optionSeed(),confirmNext=true) {
  const f=optionFixture(seed),{plan,task}=await generateOptions(f);
- await f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version});
+ if(confirmNext)await f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version});
  const g=globalThis as any,oldWx=g.wx,oldPage=g.Page,oldRuntime={...runtime};runtime.mode='cloud';runtime.env='options-ui-'+ ++serial;
  let definition:any,who:'admin'|'member'|'officer'='member';const storage=new Map(),calls:any[]=[],errors:string[]=[],files:any[]=[];
  g.Page=(p:any)=>definition=p;
@@ -64,9 +64,10 @@ test('普通干事首页/正式任务逐门显示课表人数，合班合计、�
    const submit=await f.page('submission',{taskId:f.task.id});assert.equal(submit.data.fields.find((v:any)=>v.key==='expected').value,'');
    assert.deepEqual(f.errors,[]);
  },seed);
- assert.match(readFileSync('miniprogram/templates/cloud.wxml','utf8'),/include src="cloud-task-headcount.wxml"/);
- assert.match(readFileSync('miniprogram/templates/cloud-home-task.wxml','utf8'),/task.courseCounts/);
- const template=readFileSync('miniprogram/templates/cloud-task-headcount.wxml','utf8');assert.match(template,/课表人数/);assert.match(template,/合班合计/);
+ for (const file of ['cloud.wxml','cloud-home.wxml']) {
+   const template=readFileSync('miniprogram/templates/'+file,'utf8');
+   assert.match(template,/courseCounts/);assert.match(template,/课表人数/);assert.match(template,/合班合计/);
+ }
 });
 test('首页本周/下周任务分开，下周只显示本人已生效任务，学期末不再请求',async()=>ui(async f=>{
  const home=await f.page('home');assert.equal(home.data.week,1);assert.equal(home.data.nextWeek,2);
@@ -86,3 +87,41 @@ test('下周读取失败不清空本周卡片，独立重试可恢复',async()=>
  assert.equal(home.data.nextWeekError,'网络暂不可用');assert.deepEqual(home.data.homeNextTasks,[]);
  g.wx.cloud.callFunction=original;await home.loadNextWeek();assert.equal(home.data.homeNextTasks.length,1);assert.equal(home.data.nextWeekError,'');
 }));
+
+for (const role of ['member','officer']) for (const [hasCurrent,hasNext] of [[true,true],[false,true],[true,false],[false,false]]) {
+ test(`首页周次隔离：${role} 本周${hasCurrent?'有':'无'}任务、下周${hasNext?'有':'无'}任务，安排页切周/学期不影响首页`,async()=>{
+   const seed=optionSeed();
+   seed.rows.members!.find(m=>m.id==='review-member')!.data.role=role;
+   if(!hasCurrent)seed.rows.tasks=seed.rows.tasks!.filter(t=>!(t.memberId==='review-member' && t.week===1));
+   const active=seed.rows.semesters![0];
+   seed.rows.semesters!.push({...structuredClone(active),id:'historical-semester',data:{...active.data,name:'合成历史学期',startDate:'2025-09-01'}});
+   await ui(async f=>{
+     const home=await f.page('home');
+     const expected=()=>{
+       assert.equal(home.data.week,1);assert.equal(home.data.nextWeek,2);
+       assert.equal(home.data.semesterId,'review-semester');
+       assert.deepEqual(home.data.homeTasks.map((t:any)=>t.id),hasCurrent?['review-task-open']:[]);
+       assert.deepEqual(home.data.homeNextTasks.map((t:any)=>t.id),hasNext?[f.task.id]:[]);
+       for(const t of [...home.data.homeTasks,...home.data.homeNextTasks]){
+         assert.ok(t.classLabel);assert.ok(t.course.name);assert.ok(t.course.teacher);assert.ok(t.course.classroom);
+         assert.match(t.timeLabel,/2026-10-\d+ · 第\d+–\d+节/);assert.ok(t.courseCounts.length>0);
+         assert.equal(t.status,'confirmed');
+       }
+     };
+     expected();
+     const schedule=await f.page('schedule',{week:'2'});
+     for(const delta of ['1','1','-3','1']) {
+       await schedule.moveWeek({currentTarget:{dataset:{delta}},detail:{value:''}});
+       await home.onShow();expected();
+       await home.load();expected();
+       assert.ok(schedule.data.visibleTasks.every((t:any)=>t.week===schedule.data.week));
+     }
+     const i=schedule.data.semesters.findIndex((s:any)=>s.id==='historical-semester');assert.ok(i>=0);
+     schedule.chooseSemester({currentTarget:{dataset:{}},detail:{value:String(i)}});
+     while(schedule.data.busy)await new Promise(resolve=>setImmediate(resolve));
+     assert.equal(schedule.data.semesterId,'historical-semester');
+     await home.onShow();expected();
+     assert.deepEqual(f.errors,[]);
+   },seed,hasNext);
+ });
+}

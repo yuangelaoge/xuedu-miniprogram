@@ -10,7 +10,7 @@ import { Entity, CLEAR_CONFIRMATION, AutoApproval } from "../../domain/v2/protoc
 import { AppState, METRIC_FIELDS, UiEvent, Semester } from "../../domain/types";
 import { exportTxt, exportXlsx, gradeStats } from "../../domain/reports";
 import { saveExport, openExport } from "../files";
-import { Boot, WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive, pageFreshnessKey } from "./client";
+import { Boot, WeekData, bootstrap, pageBootstrap, call, command, query, currentBoot, selectSemester, viewSemester, clearLocalDrafts, requestId, draftKey, reviewActive, pageFreshnessKey, queueScheduleFocus, takeScheduleFocus } from "./client";
 import { runtime } from "../../config/runtime";
 import { ImportPlan, planCourseImport } from "./import-batch";
 import { syncAvailabilityExitAlert } from "../availability-exit";
@@ -105,6 +105,7 @@ export function registerCloudPage(view: View): void {
   let autoExpiryTimer: ReturnType<typeof setTimeout> | undefined;
   let availabilityVisible = true;
   let loadedAt = 0, loadedKey = "", nextWeekLoad = 0;
+  let scheduleShowPending = false;
   Page({
     data: {
       metricFields: [] as Field[], nameFields: [] as Field[], feedbackFields: [] as Field[], recordContext: null as Row | null, uploadingPhoto: "",
@@ -135,6 +136,18 @@ export function registerCloudPage(view: View): void {
     onShow() {
       availabilityVisible = true;
       if (view === "availability") syncAvailabilityExitAlert(this.data.dirty);
+      if (view === "schedule") {
+        // Finish an existing load before applying a newly requested week.
+        if (this.data.busy) { scheduleShowPending = true; return; }
+        const focus = takeScheduleFocus();
+        if (focus) {
+          selectSemester(focus.semesterId);
+          loadedKey = "";
+          this.setData({fixedSemester:"",semesterId:focus.semesterId,week:focus.week,weekInitialized:true,
+            hasLoaded:false,searchText:"",tasks:[],visibleTasks:[],homeTasks:[],weekData:{tasks:[],occurrences:[]},
+            formType:"",fields:[],filePath:"",filename:"",statusRows:[],statusLoaded:false});
+        }
+      }
       // Only automatic tab re-entry may reuse data; explicit refresh and every write load afresh.
       if (["home", "schedule", "records", "profile"].includes(view) && this.data.hasLoaded && this.data.memberId &&
           !this.data.error && !this.data.maintenance && !reviewActive() && loadedKey === pageFreshnessKey() &&
@@ -281,6 +294,10 @@ export function registerCloudPage(view: View): void {
         this.setData({ busy: false, refreshing: false, loadingInitial: false, hasLoaded: this.data.hasLoaded || !this.data.error });
         if (view === "availability" && availabilityVisible) syncAvailabilityExitAlert(this.data.dirty);
         if (!this.data.error) { loadedAt = Date.now(); loadedKey = pageFreshnessKey(); }
+        if (view === "schedule" && scheduleShowPending) {
+          scheduleShowPending = false;
+          await this.onShow();
+        }
       }
       if (view === "home" && this.data.memberId && this.data.semesterId && !this.data.error && !this.data.maintenance) await this.loadNextWeek();
       if (view === "records" && this.data.recordTab === "stats" && this.data.semesterId && !this.data.error) await this.showStats(true);
@@ -377,7 +394,11 @@ export function registerCloudPage(view: View): void {
         if (!(await wx.showModal({title:"尚未保存",content:"无课时间还未保存，确定离开吗？",confirmText:"离开",cancelText:"继续填写"})).confirm) return;
         syncAvailabilityExitAlert(false);
       }
-      if (["schedule", "reports", "profile", "index"].includes(target)) { wx.switchTab({url:"/pages/" + target + "/" + target}); return; }
+      if (["schedule", "reports", "profile", "index"].includes(target)) {
+        const cancelFocus = target === "schedule" && view === "home"
+          ? queueScheduleFocus(this.data.semesterId, Number(e.currentTarget.dataset.week) || this.data.week) : () => {};
+        wx.switchTab({url:"/pages/" + target + "/" + target, fail:cancelFocus}); return;
+      }
       if (["manage", "courses", "availability", "join", "review"].includes(target)) {
         const params = target === "manage" && e.currentTarget.dataset.section ? "?section=" + encodeURIComponent(e.currentTarget.dataset.section) : target === "availability" && view === "schedule" ? "?week=" + this.data.week + "&semesterId=" + encodeURIComponent(this.data.semesterId) : target === "courses" ? "?semesterId=" + encodeURIComponent(this.data.semesterId) : "";
         wx.navigateTo({ url: "/pages/" + target + "/" + target + params });

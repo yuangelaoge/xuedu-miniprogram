@@ -1,4 +1,3 @@
-<import src="cloud-home-task.wxml" />
 <view class="home-page">
   <view class="home-heading">
     <view class="home-welcome">
@@ -40,10 +39,30 @@
 
   <view class="home-section-heading">
     <view class="home-section-title">我的本周任务</view>
-    <view class="home-section-link" hover-class="home-pressed" data-target="schedule" bindtap="navigate" role="button">全部安排<view class="home-chevron"></view></view>
+    <view class="home-section-link" hover-class="home-pressed" data-target="schedule" data-week="{{week}}" bindtap="navigate" role="button">全部安排<view class="home-chevron"></view></view>
   </view>
-  <view wx:for="{{homeTasks}}" wx:for-item="homeTask" wx:key="id" class="home-task"><template is="cloud-home-task" data="{{task: homeTask}}" /></view>
-  <view wx:if="{{!tasks.length}}" class="home-empty">
+  <view wx:for="{{homeTasks}}" wx:for-item="homeTask" wx:key="id" class="home-task">
+    <view class="task-topline">
+      <view class="task-class">{{homeTask.classLabel}}</view>
+      <view class="task-status {{homeTask.done ? 'task-status-done' : ''}}"><view class="task-status-dot"></view>{{homeTask.done ? '已提交' : homeTask.status === 'pendingAdjustment' ? '待调整' : '待完成'}}</view>
+    </view>
+    <view class="task-course">{{homeTask.course.name}}</view>
+    <view class="task-detail"><text class="task-detail-label">时间</text><text class="task-detail-value">{{homeTask.timeLabel}}</text></view>
+    <view class="task-detail"><text class="task-detail-label">地点</text><text class="task-detail-value">{{homeTask.course.classroom}}</text></view>
+    <view class="task-detail"><text class="task-detail-label">教师</text><text class="task-detail-value">{{homeTask.course.teacher}}</text></view>
+    <view wx:for="{{homeTask.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
+      <view wx:if="{{homeTask.courseCounts.length > 1}}">{{count.label}}</view>
+      <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+    </view>
+    <view class="task-bottom">
+      <text class="task-hint">{{homeTask.done ? '本次听课已记录' : '听课后记得上传签字表'}}</text>
+      <button wx:if="{{homeTask.status === 'confirmed'}}" class="task-button" hover-class="home-pressed" data-id="{{homeTask.id}}" bindtap="open">填写记录<text class="button-arrow">→</text></button>
+      <button wx:elif="{{homeTask.done && homeTask.recordId}}" class="task-button task-button-done" hover-class="home-pressed" data-id="{{homeTask.recordId}}" data-target="record" bindtap="open">查看记录<text class="button-arrow">→</text></button>
+      <text wx:elif="{{homeTask.status === 'pendingAdjustment'}}" class="task-hint">课表待调整，暂不能填写</text>
+      <text wx:else class="task-hint">记录信息暂不可用，请下拉刷新</text>
+    </view>
+  </view>
+  <view wx:if="{{!homeTasks.length}}" class="home-empty">
     <view class="empty-paper" aria-hidden="true">
       <view class="empty-paper-line"></view><view class="empty-paper-line short-line"></view>
       <view class="empty-paper-badge"><view class="empty-check"></view></view>
@@ -54,7 +73,27 @@
 
   <block wx:if="{{semesterId}}">
     <view class="home-section-heading"><view class="home-section-title">我的下周任务</view><view wx:if="{{nextWeek <= maxWeek}}" class="muted small">第 {{nextWeek}} 周</view></view>
-    <view wx:for="{{homeNextTasks}}" wx:for-item="nextTask" wx:key="id" class="home-task"><template is="cloud-home-task" data="{{task: nextTask}}" /></view>
+    <view wx:for="{{homeNextTasks}}" wx:for-item="nextTask" wx:key="id" class="home-task">
+      <view class="task-topline">
+        <view class="task-class">{{nextTask.classLabel}}</view>
+        <view class="task-status {{nextTask.done ? 'task-status-done' : ''}}"><view class="task-status-dot"></view>{{nextTask.done ? '已提交' : nextTask.status === 'pendingAdjustment' ? '待调整' : '待完成'}}</view>
+      </view>
+      <view class="task-course">{{nextTask.course.name}}</view>
+      <view class="task-detail"><text class="task-detail-label">时间</text><text class="task-detail-value">{{nextTask.timeLabel}}</text></view>
+      <view class="task-detail"><text class="task-detail-label">地点</text><text class="task-detail-value">{{nextTask.course.classroom}}</text></view>
+      <view class="task-detail"><text class="task-detail-label">教师</text><text class="task-detail-value">{{nextTask.course.teacher}}</text></view>
+      <view wx:for="{{nextTask.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
+        <view wx:if="{{nextTask.courseCounts.length > 1}}">{{count.label}}</view>
+        <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+      </view>
+      <view class="task-bottom">
+        <text class="task-hint">{{nextTask.done ? '本次听课已记录' : '听课后记得上传签字表'}}</text>
+        <button wx:if="{{nextTask.status === 'confirmed'}}" class="task-button" hover-class="home-pressed" data-id="{{nextTask.id}}" bindtap="open">填写记录<text class="button-arrow">→</text></button>
+        <button wx:elif="{{nextTask.done && nextTask.recordId}}" class="task-button task-button-done" hover-class="home-pressed" data-id="{{nextTask.recordId}}" data-target="record" bindtap="open">查看记录<text class="button-arrow">→</text></button>
+        <text wx:elif="{{nextTask.status === 'pendingAdjustment'}}" class="task-hint">课表待调整，暂不能填写</text>
+        <text wx:else class="task-hint">记录信息暂不可用，请下拉刷新</text>
+      </view>
+    </view>
     <view wx:if="{{nextWeekLoading}}" class="home-empty-description">正在加载下周任务…</view>
     <view wx:elif="{{nextWeekError}}" class="v2-load-error" bindtap="loadNextWeek" role="button">{{nextWeekError}} · 点击重试</view>
     <view wx:elif="{{!homeNextTasks.length}}" class="home-empty-description">{{nextWeekMessage}}</view>

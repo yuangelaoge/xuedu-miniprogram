@@ -5,7 +5,7 @@ import { registerCloudPage } from '../miniprogram/services/v2/page';
 import { createGatewayV2 } from '../server/v2/gateway';
 import { MemoryRepository } from '../server/v2/memory';
 import { Entity, Workspace } from '../miniprogram/domain/v2/protocol';
-import { command } from '../miniprogram/services/v2/client';
+import { command, queueScheduleFocus, takeScheduleFocus, selectSemester } from '../miniprogram/services/v2/client';
 
 const e = (id: string, data: Record<string, unknown>, indexes = {}): Entity => ({ id, epoch: 'epoch-boundary', version: 1, data, ...indexes });
 const event = (dataset: Record<string, string> = {}) => ({ currentTarget: { dataset }, detail: { value: '' } });
@@ -370,4 +370,68 @@ test('单次数据库首页：使用服务端汇总，精简记录仍可打开�
   assert.equal(home.data.homeTasks.find((t:any)=>t.id==='pending-task').recordId,'record');
   assert.equal(f.calls.filter((c:any)=>c.payload?.includeHome).length,1);
   assert.equal(f.calls.length,2);
+}));
+
+test('首页进入安排保持第8/9周，覆盖已缓存周次和搜索；填写入口直达本任务', async () => fixture(async f => {
+  f.who('member-wechat');
+  const home = await f.page('home');
+  home.setData({week:8,nextWeek:9});
+  const wx=(globalThis as any).wx, navigation:any[]=[];
+  wx.switchTab=(o:any)=>navigation.push(o);
+  wx.navigateTo=(o:any)=>navigation.push(o);
+  const schedule=await f.page('schedule',{week:'9'});
+  schedule.setData({searchText:'上次留下的搜索'});
+  let before=f.calls.length;
+  await home.navigate(event({target:'schedule',week:'8'}));
+  assert.equal(navigation.at(-1).url,'/pages/schedule/schedule');
+  await schedule.onShow();
+  assert.equal(schedule.data.week,8);
+  assert.equal(schedule.data.searchText,'');
+  assert.equal(f.calls.length,before+1,'15秒内的旧页面也必须按指定周重新读取');
+  assert.equal(f.calls.at(-1).payload.page.week,8);
+  assert.equal(f.calls.at(-1).payload.page.semesterId,'semester');
+  await home.navigate(event({target:'schedule',week:'9'}));
+  await schedule.onShow();assert.equal(schedule.data.week,9);
+  before=f.calls.length;await schedule.onShow();assert.equal(f.calls.length,before,'选择只消费一次');
+  home.open(event({id:'pending-task'}));
+  assert.equal(navigation.at(-1).url,'/pages/submission/submission?taskId=pending-task&semesterId=semester');
+  const submission=await f.page('submission',{taskId:'pending-task',semesterId:'semester'});
+  assert.equal(submission.data.error,'');
+  assert.equal(submission.data.recordContext.data.course.name,'合成课程');
+  // Direct tab entry still follows the existing next-week default.
+  const direct=await f.page('schedule',{week:''});assert.equal(direct.data.week,2);
+}));
+
+test('首页指定安排学期不沿用历史选择，失败跳转与换身份不遗留选择', async () => fixture(async f => {
+  const home=await f.page('home'),wx=(globalThis as any).wx;
+  wx.switchTab=(o:any)=>o.fail?.();
+  await home.navigate(event({target:'schedule',week:'8'}));
+  assert.equal(takeScheduleFocus(),undefined);
+  wx.switchTab=()=>{};
+  selectSemester('previous-semester');
+  await home.navigate(event({target:'schedule',week:'8'}));
+  const schedule=await f.page('schedule');await schedule.onShow();
+  assert.equal(schedule.data.semesterId,'semester');assert.equal(schedule.data.week,8);
+  assert.equal(schedule.data.error,'');
+  queueScheduleFocus('semester',9);
+  f.who('member-wechat');await f.page('profile');
+  assert.equal(takeScheduleFocus(),undefined,'切换身份后丢弃旧选择');
+}));
+
+test('安排页读取尚未完成时从首页跳转，最终显示新指定周而非旧请求的周', async () => fixture(async f => {
+  const home=await f.page('home'),schedule=await f.page('schedule',{week:'9'});
+  const wx=(globalThis as any).wx,invoke=wx.cloud.callFunction;
+  wx.switchTab=()=>{};
+  let release:()=>void=()=>{},started:()=>void=()=>{};
+  const entered=new Promise<void>(resolve=>started=resolve),gate=new Promise<void>(resolve=>release=resolve);
+  let held=false;
+  wx.cloud.callFunction=async(args:any)=>{
+    if(!held && args.data.payload?.page?.view==='schedule') {held=true;started();await gate;}
+    return invoke(args);
+  };
+  const loading=schedule.load();await entered;
+  await home.navigate(event({target:'schedule',week:'8'}));
+  await schedule.onShow();release();await loading;
+  assert.equal(schedule.data.week,8);assert.equal(schedule.data.error,'');assert.equal(schedule.data.busy,false);
+  assert.equal(f.calls.at(-1).payload.page.week,8);
 }));

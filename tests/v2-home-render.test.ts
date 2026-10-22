@@ -14,7 +14,7 @@ const text = (n: any): string => typeof n === 'string' ? n : (n?.children || [])
 
 // Render the actual index -> cloud -> home chain, including task button datasets.
 // Synthetic page data only: no account, cloud API, database or storage access.
-test('首页模板明确传递本周/下周任务，字段、人数及填写入口不串行', {skip:!existsSync(compiler)}, () => {
+test('首页本周/下周任务直接渲染，字段、人数及填写入口不串行', {skip:!existsSync(compiler)}, () => {
   const dir = mkdtempSync(join(tmpdir(),'xuedu-home-render-'));
   try {
     const output = join(dir,'compiled.js');
@@ -54,8 +54,24 @@ test('首页模板明确传递本周/下周任务，字段、人数及填写入�
     const adjusting = task('调整','pendingAdjustment');
     const card = cards({...data,homeTasks:[adjusting],homeNextTasks:[]})[0];
     assert.match(text(card),/待调整/);
-    assert.match(text(card),/查看安排/);
+    assert.match(text(card),/课表待调整，暂不能填写/);
+    assert.doesNotMatch(text(card),/查看安排/);
     assert.doesNotMatch(text(card),/填写记录/);
+    const all = nodes(render(data)).find(n=>n.attr?.class==='home-section-link' && n.attr?.['data-target']==='schedule');
+    assert.equal(all.attr['data-week'],8);
+    const noOwn = text(render({...data,homeTasks:[],homeNextTasks:[]}));
+    assert.match(noOwn,/本周暂无个人任务/,'全组有任务也不能隐藏本人的空状态');
+    for (const [thisWeek,nextWeek] of [[[],[next]],[[current],[]],[[current],[next]],[[],[]]]) {
+      const state={...data,homeTasks:thisWeek,homeNextTasks:nextWeek,nextWeekMessage:'下周暂无个人任务'};
+      const visible=cards(state);
+      assert.equal(visible.length,thisWeek.length+nextWeek.length);
+      assert.equal(text(render(state)).includes('本周暂无个人任务'),!thisWeek.length);
+      assert.equal(text(render(state)).includes('下周暂无个人任务'),!nextWeek.length);
+      for(const [i,task] of [...thisWeek,...nextWeek].entries()) {
+        assert.match(text(visible[i]),/填写记录/);
+        assert.equal(nodes(visible[i]).find(n=>n.tag==='wx-button').attr['data-id'],task.id);
+      }
+    }
     assert.deepEqual(warnings,[]);
   } finally { rmSync(dir,{recursive:true,force:true}); }
 });

@@ -20,6 +20,22 @@ let bootstrapPending: Promise<Boot> | undefined;
 let bootstrapIncludesHome = false;
 let pageBootstrapPending: Promise<Boot> | undefined;
 let pageRevision = 0;
+interface ScheduleFocus { semesterId: string; week: number; scope: string; }
+let pendingScheduleFocus: ScheduleFocus | undefined;
+const scheduleScope = () => [runtime.env, reviewActive(), generation, boot?.workspace.epoch,
+  boot?.workspace.permissionsVersion, boot?.member?.id].join(":");
+// switchTab cannot carry query parameters. Keep one explicit selection in this session only.
+export function queueScheduleFocus(semesterId: string, week: number): () => void {
+  if (!boot?.member || !semesterId || !Number.isInteger(week) || week < 1) return () => {};
+  const focus = {semesterId, week, scope:scheduleScope()};
+  pendingScheduleFocus = focus;
+  return () => { if (pendingScheduleFocus === focus) pendingScheduleFocus = undefined; };
+}
+export function takeScheduleFocus(): ScheduleFocus | undefined {
+  const focus = pendingScheduleFocus;
+  pendingScheduleFocus = undefined;
+  return focus?.scope === scheduleScope() ? focus : undefined;
+}
 // Page instances can briefly reuse rendered data; writes and rejected reads invalidate them.
 export function pageFreshnessKey(): string {
   return [runtime.env, reviewActive(), generation, pageRevision, workspaceVersion, boot?.workspace.permissionsVersion, boot?.member?.id].join(":");

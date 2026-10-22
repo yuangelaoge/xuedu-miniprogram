@@ -60,7 +60,10 @@
       <view wx:for="{{visibleTasks}}" wx:key="id" class="v2-card">
         <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view><view>{{item.status === 'pendingAdjustment' ? '待调整：原课表已失效，暂不能提交' : item.status === 'submitted' ? '已提交' : '已确认'}}</view>
         <view wx:if="{{item.data.courseOptions.length}}" class="muted small">同班课程 {{item.data.courseOptions.length}} 门，任选一门完成任务</view>
-        <include src="cloud-task-headcount.wxml" />
+        <view wx:for="{{item.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
+          <view wx:if="{{item.courseCounts.length > 1}}">{{count.label}}</view>
+          <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+        </view>
         <button wx:if="{{item.status === 'confirmed' && item.memberId === memberId}}" data-id="{{item.id}}" bindtap="open">填写听课记录</button>
         <button wx:if="{{canAdjust && item.status !== 'submitted'}}" data-id="{{item.id}}" bindtap="adjust">转派／取消</button>
       </view>

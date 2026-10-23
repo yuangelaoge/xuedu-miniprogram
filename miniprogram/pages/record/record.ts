@@ -1,4 +1,4 @@
-import { canViewAllRecords } from "../../domain/capabilities";
+import { canViewAllRecords, canViewAllRecordPhotos } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, run } from "../../services/store";
@@ -14,6 +14,7 @@ if (cloudEnabled()) registerCloudPage("record"); else memberPage({
     fields: [] as { label: string; value: string }[],
     attendance: "",
     canView: false,
+    canViewPhotos: false,
     photos: [] as string[],
   },
   onLoad(query: Record<string, string>) {
@@ -25,7 +26,8 @@ if (cloudEnabled()) registerCloudPage("record"); else memberPage({
         throw new Error("体验版暂仅允许查看自己的明细与照片");
       this.setData({
         record,
-        photos: isCloud() ? [] : record.photos,
+        canViewPhotos: record.memberId === user.id || canViewAllRecordPhotos(user.role),
+        photos: !isCloud() && (record.memberId === user.id || canViewAllRecordPhotos(user.role)) ? record.photos : [],
         canView: true,
         fields: METRIC_FIELDS.map((f) => ({
           label: f.label,
@@ -38,10 +40,11 @@ if (cloudEnabled()) registerCloudPage("record"); else memberPage({
           ratio(record.metrics.actual, record.metrics.expected),
         ),
       });
-      if (isCloud()) void recordPhotoUrls(record.id).then(photos => this.setData({ photos })).catch(notifyError);
+      if (isCloud() && this.data.canViewPhotos) void recordPhotoUrls(record.id).then(photos => this.setData({ photos })).catch(notifyError);
     });
   },
   async preview(e: UiEvent) {
+    if (!this.data.canViewPhotos) return;
     if (isCloud() && this.data.record) {
       try { const photos = await recordPhotoUrls(this.data.record.id); this.setData({ photos }); wx.previewImage({ urls: photos }); }
       catch (e) { notifyError(e); }

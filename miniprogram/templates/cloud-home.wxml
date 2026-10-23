@@ -46,13 +46,15 @@
       <view class="task-class">{{homeTask.classLabel}}</view>
       <view class="task-status {{homeTask.done ? 'task-status-done' : ''}}"><view class="task-status-dot"></view>{{homeTask.done ? '已提交' : homeTask.status === 'pendingAdjustment' ? '待调整' : '待完成'}}</view>
     </view>
-    <view class="task-course">{{homeTask.course.name}}</view>
-    <view class="task-detail"><text class="task-detail-label">时间</text><text class="task-detail-value">{{homeTask.timeLabel}}</text></view>
-    <view class="task-detail"><text class="task-detail-label">地点</text><text class="task-detail-value">{{homeTask.course.classroom}}</text></view>
-    <view class="task-detail"><text class="task-detail-label">教师</text><text class="task-detail-value">{{homeTask.course.teacher}}</text></view>
-    <view wx:for="{{homeTask.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
-      <view wx:if="{{homeTask.courseCounts.length > 1}}">{{count.label}}</view>
-      <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+    <view wx:if="{{!homeTask.done && homeTask.courseCounts.length > 1}}" class="task-options-note">{{homeTask.courseCounts.length}} 节课程可选 · 完成其中 1 节即可</view>
+    <view class="task-options">
+      <view wx:for="{{homeTask.courseCounts}}" wx:for-item="choice" wx:for-index="choiceIndex" wx:key="id" class="task-option">
+        <view class="task-option-heading"><text wx:if="{{homeTask.courseCounts.length > 1}}" class="task-option-number">{{choiceIndex + 1}}</text><text class="task-option-title">{{choice.name}}</text></view>
+        <view class="task-option-meta"><text class="task-option-label">时间</text><text>{{choice.timeLabel}}</text></view>
+        <view class="task-option-meta"><text class="task-option-label">地点</text><text>{{choice.classroom}}</text></view>
+        <view class="task-option-meta"><text class="task-option-label">教师</text><text>{{choice.teacher}}</text></view>
+        <view class="task-option-count">课表人数：{{choice.count}}{{choice.combined ? '（合班合计）' : ''}}</view>
+      </view>
     </view>
     <view class="task-bottom">
       <text class="task-hint">{{homeTask.done ? '本次听课已记录' : '听课后记得上传签字表'}}</text>
@@ -78,13 +80,15 @@
         <view class="task-class">{{nextTask.classLabel}}</view>
         <view class="task-status {{nextTask.done ? 'task-status-done' : ''}}"><view class="task-status-dot"></view>{{nextTask.done ? '已提交' : nextTask.status === 'pendingAdjustment' ? '待调整' : '待完成'}}</view>
       </view>
-      <view class="task-course">{{nextTask.course.name}}</view>
-      <view class="task-detail"><text class="task-detail-label">时间</text><text class="task-detail-value">{{nextTask.timeLabel}}</text></view>
-      <view class="task-detail"><text class="task-detail-label">地点</text><text class="task-detail-value">{{nextTask.course.classroom}}</text></view>
-      <view class="task-detail"><text class="task-detail-label">教师</text><text class="task-detail-value">{{nextTask.course.teacher}}</text></view>
-      <view wx:for="{{nextTask.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
-        <view wx:if="{{nextTask.courseCounts.length > 1}}">{{count.label}}</view>
-        <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+      <view wx:if="{{!nextTask.done && nextTask.courseCounts.length > 1}}" class="task-options-note">{{nextTask.courseCounts.length}} 节课程可选 · 完成其中 1 节即可</view>
+      <view class="task-options">
+        <view wx:for="{{nextTask.courseCounts}}" wx:for-item="choice" wx:for-index="choiceIndex" wx:key="id" class="task-option">
+          <view class="task-option-heading"><text wx:if="{{nextTask.courseCounts.length > 1}}" class="task-option-number">{{choiceIndex + 1}}</text><text class="task-option-title">{{choice.name}}</text></view>
+          <view class="task-option-meta"><text class="task-option-label">时间</text><text>{{choice.timeLabel}}</text></view>
+          <view class="task-option-meta"><text class="task-option-label">地点</text><text>{{choice.classroom}}</text></view>
+          <view class="task-option-meta"><text class="task-option-label">教师</text><text>{{choice.teacher}}</text></view>
+          <view class="task-option-count">课表人数：{{choice.count}}{{choice.combined ? '（合班合计）' : ''}}</view>
+        </view>
       </view>
       <view class="task-bottom">
         <text class="task-hint">{{nextTask.done ? '本次听课已记录' : '听课后记得上传签字表'}}</text>

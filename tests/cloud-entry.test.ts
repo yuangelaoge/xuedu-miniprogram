@@ -14,9 +14,13 @@ function entry(context: { OPENID?: string; APPID?: string }, bootstrapOpenid = "
   const env = { XUEDU_STORAGE: "postgresql", SCF_NAMESPACE: "xuedu-trial-d2gs2dpnla9206eb3", CLOUDBASE_APIKEY: key,
     BOOTSTRAP_OPENID: bootstrapOpenid, FUNCTION_MAX_EXECUTION_MS: "3000", PLATFORM_FUNCTION_TIMEOUT_MS: "3000", ...overrides };
   const repository = new MemoryRepository(); let sdkInitializations = 0, sequence = 0;
+  const metrics: {level:string;message:string}[] = [];
   const app = { storage: { from: () => ({}) }, rdb: () => ({}) };
   runInNewContext(readFileSync(new URL("../cloudfunctions/xueduTrial/index.js", import.meta.url), "utf8"), {
-    exports, Buffer, process: { env },
+    exports, Buffer, process: { env }, console: {
+      info(message: string) { metrics.push({level:'info',message}); },
+      warn(message: string) { metrics.push({level:'warn',message}); },
+    },
     require(name: string) {
       if (name === "wx-server-sdk") return { init() {}, getWXContext: () => context };
       if (name === "crypto") return { randomUUID: () => "test-uuid-" + ++sequence };
@@ -31,7 +35,7 @@ function entry(context: { OPENID?: string; APPID?: string }, bootstrapOpenid = "
       throw new Error("Unexpected module " + name);
     },
   });
-  return { call: exports.main!, key, repository, sdkInitializations: () => sdkInitializations };
+  return { call: exports.main!, key, repository, metrics, sdkInitializations: () => sdkInitializations };
 }
 const event = (operation: string, fields = {}) => ({ protocolVersion: 2, operation, ...fields });
 
@@ -120,4 +124,26 @@ test("未知SDK错误只返回固定错误，已知数据库冲突返回安全�
     const result = await f.call(event("bootstrap"));
     assert.equal(result.code, code); assert.doesNotMatch(JSON.stringify(result), /private-wechat|password|sql/);
   }
+});
+
+test('云端诊断仅记耗时/字节/受限分类，成功失败都不记录个人资料或原始错误', async () => {
+  for (const failure of [undefined, 'SQL private-person-name private-token password']) {
+    const f = entry({OPENID:'private-wechat',APPID}, '', {}, failure);
+    const response = await f.call(event('bootstrap', {requestId:'private-request-id',payload:{
+      includeHome:true,notes:'private-person-name',base64:'private-photo',headers:{'x-cloudbase-context':'private-token'},
+    }}));
+    assert.equal(f.metrics.length,1);
+    const metric = JSON.parse(f.metrics[0].message);
+    assert.equal(metric.event,'xuedu_invocation');assert.equal(metric.operation,'bootstrap');assert.equal(metric.view,'home');
+    assert.equal(metric.responseBytes,Buffer.byteLength(JSON.stringify(response),'utf8'));
+    assert.ok(Number.isFinite(metric.durationMs));assert.ok(metric.durationMs>=0);
+    assert.equal(metric.ok,!failure);assert.equal(f.metrics[0].level,failure?'warn':'info');
+    assert.doesNotMatch(JSON.stringify(f.metrics),/private-|password|SQL|signature|notes|base64|headers/);
+    assert.ok(!JSON.stringify(f.metrics).includes(f.key));
+  }
+  const f=entry({OPENID:'private-wechat',APPID});
+  await f.call(event('private-operation',{payload:{kind:'private-kind',page:{view:'private-view'}}}));
+  const metric=JSON.parse(f.metrics[0].message);
+  assert.equal(metric.operation,'unknown');assert.equal(metric.kind,'');assert.equal(metric.view,'');
+  assert.doesNotMatch(f.metrics[0].message,/private-/);
 });

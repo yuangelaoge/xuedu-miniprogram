@@ -273,12 +273,12 @@ export function reportSheets(state: AppState, week: number): SheetData[] {
     for(const ci of [7,9,11,13,15,17,19,22]) {
       const cell=row[ci]; if(cell && typeof cell==='object') row[ci]=f(`IF(AA${r}="已提交",${cell.formula},"信息缺失")`,submitted?cell.value:'信息缺失');
     }
-    row[28]=f(`IF(B${r}="","",B${r}&" · "&C${r}&" · 第"&(ROW()-3)&"次观测")`,row[1]?String(row[1])+' · '+String(row[2]||'')+' · 第'+(i+1)+'次观测':'');
+    row[28]=f(`IF(B${r}="","",B${r})`,row[1]?String(row[1]):'');
     row[29]=f(`IF(AND(AA${r}="已提交",ISNUMBER(I${r}),I${r}>=0),I${r},"")`,submitted?Number(row[8])>=0?Number(row[8]):'':'');
   });
   const source:SheetData={name:'原始数据',rows:raw,raw:true,groupHeaders:true};
   const grades=Array.from(new Set([...semester.grades,...raw.slice(3,sourceEnd).map(r=>String(r[0]||''))])).filter(Boolean);
-  const sheets=[source,...linkedCharts(source,grades,week,['H','T','J'],'AD','A','AC')];
+  const sheets=[source,...linkedCharts(source,grades,week,['H','T','J'],'A','AC')];
 
   return sheets;
 }

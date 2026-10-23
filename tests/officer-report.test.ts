@@ -16,13 +16,13 @@ test('summary counts repeated classes and mixed-grade groups once, excludes miss
  assert.doesNotMatch(JSON.stringify(summary),/secret-|photos|memberName/);
  const sheets=summarySheets(summary),source=sheets[0],allLate=sheets.find(s=>s.name==='各班级迟到情况')!;
  assert.equal(cellValue(source.rows[3][14]),50/70);
- assert.equal(allLate.chartPercent,false);assert.equal(cellValue(allLate.rows[3][1]),4);
+ assert.equal(allLate.chartPercent,true);assert.equal(cellValue(allLate.rows[3][1]),4/55);
  assert.match((allLate.rows[3][1] as any).formula,/INDEX/);
  assert.match((allLate.rows[3][14] as any).formula,/COUNTIF/);
 });
 test('chart sorting preserves zero and ties, drops missing metrics, remains linked to source edits',()=>{
  const source={name:'合成来源',rows:[['title'],['note'],['年级','班级','值'],['25','甲',0],['25','乙',-1],['26','丙',2],['25','丁',2]]};
- const charts=linkedCharts(source,['25','26'],1,['C','C','C'],'C');
+ const charts=linkedCharts(source,['25','26'],1,['C','C','C']);
  const all=charts[0];assert.deepEqual(all.rows.slice(3).map(r=>cellValue(r[0])),['丙','丁','甲','']);
  assert.deepEqual(all.rows.slice(3).map(r=>cellValue(r[1])),[2,2,0,'']);
  assert.match((all.rows[3][13] as any).formula,/'合成来源'!C4/);

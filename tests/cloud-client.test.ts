@@ -24,7 +24,7 @@ test("V2客户端：协议拒绝、启动去重、本机学期账号隔离、版
     assert.ok(home.home); assert.equal(calls - before, 2, "普通启动不能冒充首页合并响应");
     before = calls;
     const [first, second] = await Promise.all([bootstrap(true), bootstrap()]);
-    assert.ok(first.home); assert.equal(first, second); assert.equal(calls - before, 1, "首页启动可同时满足普通启动");
+    assert.ok(first.home); assert.equal(second.home, undefined); assert.equal(calls - before, 2, "首页和普通启动各自读取，避免首页失败连带普通启动");
     assert.equal(viewSemester(), "active"); selectSemester("history"); assert.equal(viewSemester(), "history");
     actor = "b"; await bootstrap(); assert.equal(viewSemester(), "active"); actor = "a"; await bootstrap(); assert.equal(viewSemester(), "history");
     const oldDraft = draftKey("task");

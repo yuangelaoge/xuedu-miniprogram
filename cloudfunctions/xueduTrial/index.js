@@ -40,7 +40,7 @@ const knownErrors = {
   REVIEW_STORE_UNAVAILABLE: "审核体验暂时不可用，请稍后再试", REVIEW_VERSION_CONFLICT: "审核样例已变化，请刷新后重试",
 };
 
-exports.main = async event => {
+async function execute(event) {
   try {
     const context = cloud.getWXContext();
     if (!context.OPENID || context.APPID !== APPID) return { ok: false, code: "UNAUTHENTICATED", error: "微信身份无效" };
@@ -91,4 +91,36 @@ exports.main = async event => {
     // SDK, SQL, token and input fragments must never escape through raw Error.message.
     return { ok: false, code: "INTERNAL_ERROR", error: "云端操作失败，请稍后重试" };
   }
+}
+
+// One bounded metadata line per invocation. Never log input, identities, photo
+// content, URLs, credentials, SQL errors or arbitrary client-supplied labels.
+const metricOperations = new Set(["bootstrap", "initialize", "query", "command", "photo", "photoFile", "photoUrls",
+  "clearPreview", "clearBegin", "clearStep", "deploymentStatus", "reviewLogin", "reviewStatus", "reviewRole", "reviewLogout"]);
+const metricViews = new Set(["home", "schedule", "records", "profile", "manage", "join", "record", "submission", "availability", "courses"]);
+const metricQueries = new Set(["week", "task", "record", "records", "recordVersions", "submissionStatus", "summaryReport", "scheduleReport",
+  "report", "excelReport", "namesReport", "reportCheck", "members", "applications", "audit", "classes", "semesters", "semester", "courses", "autoApproval", "autoApproved", "rebindings"]);
+
+exports.main = async event => {
+  const started = Date.now();
+  const result = await execute(event);
+  try {
+    const operation = metricOperations.has(event?.operation) ? event.operation : "unknown";
+    const requestedView = event?.payload?.includeHome === true ? "home" : event?.payload?.page?.view;
+    const view = operation === "bootstrap" && metricViews.has(requestedView) ? requestedView : "";
+    const kind = operation === "query" && metricQueries.has(event?.payload?.kind) ? event.payload.kind : "";
+    const bytes = Buffer.byteLength(JSON.stringify(result), "utf8");
+    const durationMs = Math.max(0, Date.now() - started);
+    const limitMs = configuration().maxExecutionMs;
+    const nearLimit = bytes >= 786432 || Number.isFinite(limitMs) && durationMs >= limitMs * 0.7;
+    const diagnostic = {event:"xuedu_invocation",id:crypto.randomUUID(),operation,view,kind,
+      ok:result.ok === true,code:result.ok ? "OK" : /^[A-Z_]{1,48}$/.test(result.code || "") ? result.code : "ERROR",
+      durationMs,responseBytes:bytes,nearLimit};
+    console[result.ok && !nearLimit ? "info" : "warn"](JSON.stringify(diagnostic));
+  } catch (_) {
+    // A logging/serialization failure cannot turn a committed write into a retry.
+    // Fixed text is deliberate: do not print the caught exception or input.
+    try { console.warn('{"event":"xuedu_metric_unavailable"}'); } catch (_) { /* Logging transport is unavailable. */ }
+  }
+  return result;
 };

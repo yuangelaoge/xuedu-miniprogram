@@ -27,8 +27,8 @@ test('首页本周/下周任务直接渲染，字段、人数及填写入口不�
     const task = (id:string,status='confirmed') => ({id,classLabel:id+'班',
       course:{name:id+'课程',teacher:id+'教师',classroom:id+'教室'},timeLabel:id+'时间',
       status,done:status==='submitted',recordId:status==='submitted' ? id+'记录' : '',
-      courseCounts:[{id:id+'a',label:id+'课程A',count:'60 人',combined:true},
-        {id:id+'b',label:id+'课程B',count:'未填写',combined:false}]});
+      courseCounts:[{id:id+'a',name:id+'课程A',timeLabel:id+'时间A',teacher:id+'教师A',classroom:id+'教室A',count:'60 人',combined:true},
+        {id:id+'b',name:id+'课程B',timeLabel:id+'时间B',teacher:id+'教师B',classroom:id+'教室B',count:'未填写',combined:false}]});
     const current = task('本周'), next = task('下周'), completed = task('完成','submitted');
     const data = {cloudMode:true,view:'home',hasLoaded:true,memberId:'synthetic',
       activeSemesterId:'s',semesterId:'s',week:8,nextWeek:9,maxWeek:20,
@@ -39,8 +39,9 @@ test('首页本周/下周任务直接渲染，字段、人数及填写入口不�
     assert.equal(rendered.length,3);
     for (const [i,t] of [current,completed,next].entries()) {
       const card = rendered[i], visible = text(card);
-      for (const value of [t.classLabel,t.course.name,t.course.teacher,t.course.classroom,t.timeLabel,
-        t.id+'课程A',t.id+'课程B','课表人数：60 人（合班合计）','课表人数：未填写']) assert.ok(visible.includes(value),value);
+      for (const value of [t.classLabel,...t.courseCounts.flatMap(c=>[c.name,c.teacher,c.classroom,c.timeLabel]),
+        '课表人数：60 人（合班合计）','课表人数：未填写']) assert.ok(visible.includes(value),value);
+      if (!t.done) assert.match(visible,/2 节课程可选 · 完成其中 1 节即可/);
       assert.doesNotMatch(visible,/错误外层|错误页面变量|查看安排/);
       const button = nodes(card).find(n=>n.tag==='wx-button');
       assert.equal(button.attr.bindtap,'open');

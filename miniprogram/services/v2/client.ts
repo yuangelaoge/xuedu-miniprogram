@@ -16,9 +16,9 @@ let initializedEnv = "";
 let epoch = "";
 let generation = 0;
 let workspaceVersion = -1;
-let bootstrapPending: Promise<Boot> | undefined;
-let bootstrapIncludesHome = false;
-let pageBootstrapPending: Promise<Boot> | undefined;
+let sessionReset = 0;
+let bootstrapTail: Promise<void> | undefined;
+const pendingBootstraps = new Map<string, Promise<Boot>>();
 let pageRevision = 0;
 interface ScheduleFocus { semesterId: string; week: number; scope: string; }
 let pendingScheduleFocus: ScheduleFocus | undefined;
@@ -42,11 +42,48 @@ export function pageFreshnessKey(): string {
 }
 const reviewKey = () => "xuedu.review.active." + runtime.env;
 export function reviewActive(): boolean { return runtime.mode === "cloud" && wx.getStorageSync(reviewKey()) === true; }
-function resetCloudSession(): void { boot=undefined; epoch=""; generation++; pageRevision++; workspaceVersion=-1; bootstrapPending=undefined; pageBootstrapPending=undefined; }
+function resetCloudSession(): void {
+  boot=undefined; epoch=""; generation++; sessionReset++; pageRevision++; workspaceVersion=-1;
+  bootstrapTail=undefined; pendingBootstraps.clear();
+}
+function ensureCloudSession(): void {
+  if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
+  if (initializedEnv !== runtime.env) {
+    wx.cloud.init({env:runtime.env,traceUser:false}); initializedEnv=runtime.env; resetCloudSession();
+  }
+}
+// Queue only completion, never another page's result: a failed page must not reject
+// unrelated reads. Each caller keeps its own error and verifies its own server response.
+function enqueueBootstrap(key: string, load: () => Promise<Boot>): Promise<Boot> {
+  ensureCloudSession();
+  const existing = pendingBootstraps.get(key);
+  if (existing) return existing;
+  const reset = sessionReset, env = runtime.env, review = reviewActive();
+  const assertSession = () => {
+    if (reset !== sessionReset || env !== runtime.env || review !== reviewActive())
+      throw new Error("身份或环境已变化，请刷新后重试");
+  };
+  const run = async () => {
+    assertSession();
+    const result = await load();
+    assertSession();
+    boot = result;
+    return result;
+  };
+  const pending = bootstrapTail ? bootstrapTail.then(run) : run();
+  pendingBootstraps.set(key, pending);
+  const finish = () => {
+    if (pendingBootstraps.get(key) === pending) pendingBootstraps.delete(key);
+    if (bootstrapTail === settled) bootstrapTail = undefined;
+  };
+  // The rejection is still returned through `pending`; this barrier releases the next read.
+  const settled = pending.then(finish, finish);
+  bootstrapTail = settled;
+  return pending;
+}
 export function leaveReviewLocally(): void { wx.removeStorageSync(reviewKey()); resetCloudSession(); }
 export async function reviewControl(operation: "reviewLogin" | "reviewStatus" | "reviewRole" | "reviewLogout", payload: Record<string,unknown> = {}): Promise<{role?:string;expiresAt?:string;ended?:boolean}> {
-  if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
-  if (initializedEnv !== runtime.env) { wx.cloud.init({env:runtime.env,traceUser:false}); initializedEnv=runtime.env; resetCloudSession(); }
+  ensureCloudSession();
   const result = (await wx.cloud.callFunction({name:runtime.functionName,data:{protocolVersion:2,operation,review:true,payload}})).result as unknown as {ok:boolean;data?:ApiResponse<{role?:string;expiresAt?:string;ended?:boolean}>;error?:string};
   if (!result?.ok || result.data?.protocolVersion !== 2) throw new Error(result?.error || "审核体验暂时不可用");
   if (operation === "reviewLogin") wx.setStorageSync(reviewKey(),true);
@@ -60,8 +97,7 @@ export function currentBoot(): Boot {
 }
 export function requestId(): string { return Date.now().toString(36) + "-" + Math.random().toString(36).slice(2) + "-" + Math.random().toString(36).slice(2); }
 export async function call<T = Record<string, unknown>>(operation: string, options: Omit<Partial<ApiRequest>, "operation" | "protocolVersion"> = {}): Promise<ApiResponse<T>> {
-  if (runtime.mode !== "cloud" || !runtime.env) throw new Error("云端环境未配置");
-  if (initializedEnv !== runtime.env) { wx.cloud.init({ env: runtime.env, traceUser: false }); initializedEnv = runtime.env; boot = undefined; epoch = ""; generation++; workspaceVersion = -1; }
+  ensureCloudSession();
   const startedGeneration = generation;
   if (!["bootstrap", "query", "photoUrls", "clearPreview"].includes(operation)) pageRevision++;
   const page = options.payload?.page as PageLoadRequest | undefined;
@@ -78,11 +114,11 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
     }
     throw error;
   });
+  if (startedGeneration !== generation) throw new Error("业务数据轮次已变化，请刷新后重试");
   const result = response.result as unknown as { ok: boolean; data?: ApiResponse<T>; error?: string; code?: string };
   if (operation === 'photoFile' && result?.code === 'UPGRADE_REQUIRED') throw new Error('云端照片上传服务尚未更新，请联系管理员，暂未提交听课记录');
   if (!result?.ok || !result.data) { pageRevision++; if (result?.code === "REVIEW_EXPIRED" && reviewActive()) leaveReviewLocally(); throw new Error(result?.error || "云端请求失败，请刷新重试"); }
   if (result.data.protocolVersion !== 2) throw new Error("请更新小程序，云端协议不匹配");
-  if (startedGeneration !== generation) throw new Error("业务数据轮次已变化，请刷新后重试");
   if (epoch && epoch !== result.data.epoch && operation !== "bootstrap" && operation !== "clearStep") throw new Error("业务数据轮次已变化，请刷新后重试");
   if (epoch !== result.data.epoch) { if (epoch && boot) { wx.removeStorageSync(viewKey()); } generation++; workspaceVersion = -1; }
   const nextVersion = result.data.resourceVersions?.workspace;
@@ -92,33 +128,22 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   return result.data;
 }
 export async function bootstrap(includeHome = false): Promise<Boot> {
-  if (pageBootstrapPending) { const pending = await pageBootstrapPending; if (!includeHome) return pending; }
-  // A basic request already in flight cannot satisfy the richer home request.
-  if (bootstrapPending && includeHome && !bootstrapIncludesHome) {
-    await bootstrapPending;
-    return bootstrap(true);
-  }
-  if (!bootstrapPending) {
-    bootstrapIncludesHome = includeHome;
-    bootstrapPending = call<Boot>("bootstrap", includeHome ? { payload: { includeHome: true, fastPage: true } } : {}).then(response => { boot = response.data; return boot; }).finally(() => { bootstrapPending = undefined; });
-  }
-  return bootstrapPending;
+  ensureCloudSession();
+  return enqueueBootstrap(includeHome ? "home" : "bootstrap", async () =>
+    (await call<Boot>("bootstrap", includeHome ? {payload:{includeHome:true,fastPage:true}} : {})).data);
 }
 export async function pageBootstrap(request: PageLoadRequest): Promise<Boot> {
-  // Establish the session once before another page can send a request with an old epoch.
-  if (bootstrapPending) await bootstrapPending;
-  if (pageBootstrapPending) await pageBootstrapPending;
-  const previous = initializedEnv === runtime.env ? boot : undefined;
+  ensureCloudSession();
   const usesView = !["availability", "profile", "join"].includes(request.view);
-  const selected = request.semesterId || (usesView && previous ? viewSemester() : "");
-  const selectionOwner = request.selectionOwner || (!request.semesterId ? previous?.member?.id : "");
-  const pending = call<Boot>("bootstrap", {payload:{fastPage:true,page:{...request,semesterId:selected,selectionOwner}}}).then(response => { boot = response.data; return boot; });
-  pageBootstrapPending = pending;
-  let result: Boot;
-  try { result = await pending; }
-  finally { if (pageBootstrapPending === pending) pageBootstrapPending = undefined; }
+  const selected = request.semesterId || (usesView && boot ? viewSemester() : "");
+  const selectionOwner = request.selectionOwner || (!request.semesterId ? boot?.member?.id : "");
+  const scoped = {...request,semesterId:selected,selectionOwner};
+  const key = JSON.stringify([request.view,request.section,selected,selectionOwner,request.week,
+    request.targetId,request.cursor,request.more,pageRevision]);
+  const result = await enqueueBootstrap(key, async () =>
+    (await call<Boot>("bootstrap", {payload:{fastPage:true,page:scoped}})).data);
   // A cold deep link may have a saved historical semester keyed to the newly verified identity.
-  if (!previous && !request.semesterId && usesView && result.member && result.page) {
+  if (!selected && usesView && result.member && result.page) {
     const saved = viewSemester();
     if (saved && saved !== result.page.semester?.id) return pageBootstrap({...request,semesterId:saved,selectionOwner:result.member.id});
   }

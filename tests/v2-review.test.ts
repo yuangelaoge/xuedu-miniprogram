@@ -42,7 +42,7 @@ test('审核账号绑定可信微信、到期失效，不可借审核会话调�
   await x.call('reviewRole',{payload:{role:'member'}});
   const memberBoot=await x.call('bootstrap',{review:true});
   assert.equal((memberBoot.data.member as any).data.role,'member');
-  await assert.rejects(x.call('query',{review:true,epoch:boot.epoch,semesterId:'review-semester',payload:{kind:'record',id:'review-record'}}),/不可查看他人记录/);
+  const shared=await x.call('query',{review:true,epoch:boot.epoch,semesterId:'review-semester',payload:{kind:'record',id:'review-record'}});assert.equal((shared.data.record as any).data.photos,undefined);
   await assert.rejects(x.call('query',{review:true,epoch:boot.epoch,payload:{kind:'members'}}),/没有管理权限/);
   const mine=await x.call('query',{review:true,epoch:boot.epoch,semesterId:'review-semester',payload:{kind:'week',week:1}});
   assert.equal((mine.data.tasks as any[]).length,1); assert.equal((mine.data.records as any[]).length,0);
@@ -67,7 +67,7 @@ test('审核样例照片不保存原图；角色切换和写入仅更新对应�
   const submit=await x.call('command',{review:true,epoch:boot.epoch,semesterId:'review-semester',expectedVersion:1,requestId:'submit-1',payload:{type:'recordSubmit',taskId:'review-task-open',metrics:{expected:32,actual:31,late:0,early:0,sleep:0,phone:0,talk:0,other:0},photos:[photo.data.photoId],absentNames:'',leaveNames:'',evaluation:'审核样例正常',feedback:'',suggestion:'',otherDescription:''}});
   assert.ok(submit.data.changed);
   const mine=await x.call('query',{review:true,epoch:boot.epoch,semesterId:'review-semester',payload:{kind:'records'}});
-  assert.equal((mine.data.items as any[]).length,1);
+  assert.equal((mine.data.items as any[]).length,2);
   assert.equal(state.snapshot.workspace.id,'review');
 });
 test('审核样例创建只含合成资料',()=>{
@@ -136,7 +136,12 @@ test('审核样例首页复用合并启动，普通成员只收到本人任务�
   const home=boot.data.home as any;
   assert.equal(home.semester.id,'review-semester');
   const week=await x.call('query',{review:true,epoch:boot.epoch,semesterId:home.semester.id,payload:{kind:'week',week:home.week}});
-  assert.deepEqual(home.weekData,{...week.data,occurrences:[]});
+  assert.deepEqual(home.weekData,{
+    semester:week.data.semester,plan:week.data.plan,tasks:week.data.tasks,
+    availability:week.data.availability,records:week.data.records,occurrences:[],
+    summary:{taskCount:1,recordCount:0,coverage:0},
+  });
+  assert.deepEqual(home.summary,{taskCount:1,recordCount:0,coverage:0});
   assert.ok(home.weekData.tasks.every((task:any)=>task.memberId===(boot.data.member as any).id));
   assert.ok(home.weekData.records.every((record:any)=>record.memberId===(boot.data.member as any).id));
 });
@@ -147,11 +152,11 @@ test('审核样例各页面合并请求仍按所选角色隔离数据', async()=
   const page=(view:string,extra:Record<string,unknown>={})=>x.call('bootstrap',{review:true,payload:{page:{view,week:1,...extra}}});
   const admin=await page('records');assert.equal((admin.data.page as any).list.items.length,1);
   await x.call('reviewRole',{payload:{role:'member'}});
-  const mine=await page('records');assert.equal((mine.data.page as any).list.items.length,0);
-  assert.equal((mine.data.page as any).summary.submitted,0);
+  const mine=await page('records');assert.equal((mine.data.page as any).list.items.length,1);
+  assert.equal((mine.data.page as any).summary.submitted,1);
   const schedule=await page('schedule');assert.ok((schedule.data.page as any).weekData.tasks.every((t:any)=>t.memberId===(schedule.data.member as any).id));
   await assert.rejects(page('manage'),/管理权限/);
-  await assert.rejects(page('record',{targetId:'review-record'}),/无权查看/);
+  const detail=await page('record',{targetId:'review-record'});assert.equal((detail.data.page as any).record.record.data.photos,undefined);
 });
 
 test('审核体验 leader 禁止所有排班草稿和文件导出，保留查看统计；officer 完整Excel和记录读取',async()=>{

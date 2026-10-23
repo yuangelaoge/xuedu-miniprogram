@@ -58,13 +58,20 @@
       </view>
       <view wx:if="{{weekData.plan.data.status === 'skipped'}}" class="v2-note">本周已跳过：{{weekData.plan.data.reason}}</view><view class="search"><view class="search-symbol"></view><input placeholder="搜索本周姓名、班级或课程" value="{{searchText}}" bindinput="search"/></view><view class="row between"><view class="v2-title">正式任务 · {{visibleTasks.length}}</view><text class="link" data-target="availability" bindtap="navigate">填写第 {{week}} 周无课时间 ›</text></view>
       <view wx:for="{{visibleTasks}}" wx:key="id" class="v2-card">
-        <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view><view>{{item.status === 'pendingAdjustment' ? '待调整：原课表已失效，暂不能提交' : item.status === 'submitted' ? '已提交' : '已确认'}}</view>
-        <view wx:if="{{item.data.courseOptions.length}}" class="muted small">同班课程 {{item.data.courseOptions.length}} 门，任选一门完成任务</view>
-        <view wx:for="{{item.courseCounts}}" wx:for-item="count" wx:key="id" class="course-meta">
-          <view wx:if="{{item.courseCounts.length > 1}}">{{count.label}}</view>
-          <view>课表人数：{{count.count}}{{count.combined ? '（合班合计）' : ''}}</view>
+        <view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view>
+        <view class="course-meta">{{item.data.classLabel}}</view>
+        <view wx:if="{{item.status === 'pendingAdjustment'}}" class="notice warn">原课表已失效，待调整后再填写</view>
+        <view wx:if="{{item.status !== 'submitted' && item.courseCounts.length > 1}}" class="task-options-note">{{item.courseCounts.length}} 节课程可选 · 完成其中 1 节即可</view>
+        <view class="task-options">
+          <view wx:for="{{item.courseCounts}}" wx:for-item="choice" wx:for-index="choiceIndex" wx:key="id" class="task-option">
+            <view class="task-option-heading"><text wx:if="{{item.courseCounts.length > 1}}" class="task-option-number">{{choiceIndex + 1}}</text><text class="task-option-title">{{choice.name}}</text></view>
+            <view class="task-option-meta"><text class="task-option-label">时间</text><text>{{choice.timeLabel}}</text></view>
+            <view class="task-option-meta"><text class="task-option-label">地点</text><text>{{choice.classroom}}</text></view>
+            <view class="task-option-meta"><text class="task-option-label">教师</text><text>{{choice.teacher}}</text></view>
+            <view class="task-option-count">课表人数：{{choice.count}}{{choice.combined ? '（合班合计）' : ''}}</view>
+          </view>
         </view>
-        <button wx:if="{{item.status === 'confirmed' && item.memberId === memberId}}" data-id="{{item.id}}" bindtap="open">填写听课记录</button>
+        <button wx:if="{{item.status === 'confirmed' && item.memberId === memberId}}" type="primary" data-id="{{item.id}}" bindtap="open">填写听课记录</button>
         <button wx:if="{{canAdjust && item.status !== 'submitted'}}" data-id="{{item.id}}" bindtap="adjust">转派／取消</button>
       </view>
       <view wx:if="{{manager && !weekData.draft && weekData.plan.data.uncovered.length}}" class="card"><view class="section-title">未覆盖教学班</view><view wx:for="{{weekData.plan.data.uncovered}}" wx:key="label" class="v2-row">{{item.label}} · {{item.reason}}</view></view>
@@ -106,7 +113,7 @@
     <view wx:if="{{impacts.length}}" class="v2-card"><view class="v2-title">以下任务已标记待调整</view><view>已生成调整草稿，请前往“听课安排”选择相应学期与周次核对并确认。确认前原任务不能提交，已完成任务保持不变。</view><view wx:for="{{impacts}}" wx:key="id" class="v2-row">第 {{item.week}} 周 · {{item.label}} · {{item.detail}}</view></view>
     <block wx:if="{{view === 'manage' || (view === 'records' && recordTab !== 'stats') || view === 'courses'}}">
       <view wx:for="{{visibleRows}}" wx:key="id" class="v2-card {{view === 'records' ? 'v2-record-card' : ''}}">
-        <block wx:if="{{view === 'records'}}"><view class="row between v2-record-head"><view class="row gap"><text class="section-title">{{item.data.memberName || item.label}}</text><text class="pill green">已提交</text></view><text class="muted small">{{item.data.date || item.date}}</text></view><view class="course-title">{{item.data.course.name}}</view><view class="row between v2-record-footer"><text class="muted small v2-record-meta">{{item.data.classLabel}} · 第 {{item.data.course.start}}–{{item.data.course.end}} 节<text wx:if="{{item.data.course.classroom}}"> · {{item.data.course.classroom}}</text></text><text class="link small v2-record-link" data-id="{{item.id}}" bindtap="open">查看记录与照片 ›</text></view></block>
+        <block wx:if="{{view === 'records'}}"><view class="row between v2-record-head"><view class="row gap"><text class="section-title">{{item.data.memberName || item.label}}</text><text class="pill green">已提交</text></view><text class="muted small">{{item.data.date || item.date}}</text></view><view class="course-title">{{item.data.course.name}}</view><view class="row between v2-record-footer"><text class="muted small v2-record-meta">{{item.data.classLabel}} · 第 {{item.data.course.start}}–{{item.data.course.end}} 节<text wx:if="{{item.data.course.classroom}}"> · {{item.data.course.classroom}}</text></text><text class="link small v2-record-link" data-id="{{item.id}}" bindtap="open">{{item.memberId === memberId || coordinator ? '查看记录与照片 ›' : '查看记录 ›'}}</text></view></block>
         <block wx:else><view class="row between"><view class="section-title">{{item.label}}</view><text wx:if="{{item.status}}" class="pill {{item.status === 'submitted' || item.status === 'approved' ? 'green' : 'gray'}}">{{item.statusLabel}}</text></view><view wx:if="{{item.data.course.name}}" class="course-title">{{item.data.course.name}}</view><view class="course-meta">{{item.detail}}</view>
         <view wx:if="{{section === 'members'}}">{{item.role === 'admin' ? '管理员' : item.role === 'leader' ? '组部长' : item.role === 'officer' ? '信息部干事' : '成员'}} · {{item.active ? '有效' : '已停用'}}</view>
         <view wx:if="{{item.status}}">{{item.statusLabel}}</view>
@@ -133,10 +140,10 @@
       <view wx:for="{{recordFields}}" wx:key="label">{{item.label}}：{{item.value}}</view>
       <view>旷课名单：{{record.data.absentNames}}</view><view>请假名单：{{record.data.leaveNames}}</view><view>班风评价：{{record.data.evaluation}}</view><view>异常与反馈：{{record.data.feedback}}</view><view>教师建议：{{record.data.suggestion}}</view><view>其他情况：{{record.data.otherDescription}}</view>
       <view>首次提交：{{record.data.firstSubmittedAt}}</view><view wx:if="{{record.data.correctedAt}}">最近更正：{{record.data.correctedAt}} · {{record.data.reason}}</view>
-      <view class="v2-photos"><image wx:for="{{photoUrls}}" wx:key="*this" src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewPhoto"/></view>
-      <button wx:if="{{canEdit}}" bindtap="editRecord">更正记录（须说明原因）</button><view wx:else class="v2-note">本人编辑期限为首次提交后不足24小时，超时请联系管理员纠错。</view>
+      <view wx:if="{{canViewRecordPhotos}}" class="v2-photos"><image wx:for="{{photoUrls}}" wx:key="*this" src="{{item}}" mode="aspectFill" data-url="{{item}}" bindtap="previewPhoto"/></view>
+      <view wx:if="{{!canViewRecordPhotos}}" class="notice">仅展示文字记录，签字照片不开放查看。</view><button wx:if="{{canEdit}}" bindtap="editRecord">更正记录（须说明原因）</button><view wx:elif="{{record.memberId === memberId}}" class="v2-note">本人编辑期限为首次提交后不足24小时，超时请联系管理员纠错。</view>
       <button bindtap="history">{{versions.length ? (versionCursor ? '加载更多修改历史' : '查看修改历史') : '查看修改历史'}}</button>
-      <view wx:for="{{versions}}" wx:key="id" class="v2-row"><view>{{item.detail}}</view><view>{{item.data.correctedAt || item.data.firstSubmittedAt}} · {{item.data.reason}}</view><view wx:for="{{item.historyFields}}" wx:for-item="metric" wx:key="label">{{metric.label}}：{{metric.value}}</view><view>旷课：{{item.data.absentNames}}；请假：{{item.data.leaveNames}}</view><view>班风：{{item.data.evaluation}}；反馈：{{item.data.feedback}}；建议：{{item.data.suggestion}}；其他：{{item.data.otherDescription}}</view><view>修改人：{{item.data.actorId}} · 版本 {{item.data.recordVersion}}</view><button size="mini" data-id="{{item.id}}" bindtap="versionPhotos">查看该版本照片</button></view>
+      <view wx:for="{{versions}}" wx:key="id" class="v2-row"><view>{{item.detail}}</view><view>{{item.data.correctedAt || item.data.firstSubmittedAt}} · {{item.data.reason}}</view><view wx:for="{{item.historyFields}}" wx:for-item="metric" wx:key="label">{{metric.label}}：{{metric.value}}</view><view>旷课：{{item.data.absentNames}}；请假：{{item.data.leaveNames}}</view><view>班风：{{item.data.evaluation}}；反馈：{{item.data.feedback}}；建议：{{item.data.suggestion}}；其他：{{item.data.otherDescription}}</view><view>修改人：{{item.data.actorId}} · 版本 {{item.data.recordVersion}}</view><button wx:if="{{canViewRecordPhotos}}" size="mini" data-id="{{item.id}}" bindtap="versionPhotos">查看该版本照片</button></view>
     </view>
 
   </block>

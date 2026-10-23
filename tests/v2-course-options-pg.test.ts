@@ -42,7 +42,7 @@ function seed(s=optionSeed()) {
 pgtest('PG: 40人范围读取生成候选、选课提交保持3次RPC、新编号重试2次；保存实际快照',async()=>{
  const data=optionSeed();for(let i=4;i<40;i++)data.rows.members!.push({id:'extra-'+i,epoch:data.workspace.epoch,version:1,studentNo:'extra-'+i,data:{name:'合成成员'+i,role:'member',active:true,classId:'review-class-a',studentNo:'extra-'+i}});
  seed(data);const f=optionApi(new PostgresRepository(db));
- const {plan,task}=await generateOptions(f,'25');assert.equal(calls.length,3);assert.equal(taskCourseOptions(task).length,3);
+ const {plan,task}=await generateOptions(f,'25');assert.deepEqual(calls,['xuedu_v2_scheduling_read','xuedu_v2_commit','xuedu_v2_workspace','xuedu_v2_query','xuedu_v2_query']);assert.equal(taskCourseOptions(task).length,3);
  calls.length=0;await f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version});assert.equal(calls.length,3);
  calls.length=0;const image=await f.call('photo',{taskId:task.id,base64:'aGVsbG8='},{who:'member'});assert.equal(calls.length,3);
  const option=taskCourseOptions(task).find(o=>o.course.id==='alternate')!;
@@ -102,14 +102,14 @@ pgtest('PG: 提交事务验证实际所选实例版本，读取后课程并发�
 
 pgtest('PG: 两人匹配优化各3门，仍3次RPC；提交后重生成只调整剩余成员和班级',async()=>{
  seed(matchingOptionSeed());const repo=new PostgresRepository(db),f=optionApi(repo);
- const {plan,task}=await generateOptions(f);assert.equal(calls.length,3);assert.equal(taskCourseOptions(task).length,3);
+ const {plan,task}=await generateOptions(f);assert.deepEqual(calls,['xuedu_v2_scheduling_read','xuedu_v2_commit','xuedu_v2_workspace','xuedu_v2_query','xuedu_v2_query']);assert.equal(taskCourseOptions(task).length,3);
  const tasks=JSON.parse(raw("SELECT jsonb_agg(data ORDER BY id) FROM xuedu_v2.tasks"));assert.deepEqual(tasks.map((t:any)=>t.courseOptions.length),[3,3]);
  await f.call('command',{type:'planConfirm',id:plan.id},{expectedVersion:plan.version});
  const current=(await repo.get('tasks',task.id))!,pic=await f.call('photo',{taskId:task.id,base64:'aGVsbG8='},{who:'member'});
  const submitted=await f.call('command',{type:'recordSubmitChoice',taskId:task.id,occurrenceId:taskCourseOptions(current)[2].occurrenceId,metrics:optionMetrics,photos:[pic.data.fileID]},{who:'member',expectedVersion:current.version});
  const record=changed(submitted,e=>!!e.data.firstSubmittedAt),frozen=await repo.get('tasks',task.id);
  const version=(await repo.get('plans',plan.id))!.version;calls.length=0;const regenerated=await f.call('command',{type:'planGenerate',week:2},{expectedVersion:version});assert.equal(calls.length,3);
- const pending=(regenerated.data.changed as Entity[]).filter(e=>e.memberId&&e.data.courseOptions&&!e.data.cancel);
+ const pending=(await repo.query('tasks',{eq:{parentId:String(regenerated.data.planId)}})).items.filter(e=>e.memberId&&e.data.courseOptions&&!e.data.cancel);
  assert.equal(pending.length,1);assert.ok(pending.every(t=>t.memberId!=='review-member'&&taskCourseOptions(t).every(o=>!o.course.classIds.includes('review-class-b'))));
  assert.deepEqual(await repo.get('tasks',task.id),frozen);assert.deepEqual(await repo.get('records',record.id),record);
 });

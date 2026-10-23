@@ -150,7 +150,7 @@ test("V2 generation loads only target week/previous-week records; completed task
   const generated = await f.call("command", { type: "planGenerate", week: 2 }, { expectedVersion: 0 });
   assert.equal((await f.repository.get("tasks", "t1"))!.data.status, "submitted");
   assert.ok(f.queries.filter(q => q.resource === "records").every(q => (q.query as any).eq.week === 1));
-  const plan = (generated.data.changed as Entity[]).find(e => e.data.status === "draft")!;
+  const plan = (await f.repository.get("plans", String(generated.data.planId)))!;
   await f.call("command", { type: "planConfirm", id: plan.id }, { expectedVersion: 1 });
   await assert.rejects(f.call("command", { type: "taskAdjust", week: 2, reason: "补排", changes: [{ memberId: "member", occurrenceId: "course1:2026-09-14" }] }, { expectedVersion: 2 }), /每人每周/);
   await assert.rejects(f.call("command", { type: "taskAdjust", week: 2, reason: "已完成不能取消", changes: [{ taskId: "t1", cancel: true }] }, { expectedVersion: 2 }), /未提交/);
@@ -212,7 +212,7 @@ test("V2 JSON import retains IDs and independent classes, caps pages, and partic
   assert.ok((saved.data.changed as Entity[]).some(e => e.data.name === "独立班级"));
   await f.call("command", { type: "semesterParticipants", classIds: ["c1"] }, { expectedVersion: 1 });
   const generated = await f.call("command", { type: "planGenerate", week: 2 }, { expectedVersion: 0 });
-  assert.equal((generated.data.changed as Entity[]).filter(e => e.data.status === "draft" && e.data.occurrenceId && !e.data.cancel).length, 0);
+  assert.equal((await f.repository.query("tasks", {eq:{parentId:String(generated.data.planId)}})).items.filter(e => e.data.status === "draft" && e.data.occurrenceId && !e.data.cancel).length, 0);
 });
 
 test("V2 missing execution config fails closed for photos and cleanup, bootstrap readable", async () => {
@@ -238,7 +238,7 @@ test("V2 cross-week rescheduling drafts cancellation and replacement in respecti
 test("V2 administrator skipping a week requires draft confirmation and can later resume without zero-attendance exports", async () => {
   const f = fixture();
   const skipped = await f.call("command", { type: "planSkip", week: 2, reason: "国庆假期" }, { expectedVersion: 0 });
-  const draft = (skipped.data.changed as Entity[]).find(e => e.data.skip)!;
+  const draft = (await f.repository.get("plans", String(skipped.data.planId)))!;
   assert.equal(draft.data.status, "draft"); assert.equal((await f.repository.get("tasks", "t1"))!.data.status, "confirmed");
   await f.call("command", { type: "planConfirm", id: draft.id }, { expectedVersion: 1 });
   assert.equal((await f.repository.get("tasks", "t1"))!.data.status, "cancelled");
@@ -246,7 +246,7 @@ test("V2 administrator skipping a week requires draft confirmation and can later
   const report = await f.call("query", { kind: "report", week: 2 });
   assert.match(exportTxt(report.data.state as any, 2), /已跳过听课：国庆假期/);
   const generated = await f.call("command", { type: "planGenerate", week: 2 }, { expectedVersion: 2 });
-  const resumed = (generated.data.changed as Entity[]).find(e => e.data.status === "draft" && !e.data.occurrenceId)!;
+  const resumed = (await f.repository.get("plans", String(generated.data.planId)))!;
   assert.equal((await f.repository.get("plans", draft.id))!.data.status, "skipped");
   await f.call("command", { type: "planConfirm", id: resumed.id }, { expectedVersion: 1 });
   assert.equal((await f.repository.get("plans", draft.id))!.data.status, "superseded");
@@ -259,7 +259,7 @@ test("V2 skipped-week actions reject members and leaders, and refuse already-sub
   await f.call("command", { type: "roleChange", id: "member", role: "leader", reason: "部长", confirmed: true }, { expectedVersion: 1 });
   await assert.rejects(f.call("command", { type: "planSkip", week: 2, reason: "部长越权" }, { expectedVersion: 0, who: "om" }), /仅管理员/);
   const skipped = await f.call("command", { type: "planSkip", week: 2, reason: "假期" }, { expectedVersion: 0 });
-  const draft = (skipped.data.changed as Entity[]).find(e => e.data.skip)!;
+  const draft = (await f.repository.get("plans", String(skipped.data.planId)))!;
   await submit(f);
   await assert.rejects(f.call("command", { type: "planConfirm", id: draft.id }, { expectedVersion: 1 }), /已有提交记录/);
   await assert.rejects(f.call("command", { type: "planSkip", week: 2, reason: "不能跳过已完成" }, { expectedVersion: 0 }), /已有提交记录/);
@@ -269,13 +269,13 @@ test("V2 skipped-week actions reject members and leaders, and refuse already-sub
 test("V2 cancellation drafts expose uncovered classes and reasons while completed tasks still count as coverage", async () => {
   const f = fixture();
   const adjusted = await f.call("command", { type: "taskAdjust", week: 2, reason: "成员临时有事", changes: [{ taskId: "t1", cancel: true }] }, { expectedVersion: 0 });
-  const plan = (adjusted.data.changed as Entity[]).find(e => e.data.status === "draft" && !e.data.occurrenceId)!;
+  const plan = (await f.repository.get("plans", String(adjusted.data.planId)))!;
   const uncovered = plan.data.uncovered as { label: string; reason: string }[];
   assert.ok(uncovered.some(item => item.label === "25计科1班" && item.reason.includes("成员临时有事")));
   assert.equal((await f.repository.get("tasks", "t1"))!.data.status, "confirmed");
   const g = fixture(); await submit(g);
   const created = await g.call("command", { type: "planGenerate", week: 2 }, { expectedVersion: 0 });
-  const completionDraft = (created.data.changed as Entity[]).find(e => e.data.status === "draft" && !e.data.occurrenceId)!;
+  const completionDraft = (await g.repository.get("plans", String(created.data.planId)))!;
   assert.equal((completionDraft.data.uncovered as { label: string }[]).some(item => item.label === "25计科1班"), false);
 });
 
@@ -332,8 +332,8 @@ test('officer can generate draft, cannot confirm, and is eligible without manage
  const w=await f.repository.workspace();await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'oa',actorId:'admin',requestId:'remove-availability',reads:[],changes:[{resource:'availability',id:'av1',expectedVersion:1,value:null}],result:{}});
  await f.call('command',{type:'availabilitySave',week:2,slots:['1:1','1:2'],optedIn:false},{who:'oo',expectedVersion:0});
  const generated=await f.call('command',{type:'planGenerate',week:2},{who:'oo',expectedVersion:0});
- const changed=generated.data.changed as Entity[];
- const plan=changed.find(e=>e.data.status==='draft'&&!e.memberId)!;
+ const plan=(await f.repository.get('plans',String(generated.data.planId)))!;
+ const changed=(await f.repository.query('tasks',{eq:{parentId:plan.id}})).items;
  assert.ok(plan);await assert.rejects(f.call('command',{type:'planConfirm',id:plan.id},{who:'oo',expectedVersion:1}),/管理/);
  assert.ok(changed.some(e=>e.memberId==='officer'&&e.data.status==='draft'));
 });
@@ -356,7 +356,7 @@ test('leader cannot generate, adjust, confirm or export files; retains records, 
  for(const changes of [[{taskId:'t1',cancel:true}],[{taskId:'t1',memberId:'member',occurrenceId:'course1:2026-09-14'}],[{memberId:'member',occurrenceId:'course1:2026-09-14'}]]) await assert.rejects(fresh.call('command',{type:'taskAdjust',week:2,reason:'越权调整',changes},{who:'om',expectedVersion:0}),/仅管理员/);
  assert.equal((await fresh.repository.query('plans',{})).items.length,0);
  const adjusted=await fresh.call('command',{type:'taskAdjust',week:2,reason:'合成取消',changes:[{taskId:'t1',cancel:true}]},{expectedVersion:0});
- const draft=(adjusted.data.changed as Entity[]).find(e=>e.data.status==='draft'&&!e.memberId)!;
+ const draft=(await fresh.repository.get('plans',String(adjusted.data.planId)))!;
  assert.equal((await fresh.repository.get('tasks','t1'))!.data.status,'confirmed');
  await assert.rejects(fresh.call('command',{type:'planConfirm',id:draft.id},{who:'om',expectedVersion:1}),/仅管理员/);
  await fresh.call('command',{type:'planConfirm',id:draft.id,reason:'管理员确认'},{expectedVersion:1});
@@ -390,10 +390,24 @@ test('officer record pagination is complete, reports match admin including empty
  await f.call('command',{type:'availabilitySave',week:2,slots:['3:3'],note:'own-only'},{who:'oo',expectedVersion:0});
  const saved=await f.call('query',{kind:'week',week:2,memberId:'member'},{who:'oo'});assert.deepEqual((saved.data.availability as any).data.slots,['3:3']);assert.doesNotMatch(JSON.stringify(saved),/"1:1"/);
  await f.call('command',{type:'roleChange',id:'officer',role:'member',reason:'合成降级',confirmed:true},{expectedVersion:1});
- assert.equal((await f.call('query',{kind:'records',week:2},{who:'oo'})).data.items.length,0);
+ const shared=await f.call('query',{kind:'records',week:2},{who:'oo'});
+ assert.equal(shared.data.items.length,50); assert.ok(shared.data.items.every((r:Entity)=>r.data.photos===undefined));
  await assert.rejects(f.call('photoUrls',{ids:['p1']},{who:'oo'}),/不可/);
  await assert.rejects(f.call('query',{kind:'excelReport',week:2},{who:'oo'}),/仅管理员/);
  for(const payload of [{kind:'namesReport',week:2},{kind:'report',format:'copy',week:2},{kind:'reportCheck',format:'txt',version:0}])await assert.rejects(f.call('query',payload,{who:'oo'}),/仅管理员|协作/);
  await f.call('command',{type:'memberRemove',id:'officer',reason:'合成停用'},{expectedVersion:2});
  await assert.rejects(f.call('query',{kind:'record',id:record.id},{who:'oo'}),/通过审核/);
 });
+
+ test('member text sharing blocks current/history/direct photos, reports and edits while preserving own photos',async()=>{
+ const f=officerFixture(),record=await submit(f);
+ await f.call('command',{type:'roleChange',id:'officer',role:'member',reason:'测试',confirmed:true},{expectedVersion:1});
+ const detail=await f.call('query',{kind:'record',id:record.id},{who:'oo'});
+ assert.equal(detail.data.canEdit,false);assert.equal(detail.data.record.data.metrics.actual,29);assert.equal(detail.data.record.data.photos,undefined);
+ const history=await f.call('query',{kind:'recordVersions',id:record.id},{who:'oo'});
+ assert.ok(history.data.items.length); assert.ok(history.data.items.every((r:Entity)=>r.data.photos===undefined));
+ for(const payload of [{recordId:record.id},{ids:['p1']},{recordId:record.id,versionId:history.data.items[0].id}])await assert.rejects(f.call('photoUrls',payload,{who:'oo'}),/不可查看他人照片/);
+ for(const kind of ['report','excelReport','namesReport','submissionStatus'])await assert.rejects(f.call('query',{kind,week:2},{who:'oo'}),/权限|仅管理员/);
+ await assert.rejects(f.call('command',{type:'recordEdit',id:record.id,reason:'越权',metrics,photos:['p1']},{who:'oo',expectedVersion:1}),/本人|不可/);
+ assert.equal((await f.call('photoUrls',{recordId:record.id},{who:'om'})).data.urls.length,1);
+ });

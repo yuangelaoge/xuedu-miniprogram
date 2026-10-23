@@ -4,11 +4,13 @@ import { classGrade, isEarlyCourse, sameClasses } from "../../miniprogram/domain
 import { taskCourseOptions, TaskCourseOption } from "../../miniprogram/domain/v2/task-options";
 import { createHash } from "node:crypto";
 import { copy, schedulingPage } from "./scheduling-read";
-import { isManager, canViewAllRecords, canExportNames, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
+import { isManager, canViewAllRecords, canViewAllRecordPhotos, canExportNames, canExportFullXlsx, canCoordinate, canGeneratePlan, participatesByDefault } from "../../miniprogram/domain/capabilities";
 import { summarizeEntities } from "./summary-report";
 import { ApiRequest, ApiResponse, Change, CLEAR_CONFIRMATION, Entity, Query, ReadVersion, Resource, RESOURCES, Workspace } from "../../miniprogram/domain/v2/protocol";
 import { Repository } from "./repository";
 import { readPageData } from "./page-load";
+import { CURRENT_PLAN_STATUSES, EFFECTIVE_TASK_STATUSES, readCurrentWeekTasks } from "./week-read";
+import { boundedPage } from "./page-budget";
 import { PageLoadRequest } from "../../miniprogram/domain/v2/page-data";
 import { AppState, Course, Metrics, Semester } from "../../miniprogram/domain/types";
 import { generatePlan } from "../../miniprogram/domain/scheduler";
@@ -71,6 +73,13 @@ export function createGatewayV2(deps: DependenciesV2) {
   const executionConfigured = Number.isInteger(deps.maxExecutionMs) && deps.maxExecutionMs >= 1000 && deps.maxExecutionMs <= 900000;
   const requireExecution = () => { if (!executionConfigured) fail("请配置与云函数实际执行上限一致的 maxExecutionMs", "CONFIGURATION"); };
   const repo = deps.repository;
+  const boundedReadResponse = (result: ApiResponse): ApiResponse => {
+    // Leave room for the function envelope. Reject clearly rather than allowing
+    // the platform to replace it with an opaque transport failure.
+    if (Buffer.byteLength(JSON.stringify(result),"utf8") > 900 * 1024)
+      fail("本次资料较多，请更新小程序后分批读取；仍失败请联系管理员", "RESPONSE_TOO_LARGE");
+    return result;
+  };
   return async (input: ApiRequest, context: { OPENID?: string; APPID?: string }): Promise<ApiResponse> => {
     const startedAt = Date.now();
     if (!context.OPENID || context.APPID !== deps.appid) fail("微信身份无效", "UNAUTHENTICATED");
@@ -82,7 +91,11 @@ export function createGatewayV2(deps: DependenciesV2) {
     if (input.operation === "bootstrap" && input.payload?.fastPage === true && repo.bootstrapPage &&
         (input.payload.includeHome === true || ["schedule","records","profile","courses","availability"].includes(String((input.payload.page as PageLoadRequest | undefined)?.view)))) {
       const fast = await repo.bootstrapPage(context.OPENID, {...input.payload,epoch:input.epoch},context.OPENID === deps.bootstrapOpenid);
-      if (fast) return {...fast,data:{...fast.data,executionConfigured}};
+      // Existing database RPCs scope member records to self. Use the authorized
+      // paginated gateway for this new text-only view without requiring a migration.
+      const memberRecords = (input.payload.page as PageLoadRequest | undefined)?.view === "records"
+        && (fast?.data.member as Entity | undefined)?.data.role === "member";
+      if (fast && !memberRecords) return boundedReadResponse({...fast,data:{...fast.data,executionConfigured}});
     }
     const identityKey = context.OPENID;
     const now = deps.now?.() ?? Date.now();
@@ -97,6 +110,7 @@ export function createGatewayV2(deps: DependenciesV2) {
     if (input.operation === "command" && input.payload?.type === "recordSubmitChoice") text(p.occurrenceId, "听课课程");
     // Read the permission fence BEFORE speculative rows, then check it again in response().
     const scheduling = input.operation === "command" && ["planGenerate", "taskAdjust", "planConfirm"].includes(String(p.type));
+    const planWrite = scheduling || input.operation === "command" && p.type === "planSkip";
     const scheduleExport = input.operation === "query" && p.kind === "scheduleReport";
     const membersList = input.operation === "query" && p.kind === "members";
     const photoWrite = input.operation === "photo" || input.operation === "photoFile";
@@ -144,8 +158,8 @@ export function createGatewayV2(deps: DependenciesV2) {
     const page = async (resource: Resource, query: Query = {}) => {
       const scoped = { ...query, eq: { ...query.eq, epoch: workspace.epoch } };
       const cachedRows = prefetched?.rows[resource];
-      const result = membersList && resource === "members" && prefetched?.memberPage ? copy(prefetched.memberPage)
-        : cachedRows ? schedulingPage(cachedRows, scoped) : await repo.query(resource, scoped);
+      const result = boundedPage(membersList && resource === "members" && prefetched?.memberPage ? copy(prefetched.memberPage)
+        : cachedRows ? schedulingPage(cachedRows, scoped) : await repo.query(resource, scoped));
       result.items.forEach(row => track(resource, row)); return result;
     };
     const all = async (resource: Resource, query: Query = {}): Promise<Entity[]> => {
@@ -159,9 +173,14 @@ export function createGatewayV2(deps: DependenciesV2) {
       ? track("members", memberAhead) : await get("members", binding.memberId || "", false) : undefined;
     const validActor = actor?.data.active === true ? actor : undefined;
     const member = () => { if (!validActor) fail("请先申请并通过审核", "FORBIDDEN"); return validActor; };
+    const cleanForViewer = (row: Entity, owner = row.memberId): Entity => {
+      const result = clean(row);
+      if (!canViewAllRecordPhotos(validActor?.data.role) && owner !== validActor?.id) delete result.data.photos;
+      return result;
+    };
     const manager = () => { const a = member(); if (!["admin", "leader"].includes(String(a.data.role))) fail("没有管理权限", "FORBIDDEN"); return a; };
     const coordinator = () => { const a = member(); if (!canCoordinate(a.data.role)) fail("没有协作权限", "FORBIDDEN"); return a; };
-    const recordReader = () => { const a = member(); if (!canViewAllRecords(a.data.role)) fail("没有全组记录查看权限", "FORBIDDEN"); return a; };
+    const recordReader = () => { const a = member(); if (!canViewAllRecordPhotos(a.data.role)) fail("没有全组记录查看权限", "FORBIDDEN"); return a; };
     const excelExporter = () => { const a = member(); if (!canExportFullXlsx(a.data.role)) fail("仅管理员或信息部干事可导出完整Excel", "FORBIDDEN"); return a; };
     const namesExporter = () => { const a = member(); if (!canExportNames(a.data.role)) fail("仅管理员或信息部干事可导出名单", "FORBIDDEN"); return a; };
     const admin = () => { const a = member(); if (a.data.role !== "admin") fail("仅管理员可操作", "FORBIDDEN"); return a; };
@@ -182,11 +201,16 @@ export function createGatewayV2(deps: DependenciesV2) {
       const current = await repo.workspace();
       if (current.epoch !== workspace.epoch) fail("业务数据已变化，请刷新", "EPOCH_CONFLICT");
       if (current.permissionsVersion !== workspace.permissionsVersion) fail("权限已变化，请刷新后重新操作", "VERSION_CONFLICT");
-      return { protocolVersion: 2, epoch: workspace.epoch, resourceVersions, data, ...(cursor === undefined ? {} : { cursor }) };
+      const result: ApiResponse = { protocolVersion: 2, epoch: workspace.epoch, resourceVersions, data, ...(cursor === undefined ? {} : { cursor }) };
+      return readOnly ? boundedReadResponse(result) : result;
     };
     const commit = async (result: Record<string, unknown> = {}, patch?: Partial<Workspace>, maintenanceId?: string, initialize = false, autoJoin = false) => {
       const requestId = text(input.requestId, "请求标识", 200);
-      const changed = Array.from(changes.values()).filter(c => c.value && c.resource !== "bindings" && c.resource !== "photos" && c.resource !== "audit").map(c => clean({ ...c.value!, version: c.expectedVersion + 1 }));
+      // Scheduling pages reload after a command. Storing both superseded and new
+      // task snapshots in the replay receipt can exceed requests.data's 128 KiB
+      // limit even when every task is small. Keep the receipt bounded; the full
+      // changes and read versions still participate in the same atomic commit.
+      const changed = planWrite ? [] : Array.from(changes.values()).filter(c => c.value && c.resource !== "bindings" && c.resource !== "photos" && c.resource !== "audit").map(c => clean({ ...c.value!, version: c.expectedVersion + 1 }));
       const outcome = await repo.commit({ epoch: workspace.epoch, workspaceVersion: workspace.version,
         permissionsVersion: workspace.permissionsVersion, identityKey, actorId: actor?.id || (initialize ? String(result.adminId) : autoJoin ? String(result.memberId) : ""),
         requestId, reads: Array.from(reads.values()), changes: Array.from(changes.values()), workspace: patch,
@@ -203,15 +227,30 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (prefetched && (scheduling || recordWrite)) return {protocolVersion: 2 as const, epoch: workspace.epoch, resourceVersions, data: outcome};
       return response(outcome);
     };
+    const commitPlan = (plan: Entity) => commit({ planId: plan.id, planVersion: plan.version + 1 });
     const requireSemester = async () => {
       const id = text(input.semesterId, "学期标识", 200);
       return (await get("semesters", id))!;
     };
     const requireWeek = (semester: Entity) => integer(p.week, "周次", 1, Number(semester.data.weeks));
     const classesFor = async (ids: string[]) => {
-      const rows: Entity[] = [];
-      for (const id of ids) { const pending = changes.get("classes:" + id)?.value; rows.push(pending ? { ...pending, version: 0 } : (await get("classes", id))!); }
-      return rows;
+      const pending = new Map<string, Entity>();
+      const missing: string[] = [];
+      for (const id of new Set(ids)) {
+        const value = changes.get("classes:" + id)?.value;
+        if (value) pending.set(id, {...value,version:0});
+        else missing.push(id);
+      }
+      // A weekly export should not make one network round trip per class.
+      // page()/all() still track every returned row for transaction/version checks.
+      for (let i=0;i<missing.length;i+=100) {
+        for (const row of await all("classes",{in:{id:missing.slice(i,i+100)}})) pending.set(row.id,row);
+      }
+      return ids.map(id=>{
+        const row=pending.get(id);
+        if (!row) fail("对象不存在或已清空", "NOT_FOUND");
+        return row;
+      });
     };
     const validateCourseImport = async (semester: Entity, sourceText: string) => {
       const oldClasses = await all("classes");
@@ -257,8 +296,17 @@ export function createGatewayV2(deps: DependenciesV2) {
       member();
       const filter: Query = { eq: { semesterId: semester.id, week } };
       const visibleFilter = !isManager(member().data.role) ? {eq:{...filter.eq,memberId:member().id}} : filter;
-      const [tasks, plans, availability, records, occurrences] = await Promise.all([all("tasks", visibleFilter), all("plans", filter), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", visibleFilter), includeOccurrences ? all("occurrences", filter) : Promise.resolve([])]);
-      return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => isManager(member().data.role) || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: records.map(clean), occurrences: occurrences.map(clean) };
+      const [plans, availability, records, occurrences] = await Promise.all([all("plans", {...filter,in:{status:includeOccurrences ? CURRENT_PLAN_STATUSES : ["confirmed","skipped"]}}), all("availability", { eq: { ...filter.eq, memberId: member().id } }), all("records", visibleFilter), includeOccurrences ? all("occurrences", {...filter,eq:{...filter.eq,status:"active"}}) : Promise.resolve([])]);
+      const tasks = await readCurrentWeekTasks(all, visibleFilter, plans, includeOccurrences);
+      const recordLinks = records.map(r=>({id:r.id,epoch:r.epoch,version:r.version,semesterId:r.semesterId,week:r.week,
+        taskId:r.taskId,memberId:r.memberId,data:{classLabel:r.data.classLabel}}));
+      if (!includeOccurrences) return {
+        semester:clean(semester),plan:plans.filter(x=>["confirmed","skipped"].includes(String(x.data.status))).pop(),
+        tasks:tasks.filter(t=>t.memberId===member().id).map(clean),availability:availability[0] ? clean(availability[0]) : null,occurrences:[],
+        records:recordLinks.filter(r=>r.memberId===member().id),
+        summary:{taskCount:tasks.length,recordCount:records.length,coverage:new Set(records.map(r=>String(r.data.classLabel || ""))).size},
+      };
+      return { semester: clean(semester), plan: plans.filter(x => ["confirmed", "skipped"].includes(String(x.data.status))).pop(), draft: plans.find(x => x.data.status === "draft"), uncovered: plans.find(x => x.data.status === "draft")?.data.uncovered || [], tasks: tasks.filter(t => isManager(member().data.role) || t.memberId === member().id).map(clean), plans: plans.map(clean), availability: availability[0] ? clean(availability[0]) : null, records: recordLinks, occurrences: occurrences.map(clean) };
     };
 
     const paginated: Record<string, Resource> = { autoApproved: "applications", semesters: "semesters", classes: "classes", courses: "courses", members: "members", applications: "applications", rebindings: "rebindings", audit: "audit", records: "records", recordVersions: "record_versions" };
@@ -274,15 +322,16 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (request.week !== undefined) query.eq!.week = integer(request.week, "周次", 1, 60);
         if (!canViewAllRecords(member().data.role)) query.eq!.memberId = member().id;
       }
+      let recordOwner: string | undefined;
       if (kind === "recordVersions") {
         const record = (await get("records", text(request.id, "记录标识")))!;
         if (record.semesterId !== request.semesterId) fail("学期不匹配");
         if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
-        query.eq!.recordId = record.id;
+        query.eq!.recordId = record.id; recordOwner = record.memberId;
       }
       const result = await page(paginated[kind], query);
       if (request.version !== undefined && request.version !== workspace.version) fail("列表已变化，请刷新后重试", "VERSION_CONFLICT");
-      return { items: result.items.map(row => kind === "members" && member().data.role !== "admin" ? { ...clean(row), studentNo: undefined, data: { ...row.data, studentNo: "" } } : clean(row)), cursor: result.cursor };
+      return { items: result.items.map(row => kind === "members" && member().data.role !== "admin" ? { ...clean(row), studentNo: undefined, data: { ...row.data, studentNo: "" } } : ["records","recordVersions"].includes(kind) ? cleanForViewer(row, recordOwner || row.memberId) : clean(row)), cursor: result.cursor };
     };
     if (input.operation === "bootstrap") {
       // Every initialized transaction is constrained to retain an effective admin.
@@ -294,7 +343,8 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (p.includeHome === true) {
         const semester = validActor && !workspace.maintenance && workspace.activeSemesterId ? await get("semesters", workspace.activeSemesterId) : undefined;
         const week = semester ? boundedWeek(semester.data as unknown as Semester, new Date(now)) : 1;
-        home = { semester: semester ? clean(semester) : null, week, weekData: semester ? await readWeek(semester, week, false) : null };
+        const weekData = semester ? await readWeek(semester, week, false) : null;
+        home = { semester: semester ? clean(semester) : null, week, weekData, ...(weekData?.summary ? {summary:weekData.summary} : {}) };
       }
       let pageData;
       if (p.page !== undefined) {
@@ -304,7 +354,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         // A cleared workspace invalidates saved semester selections; reset the client before querying.
         const staleEpoch = !!input.epoch && input.epoch !== workspace.epoch;
         pageData = validActor && !workspace.maintenance && !staleEpoch ? await readPageData(request, {
-          actor: validActor, workspace, now, get, page, all, clean, fail,
+          actor: validActor, workspace, now, get, page, all, clean: cleanForViewer, fail,
           count: (resource, query) => repo.count(resource, {...query,eq:{...query.eq,epoch:workspace.epoch}}),
           list: (kind, semester, week, cursor) => readList(kind, {semesterId:semester?.id,week,cursor}, !!semester),
         }) : null;
@@ -358,7 +408,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         const people = await page("members", {after:input.cursor || "",limit:integer(input.limit ?? 50,"每页条数",1,100)});
         const filter: Query = {eq:{semesterId:semester.id,week}};
         const [availability,tasks,records,plans,classes] = await Promise.all([
-          all("availability",filter),all("tasks",filter),all("records",filter),all("plans",filter),
+          all("availability",filter),all("tasks",{...filter,in:{status:EFFECTIVE_TASK_STATUSES}}),all("records",filter),all("plans",{...filter,in:{status:["confirmed","skipped"]}}),
           all("classes",{in:{id:Array.from(new Set(people.items.map(m=>String(m.data.classId || ""))))}}),
         ]);
         const skipped = plans.some(plan=>plan.data.status === "skipped");
@@ -378,14 +428,14 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (kind === "summaryReport") {
         coordinator(); const semester = await requireSemester(),week = requireWeek(semester);
         const filter: Query = {eq:{semesterId:semester.id,week}};
-        const [records,plans] = await Promise.all([all("records",filter),all("plans",filter)]);
+        const [records,plans] = await Promise.all([all("records",filter),all("plans",{...filter,in:{status:["confirmed","skipped"]}})]);
         if ((await repo.workspace()).version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
         return response({summary:summarizeEntities(semester,week,records,plans.some(v=>v.data.status==='skipped')),version:workspace.version});
       }
       if (kind === "scheduleReport") {
         excelExporter(); const semester = await requireSemester(), week = requireWeek(semester);
         const filter: Query = {eq:{semesterId:semester.id,week}};
-        const [tasks,plans] = await Promise.all([all("tasks",filter),all("plans",filter)]);
+        const [tasks,plans] = await Promise.all([all("tasks",{...filter,in:{status:EFFECTIVE_TASK_STATUSES}}),all("plans",{...filter,in:{status:["confirmed","skipped"]}})]);
         if (!plans.some(plan=>plan.data.status === "confirmed")) fail("本周尚无已确认的有效听课安排");
         if (tasks.some(task=>task.data.status === "pendingAdjustment")) fail("本周有待调整任务，请确认调整后再导出");
         const assigned=tasks.filter(task=>["confirmed","submitted"].includes(String(task.data.status)));
@@ -413,7 +463,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         member(); await requireSemester(); const record = (await get("records", text(p.id, "记录标识")))!;
         if (record.semesterId !== input.semesterId) fail("学期不匹配");
         if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
-        return response({ record: clean(record), canEdit: member().data.role === "admin" || record.memberId === member().id && now - Date.parse(String(record.data.firstSubmittedAt)) < DAY });
+        return response({ record: cleanForViewer(record), canEdit: member().data.role === "admin" || record.memberId === member().id && now - Date.parse(String(record.data.firstSubmittedAt)) < DAY });
       }
       if (kind === "week" || kind === "report" || kind === "excelReport" || kind === "namesReport") {
         member(); const semester = await requireSemester(); const week = requireWeek(semester);
@@ -422,21 +472,39 @@ export function createGatewayV2(deps: DependenciesV2) {
           if (kind === "namesReport" || ["txt", "copy"].includes(String(p.format))) namesExporter();
           else if (kind === "excelReport" || p.format === "xlsx") excelExporter();
           recordReader(); if (p.reportVersion !== undefined && p.reportVersion !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
-          const records = await all("records", filter);
+          if (p.paged !== undefined && typeof p.paged !== "boolean") fail("分页参数无效");
+          const paged = p.paged === true;
+          if (paged && input.cursor && p.reportVersion === undefined) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
+          if (paged && (input.epoch !== workspace.epoch || input.cursor !== undefined && (typeof input.cursor !== "string" || input.cursor.length > 256)))
+            fail("报表范围已变化，请重新生成", "INVALID_QUERY");
+          const recordPage = paged ? await page("records", {...filter,after:input.cursor || "",limit:50}) : undefined;
+          const records = recordPage ? recordPage.items : await all("records", filter);
           const latest = await repo.workspace(); if (latest.version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
-          const recordsData = records.map(r => ({ ...r.data, id: r.id, semesterId: r.semesterId, week: r.week, memberId: r.memberId, taskId: r.taskId })) as any[];
-          const [occurrences, links, reportTasks, reportPlans] = await Promise.all([all("occurrences", filter), all("semester_classes", { eq: { semesterId: semester.id } }), all("tasks", filter), all("plans", filter)]);
+          const recordsData = records.map(r => ({ ...r.data, id: r.id, semesterId: r.semesterId, week: r.week, memberId: r.memberId, taskId: r.taskId })) as unknown as AppState['records'];
+          if (paged && input.cursor) {
+            // Continuations carry only their batch, with the same live version fence.
+            if ((await repo.workspace()).version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
+            return response({reportPage:true,records:recordsData,version:workspace.version},recordPage!.cursor);
+          }
+          const [occurrences, links, reportTasks, reportPlans] = await Promise.all([all("occurrences", filter), all("semester_classes", { eq: { semesterId: semester.id } }), all("tasks", {...filter,in:{status:EFFECTIVE_TASK_STATUSES}}), all("plans", {...filter,in:{status:["confirmed","skipped"]}})]);
           const participating = await classesFor(links.map(link => link.parentId!));
           const classMap = new Map<string, any>();
           for (const c of participating) classMap.set(c.id, { id: c.id, ...c.data });
           for (const occurrence of occurrences) for (const c of (occurrence.data.classes || []) as any[]) classMap.set(c.id, c);
           // Frozen observations override live labels for covered classes; each record also carries its own snapshot.
-          for (const r of records) for (const c of (r.data.classes || []) as any[]) classMap.set(c.id, c);
+          if (!paged) for (const r of records) for (const c of (r.data.classes || []) as any[]) classMap.set(c.id, c);
           const classes = Array.from(classMap.values());
           const currentPlan = reportPlans.find(plan => ["confirmed", "skipped"].includes(String(plan.data.status)));
           const plans = currentPlan ? [{ ...currentPlan.data, semesterId: semester.id, week, revision: currentPlan.version, tasks: reportTasks.filter(task => ["confirmed", "submitted", "pendingAdjustment"].includes(String(task.data.status))).map(task => ({ id: task.id, memberId: task.memberId, ...task.data })) }] as any[] : [];
           const state: AppState = { schema: 1, activeSemesterId: semester.id, actorId: member().id, semesters: [{ ...semester.data, id: semester.id, grades: Array.from(new Set(classes.map(c => c.grade))) } as unknown as Semester], classes, members: [{ id: member().id, ...member().data } as any], applications: [], courses: occurrences.filter(o => o.data.status === "active").map(o => ({ ...(o.data.course as unknown as Course), id: o.id })), availability: [], plans, drafts: [], records: recordsData, audit: [], generation: 0 };
           if ((await repo.workspace()).version !== workspace.version) fail("报表数据已变化，请重新生成", "VERSION_CONFLICT");
+          if (paged) {
+            state.records = [];
+            // Report sheets use the assigned task snapshot; alternative snapshots
+            // are for choosing a lesson, and are not rendered in this export.
+            for (const plan of state.plans) for (const task of plan.tasks) delete (task as typeof task & {courseOptions?:unknown}).courseOptions;
+            return response({reportPage:true,metadata:state,records:recordsData,version:workspace.version},recordPage!.cursor);
+          }
           return response({ records: records.map(clean), semester: clean(semester), reportVersion: workspace.version, version: workspace.version, state });
         }
         return response(await readWeek(semester, week));
@@ -481,7 +549,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       let ids: string[];
       if (p.recordId) {
         const record = (await get("records", text(p.recordId, "记录标识")))!;
-        if (record.semesterId !== input.semesterId || !canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
+        if (record.semesterId !== input.semesterId || !canViewAllRecordPhotos(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
         let source = record;
         if (p.versionId) { source = (await get("record_versions", text(p.versionId, "版本标识")))!; if (source.recordId !== record.id) fail("版本归属不匹配", "FORBIDDEN"); }
         ids = strings(source.data.photos, "照片", 3);
@@ -492,7 +560,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (!input.semesterId || photo.semesterId !== input.semesterId) fail("照片学期不匹配");
         if (photo.recordId) {
           const record = (await get("records", photo.recordId))!;
-          if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
+          if (!canViewAllRecordPhotos(member().data.role) && record.memberId !== member().id) fail("不可查看他人照片", "FORBIDDEN");
         } else if (photo.memberId !== member().id) fail("不可查看他人未提交照片", "FORBIDDEN");
         storageIds.push(String(photo.data.storageId));
       }
@@ -969,7 +1037,7 @@ export function createGatewayV2(deps: DependenciesV2) {
           task.data.status = "confirmed"; put("tasks", task);
         }
         for (const prior of await all("plans", { eq: { semesterId: semester.id, week } })) if (prior.id !== plan.id && ["confirmed", "skipped"].includes(String(prior.data.status))) { prior.data.status = "superseded"; put("plans", prior); }
-        plan.data.status = plan.data.skip ? "skipped" : "confirmed"; plan.data.confirmedBy = member().id; plan.data.confirmedAt = at; put("plans", plan); audit(type, plan.id); return commit();
+        plan.data.status = plan.data.skip ? "skipped" : "confirmed"; plan.data.confirmedBy = member().id; plan.data.confirmedAt = at; put("plans", plan); audit(type, plan.id); return commitPlan(plan);
       }
       const week = requireWeek(semester);
       const currentPlan = (await all("plans", { eq: { semesterId: semester.id, week } })).find(plan => ["confirmed", "skipped"].includes(String(plan.data.status)));
@@ -980,7 +1048,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         if (tasks.some(task => task.data.status === "submitted") || (await page("records", { eq: { semesterId: semester.id, week }, limit: 1 })).items.length) fail("本周已有提交记录，不能整周跳过");
         const plan = await makeDraft(week, why); plan.data.skip = true;
         for (const task of tasks) if (["confirmed", "pendingAdjustment"].includes(String(task.data.status))) draftTask(plan, task, { ...task.data, cancel: true });
-        audit(type, plan.id, { reason: why }); return commit();
+        audit(type, plan.id, { reason: why }); return commitPlan(plan);
       }
       if (type === "taskAdjust") {
         const why = reason(); if (!Array.isArray(p.changes) || !p.changes.length || p.changes.length > 100) fail("调整清单无效");
@@ -1001,7 +1069,7 @@ export function createGatewayV2(deps: DependenciesV2) {
           if (original) draftTask(plan, original, data); else add("tasks", data, { semesterId: semester.id, week, memberId: m.id, parentId: plan.id });
         }
         await updateDraftCoverage(plan);
-        audit(type, plan.id, { reason: why }); return commit();
+        audit(type, plan.id, { reason: why }); return commitPlan(plan);
       }
       const participants = await all("semester_classes", { eq: { semesterId: semester.id } });
       const activeClasses = (await classesFor(participants.map(c => c.parentId!))).filter(c => c.data.active !== false);
@@ -1027,7 +1095,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         if ((task.candidateCourses || [task.course]).length > 100) fail("单个任务候选课程超过100门，请核对课表");
         add("tasks", taskData(occurrence, m, (task.candidateCourses || [task.course]).map(c=>snapshotOption(occurrences.find(o=>o.id===c.id)!))), { semesterId: semester.id, week, memberId: m.id, parentId: plan.id });
       }
-      audit(type, plan.id); return commit();
+      audit(type, plan.id); return commitPlan(plan);
     }
     if (type === "recordSubmit" || type === "recordEdit") {
       if (type === "recordSubmit") {

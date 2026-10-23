@@ -342,7 +342,7 @@ test("XLSX 包含动态工作表、公式、中文和真实图表关系", () => 
   for (let id = 2; id <= 13; id++) {
     const sheet = files.get(`xl/worksheets/sheet${id}.xml`)!;
     const hidden = [...sheet.matchAll(/<col min="(\d+)"[^>]*hidden="1"/g)].map(m => Number(m[1]));
-    assert.deepEqual(hidden, [13, 14, 15]);
+    assert.deepEqual(hidden, [13, 14, 15, 16, 17, 18]);
     assert.match(sheet, /INDEX\(\$M\$4:/);
     assert.match(sheet, /INDEX\(\$N\$4:/);
     assert.match(sheet, /<drawing r:id="drawing"/);

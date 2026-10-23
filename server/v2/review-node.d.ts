@@ -5,4 +5,7 @@ declare module "node:crypto" {
   export function scryptSync(password: string, salt: Uint8Array, keylen: number, options: { N: number; r: number; p: number; maxmem: number }): Uint8Array;
   export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean;
 }
-declare const Buffer: { from(data: string, encoding: string): Uint8Array & { length: number } };
+declare const Buffer: {
+  from(data: string, encoding: string): Uint8Array & { length: number };
+  byteLength(data: string, encoding: string): number;
+};

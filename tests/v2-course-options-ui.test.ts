@@ -58,16 +58,37 @@ test('普通干事首页/正式任务逐门显示课表人数，合班合计、�
    const counts=home.data.homeTasks[0].courseCounts;
    assert.deepEqual(counts.map((c:any)=>c.count),['64 人','0 人','未填写']);assert.ok(counts.every((c:any)=>c.combined));
    assert.equal(new Set(counts.map((c:any)=>c.label)).size,3);
+   for (const [i,c] of counts.entries()) {
+     assert.equal(c.name,'不同课程'+i);assert.equal(c.teacher,course.teacher);assert.equal(c.classroom,course.classroom);
+     assert.match(c.timeLabel,/第\d+–\d+节/);
+   }
    const schedule=await f.page('schedule',{week:'1'});assert.equal(schedule.data.visibleTasks.length,1);
    assert.deepEqual(schedule.data.visibleTasks[0].courseCounts,counts);
+   schedule.setData({searchText:'不同课程2'});schedule.filterRows();assert.equal(schedule.data.visibleTasks.length,1,'第二节课程也可搜索');
    // The week-2 task is newly generated; course count never fills observation metrics.
    const submit=await f.page('submission',{taskId:f.task.id});assert.equal(submit.data.fields.find((v:any)=>v.key==='expected').value,'');
+   submit.data.recordOptions[1].course.expected=51;
+   submit.chooseRecordCourse(event('1'));
+   assert.equal(submit.data.recordContext.courseHeadcount,'51 人');
+   assert.equal(submit.data.recordContext.data.course.id,submit.data.recordOptions[1].course.id);
+   assert.equal(submit.data.fields.find((v:any)=>v.key==='expected').value,'','课表人数只作参考，不填充观察人数');
    assert.deepEqual(f.errors,[]);
  },seed);
  for (const file of ['cloud.wxml','cloud-home.wxml']) {
    const template=readFileSync('miniprogram/templates/'+file,'utf8');
    assert.match(template,/courseCounts/);assert.match(template,/课表人数/);assert.match(template,/合班合计/);
  }
+});
+test('旧单课程任务即使备选数组为空，首页和安排页仍显示完整快照',async()=>{
+ const seed=optionSeed(),task=seed.rows.tasks!.find(t=>t.id==='review-task-open')!;
+ task.data.courseOptions=[];
+ await ui(async f=>{
+   const home=await f.page('home'),schedule=await f.page('schedule',{week:'1'});
+   const choices=home.data.homeTasks[0].courseCounts;
+   assert.equal(choices.length,1);assert.equal(choices[0].name,(task.data.course as any).name);
+   assert.equal(choices[0].classroom,(task.data.course as any).classroom);
+   assert.deepEqual(schedule.data.visibleTasks[0].courseCounts,choices);
+ },seed);
 });
 test('首页本周/下周任务分开，下周只显示本人已生效任务，学期末不再请求',async()=>ui(async f=>{
  const home=await f.page('home');assert.equal(home.data.week,1);assert.equal(home.data.nextWeek,2);

@@ -21,6 +21,6 @@ export function summarySheets(report:SummaryReport):SheetData[]{
    ratio('D','F','E',g.attendanceValid,g.actual,g.expected),ratio('G','H','I',g.disciplineValid,g.discipline,g.disciplineActual),ratio('L','M','N',g.lateRateValid,g.lateRate,g.lateActual)]);
  }
  const source:SheetData={name:'汇总基础数据',rows,percentColumns:[14,15,16]};
- return [source,...linkedCharts(source,report.semester.grades,report.week,['O','P','Q'],'K')];
+ return [source,...linkedCharts(source,report.semester.grades,report.week,['O','P','Q'])];
 }
 export function exportSummaryXlsx(report:SummaryReport):ArrayBuffer {return createXlsx(summarySheets(report));}

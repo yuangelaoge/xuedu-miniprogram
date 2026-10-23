@@ -4,6 +4,7 @@ import { Entity, PageResult, Query, Resource, Workspace } from '../../miniprogra
 import { LoadView, PageData, PageLoadRequest } from '../../miniprogram/domain/v2/page-data';
 import { Semester } from '../../miniprogram/domain/types';
 import { boundedWeek } from '../../miniprogram/domain/calendar';
+import { CURRENT_PLAN_STATUSES, readCurrentWeekTasks } from './week-read';
 
 interface Context {
   actor: Entity; workspace: Workspace; now: number;
@@ -82,15 +83,16 @@ export async function readPageData(request: PageLoadRequest, c: Context): Promis
     if (view === 'records') {
       const [total, submitted, plans] = await Promise.all([
         c.count('tasks', {...visibleFilter,in:{status:['confirmed','submitted','pendingAdjustment']}}),
-        c.count('records', visibleFilter), c.all('plans',filter),
+        c.count('records', visibleFilter), c.all('plans',{...filter,in:{status:['confirmed','skipped']}}),
       ]);
       result.summary = {total,submitted,skipped:plans.filter(p=>['confirmed','skipped'].includes(String(p.data.status))).pop()?.data.status === 'skipped'};
     } else if (view === 'availability') {
       const own = (await c.page('availability', {...ownFilter,limit:1})).items[0];
       result.weekData = {semester:clean(semester),tasks:[],occurrences:[],availability:own ? clean(own) : null};
     } else if (view === 'schedule') {
-      const [tasks, plans, occurrences] = await Promise.all([c.all('tasks',visibleFilter),c.all('plans',filter),
+      const [plans, occurrences] = await Promise.all([c.all('plans',{...filter,in:{status:CURRENT_PLAN_STATUSES}}),
         admin ? c.all('occurrences',{eq:{...filter.eq,status:'active'}}) : Promise.resolve([])]);
+      const tasks = await readCurrentWeekTasks(c.all, visibleFilter, plans);
       const gradeOptions = new Set<string>();
       if (canGeneratePlan(actor.data.role)) {
         const links=await c.all('semester_classes',{eq:{semesterId:selected}});

@@ -83,14 +83,14 @@ test('优化只生成草稿：确认前正式安排不变，已提交成员/班�
  const confirmed=(await f.repo.query('tasks',{eq:{week:2}})).items;
  const another=await f.call('command',{type:'planGenerate',week:2},{expectedVersion:(await f.repo.get('plans',plan.id))!.version});
  assert.deepEqual((await f.repo.query('tasks',{eq:{week:2,status:'confirmed'}})).items,confirmed);
- const next=changed(another,e=>e.data.status==='draft'&&e.data.uncovered!==undefined);
+ const next=(await f.repo.get('plans',String(another.data.planId)))!;
  await f.call('command',{type:'planConfirm',id:next.id},{expectedVersion:next.version});
  const current=(await f.repo.query('tasks',{eq:{week:2,memberId:'review-member',status:'confirmed'}})).items[0];
  const pic=await f.call('photo',{taskId:current.id,base64:'aGVsbG8='},{who:'member'});
  const submitted=await f.call('command',{type:'recordSubmitChoice',taskId:current.id,occurrenceId:taskCourseOptions(current)[2].occurrenceId,metrics:optionMetrics,photos:[pic.data.fileID]},{who:'member',expectedVersion:current.version});
  const record=changed(submitted,e=>!!e.data.firstSubmittedAt),frozen=(await f.repo.get('tasks',current.id))!;
  const regenerated=await f.call('command',{type:'planGenerate',week:2},{expectedVersion:(await f.repo.get('plans',next.id))!.version});
- const pending=(regenerated.data.changed as typeof frozen[]).filter(e=>e.memberId&&e.data.courseOptions&&!e.data.cancel);
+ const pending=(await f.repo.query('tasks',{eq:{parentId:String(regenerated.data.planId)}})).items.filter(e=>e.memberId&&e.data.courseOptions&&!e.data.cancel);
  assert.equal(pending.length,1);assert.ok(pending.every(t=>t.memberId!=='review-member'&&taskCourseOptions(t).every(o=>!o.course.classIds.includes('review-class-b'))));
  assert.deepEqual(await f.repo.get('tasks',current.id),frozen);assert.deepEqual(await f.repo.get('records',record.id),record);
 });

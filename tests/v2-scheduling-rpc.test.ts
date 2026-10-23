@@ -92,8 +92,8 @@ pgtest('scheduling RPC: 4 and 40 people produce identical drafts with three RPCs
     assert.deepEqual(calls,['xuedu_v2_scheduling_read','xuedu_v2_commit','xuedu_v2_workspace']);
     assert.deepEqual(actual,before);assert.ok(!JSON.stringify(actual).includes('identityKey'));
     console.log(`Synthetic ${people} people / ${classes} classes: draft RPC ${old.count()} -> ${calls.length}; local Docker end-to-end ${elapsed}ms (not cloud timing)`);
-    const changed=actual.data.changed as Entity[];
-    assert.equal(changed.filter(e=>e.data.occurrenceId&&!e.data.cancel).length,classes);
+    assert.deepEqual(actual.data.changed,[]);
+    assert.equal(Number(raw("SELECT count(*) FROM xuedu_v2.tasks WHERE parent_id="+literal(actual.data.planId)+" AND data->>'status'='draft' AND NOT coalesce((data->>'cancel')::boolean,false)")),classes);
   }
 });
 pgtest('scheduling RPC: member list stays paginated and redacted; 40 people requires two RPCs',async()=>{
@@ -187,7 +187,7 @@ pgtest('scheduling RPC: service-only grants and internal guard; NOWAIT prevents 
   }finally{locker.stdin.end('ROLLBACK;\n');await new Promise<void>(resolve=>locker.on('exit',()=>resolve()));}
 });
 pgtest('scheduling RPC: internal read bound rejects excess data instead of silently dropping rows',async()=>{
-  seed();raw(`INSERT INTO xuedu_v2.plans(id,epoch,version,semester_id,week,data) SELECT 'excess-'||i,'review-local',1,'review-semester',2,'{"status":"superseded"}'::jsonb FROM generate_series(1,5001) i`);
+  seed();raw(`INSERT INTO xuedu_v2.plans(id,epoch,version,semester_id,week,data) SELECT 'excess-'||i,'review-local',1,'review-semester',2,'{"status":"draft"}'::jsonb FROM generate_series(1,5001) i`);
   await assert.rejects(gateway(new PostgresRepository(db))(req(),context()),/SCHEDULING_LIMIT/);
   assert.equal(raw('SELECT version FROM xuedu_v2.workspace'),'1');
 });
@@ -206,6 +206,79 @@ pgtest('schedule bootstrap: administrator receives selected-week active course o
 });
 pgtest('scheduling RPC: officer retains draft generation; task confirmation remains a separate administrator action',async()=>{
   seed();const api=gateway(new PostgresRepository(db));const result=await api(req(),context('officer'));
-  assert.ok((result.data.changed as Entity[]).filter(e=>e.data.occurrenceId).every(e=>e.data.status==='draft'));
+  assert.deepEqual(result.data.changed,[]);
+  assert.ok(Number(raw("SELECT count(*) FROM xuedu_v2.tasks WHERE parent_id="+literal(result.data.planId)+" AND data->>'status'='draft'"))>0);
+  assert.equal(raw("SELECT count(*) FROM xuedu_v2.tasks WHERE parent_id="+literal(result.data.planId)+" AND data->>'status'<>'draft'"),'0');
   assert.equal(calls.length,3);
+});
+
+pgtest('scheduling receipts: large regenerate/confirm/adjust/skip fit 128 KiB and replay without rewriting business rows',async()=>{
+  const s=synthetic(35,26);
+  for(const available of s.rows.availability!) available.data.slots=[1,2,3,4,5].flatMap(day=>[`${day}:3`,`${day}:4`]);
+  for(const occurrence of [...s.rows.occurrences!].filter(o=>o.week===2)) {
+    const course=occurrence.data.course as Record<string,unknown>;
+    course.name='合成课程：数据结构与算法分析';course.teacher='合成教师';course.classroom='合成教学楼01-0401';
+    course.weekday=1;course.start=3;course.end=4;
+    for(let i=1;i<=4;i++) {
+      const other=structuredClone(occurrence);other.id=occurrence.id+'-option-'+i;
+      other.date=`2026-10-${19+i}`;other.data.date=other.date;
+      other.data.course={...course,id:String(course.id)+'-option-'+i,weekday:i+1};
+      s.rows.occurrences!.push(other);
+    }
+  }
+  seed(s);
+  const repository=new PostgresRepository(db),api=gateway(repository);
+  const stableRows=()=>raw("SELECT jsonb_build_object('tasks',(SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM xuedu_v2.tasks t WHERE week=1),'records',(SELECT jsonb_agg(to_jsonb(r) ORDER BY id) FROM xuedu_v2.records r))");
+  const protectedRows=stableRows();
+  const originalCommit=repository.commit.bind(repository);
+  let legacyReceiptBytes=0;
+  repository.commit=async c=>{
+    if(c.requestId==='receipt-regenerate') {
+      // Reproduce the old result shape against the actual PostgreSQL CHECK,
+      // only in this disposable local database. Its failed transaction must
+      // roll back the superseding/new tasks as well as the oversized receipt.
+      const changed=c.changes.filter(ch=>ch.value&&!['bindings','photos','audit'].includes(ch.resource))
+        .map(ch=>({...ch.value!,version:ch.expectedVersion+1}));
+      const old={...c,result:{changed,refresh:c.result.refresh}};
+      legacyReceiptBytes=Number(raw(`SELECT octet_length(${quote({result:old.result,permissionsVersion:c.permissionsVersion,actorId:c.actorId})}::text)`));
+      assert.ok(legacyReceiptBytes>131072,`old receipt has ${legacyReceiptBytes} bytes`);
+      const before=raw("SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM xuedu_v2.tasks t"),version=(await repository.workspace()).version;
+      assert.throws(()=>raw(role()+`SELECT public.xuedu_v2_commit(${quote(old)})`),/requests_data_check/);
+      assert.equal(raw("SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM xuedu_v2.tasks t"),before);
+      assert.equal((await repository.workspace()).version,version);
+    }
+    return originalCommit(c);
+  };
+  const run=async(request:ApiRequest)=>{
+    const result=await api(request,context());
+    assert.deepEqual(result.data.changed,[]);
+    assert.equal(typeof result.data.planId,'string');assert.equal(typeof result.data.planVersion,'number');
+    assert.ok((result.data.refresh as string[]).includes('plans'));
+    assert.ok((result.data.refresh as string[]).includes('tasks'));
+    const plan=(await repository.get('plans',String(result.data.planId)))!;
+    assert.equal(plan.version,result.data.planVersion);
+    const receiptBytes=Number(raw("SELECT octet_length(data::text) FROM xuedu_v2.requests WHERE parent_id="+literal(request.requestId)));
+    assert.ok(receiptBytes<1024);
+    const version=(await repository.workspace()).version;
+    assert.deepEqual((await api(request,context())).data,result.data);
+    assert.equal((await repository.workspace()).version,version);
+    assert.equal(stableRows(),protectedRows);
+    return plan;
+  };
+  await run(req('planGenerate',{requestId:'receipt-initial'}));
+  const regenerated=await run(req('planGenerate',{requestId:'receipt-regenerate'}));
+  assert.equal(raw("SELECT count(*) FROM xuedu_v2.tasks WHERE week=2 AND data->>'status'='confirmed'"),'0');
+  const confirmed=await run(req('planConfirm',{requestId:'receipt-confirm',expectedVersion:regenerated.version,payload:{type:'planConfirm',id:regenerated.id}}));
+  const before=raw("SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM xuedu_v2.tasks t WHERE week=2 AND data->>'status'='confirmed'");
+  const formal=JSON.parse(before) as {id:string}[];assert.equal(formal.length,26);
+  const replacement=await run(req('planGenerate',{requestId:'receipt-replace',expectedVersion:confirmed.version}));
+  assert.equal(raw("SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM xuedu_v2.tasks t WHERE week=2 AND data->>'status'='confirmed'"),before);
+  const adjusted=await run(adjust(formal.map(t=>({taskId:t.id,cancel:true})),{requestId:'receipt-adjust',expectedVersion:confirmed.version}));
+  assert.equal((await repository.get('plans',replacement.id))!.data.status,'superseded');
+  const skip=await run(req('planSkip',{requestId:'receipt-skip',expectedVersion:confirmed.version,payload:{type:'planSkip',week:2,reason:'合成假期'}}));
+  assert.equal((await repository.get('plans',adjusted.id))!.data.status,'superseded');
+  assert.equal(raw("SELECT jsonb_agg(to_jsonb(t) ORDER BY id) FROM xuedu_v2.tasks t WHERE week=2 AND data->>'status'='confirmed'"),before);
+  await run(req('planConfirm',{requestId:'receipt-confirm-skip',expectedVersion:skip.version,payload:{type:'planConfirm',id:skip.id}}));
+  assert.equal(raw("SELECT count(*) FROM xuedu_v2.tasks WHERE week=2 AND data->>'status'='confirmed'"),'0');
+  console.log(`Synthetic 35 people / 26 classes: old regeneration receipt ${legacyReceiptBytes} bytes rejected; all compact receipts <1024 bytes (local PostgreSQL only)`);
 });

@@ -425,6 +425,20 @@ textarea.input {
 
 /* V2 提交和更正共用分组，避免更正页缺少 submission 专属样式。 */
 .v2-record-context { background: #f5f8ff; border-radius: 18rpx; padding: 22rpx; }
+.task-options-note { margin: 18rpx 0 4rpx; color: #285de0; font-size: 23rpx; line-height: 1.6; }
+.task-option { padding: 22rpx 0; }
+.task-option + .task-option { border-top: 1rpx solid #e8edf5; }
+.task-option:last-child { padding-bottom: 4rpx; }
+.task-option-heading { display: flex; align-items: flex-start; gap: 12rpx; margin-bottom: 12rpx; }
+.task-option-number { flex-shrink: 0; min-width: 36rpx; line-height: 36rpx; margin-top: 4rpx; border-radius: 8rpx; text-align: center; color: #285de0; background: #edf3ff; font-size: 23rpx; }
+.task-option-title { min-width: 0; font-size: 30rpx; line-height: 1.5; font-weight: 600; color: #20324f; overflow-wrap: break-word; }
+.task-option-meta { display: flex; gap: 14rpx; margin-top: 4rpx; color: #4d5d75; font-size: 24rpx; line-height: 1.65; overflow-wrap: break-word; }
+.task-option-meta > text:last-child { flex: 1; min-width: 0; }
+.task-option-label { flex-shrink: 0; color: #8390a4; }
+.task-option-count { margin-top: 8rpx; color: #4d5d75; font-size: 24rpx; line-height: 1.65; }
+.record-choice-hint { margin-left: 16rpx; color: #6b7d98; font-size: 22rpx; font-weight: 400; }
+.record-course-picker { display: flex; justify-content: space-between; gap: 12rpx; color: #285de0; background: #fff; font-weight: 600; }
+.record-choice-arrow { flex-shrink: 0; }
 .v2-metric-grid { display: flex; flex-wrap: wrap; justify-content: space-between; margin-top: 20rpx; }
 .v2-metric-field { width: 48%; box-sizing: border-box; padding: 20rpx; border: 1rpx solid #eaf0f7; border-radius: 18rpx; margin-bottom: 18rpx; }
 .v2-metric-input { font-size: 38rpx; height: 70rpx; color: #295caa; }

@@ -6,6 +6,7 @@ export interface SheetData {
   raw?: boolean;
   groupHeaders?: boolean;
   chartPercent?: boolean;
+  chartSeries?: {name:string;column:number;color:string;labels?:boolean}[];
   percentColumns?: number[];
   /** Zero-based columns retained for formulas but hidden in the exported workbook. */
   hiddenColumns?: number[];
@@ -15,7 +16,7 @@ export interface SheetData {
   autoFilter?: boolean;
 }
 export type Cell =
-  string | number | null | { formula: string; value: string | number };
+  string | number | null | { formula: string; value: string | number; error?:boolean };
 const cached = (cell: Cell): string | number | null => typeof cell === "object" && cell !== null ? cell.value : cell;
 const xml = (v: unknown) =>
   String(v)
@@ -113,6 +114,17 @@ const main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const relation =
   "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const pkgRel = "http://schemas.openxmlformats.org/package/2006/relationships";
+const noFill='<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln></c:spPr>';
+const chartSeries=(s:SheetData)=>s.chartSeries || [{name:s.name,column:1,color:'2E75B6',labels:true}];
+const valueName=(id:number,series:number)=>`ChartValues${id}_${series}`;
+function chartXml(s:SheetData,id:number):string {
+  const data=s.rows.slice(3).filter(r=>typeof cached(r[1])==='number');
+  const fmt=s.chartPercent===false || s.name.includes('人数')?'0':'0.00%';
+  const quote="'"+s.name.replace(/'/g,"''")+"'!";
+  const textStyle=(rotation=0,size=1100)=>`<c:txPr><a:bodyPr rot="${rotation}"/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="${size}"><a:solidFill><a:srgbClr val="404040"/></a:solidFill><a:latin typeface="Microsoft YaHei"/><a:ea typeface="Microsoft YaHei"/></a:defRPr></a:pPr><a:endParaRPr lang="zh-CN"/></a:p></c:txPr>`;
+  const series=chartSeries(s).map((spec,i)=>`<c:ser><c:idx val="${i}"/><c:order val="${i}"/><c:tx><c:v>${xml(spec.name)}</c:v></c:tx><c:spPr>${spec.color?`<a:solidFill><a:srgbClr val="${spec.color}"/></a:solidFill>`:'<a:noFill/>'}<a:ln><a:noFill/></a:ln></c:spPr><c:invertIfNegative val="0"/>${spec.labels?`<c:dLbls><c:numFmt formatCode="${fmt}" sourceLinked="0"/>${textStyle(0,1100)}<c:dLblPos val="outEnd"/><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/></c:dLbls>`:'<c:dLbls><c:delete val="1"/></c:dLbls>'}<c:cat><c:strRef><c:f>${xml(quote+'ChartLabels'+id)}</c:f><c:strCache><c:ptCount val="${data.length}"/>${data.map((r,j)=>`<c:pt idx="${j}"><c:v>${xml(cached(r[0]))}</c:v></c:pt>`).join('')}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>${xml(quote+valueName(id,i))}</c:f><c:numCache><c:formatCode>${fmt}</c:formatCode><c:ptCount val="${data.length}"/>${data.map((r,j)=>typeof cached(r[spec.column])==='number'?`<c:pt idx="${j}"><c:v>${cached(r[spec.column])}</c:v></c:pt>`:'').join('')}</c:numCache></c:numRef></c:val></c:ser>`).join('');
+  return `<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:lang val="zh-CN"/><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="zh-CN" sz="1600" b="1"/><a:t>${xml(s.name)}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>${series}<c:gapWidth val="90"/><c:overlap val="100"/><c:axId val="10"/><c:axId val="20"/></c:barChart><c:catAx><c:axId val="10"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:majorTickMark val="none"/><c:minorTickMark val="none"/><c:tickLblPos val="nextTo"/>${textStyle(-2700000,1100)}<c:crossAx val="20"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:tickLblSkip val="1"/></c:catAx><c:valAx><c:axId val="20"/><c:scaling><c:orientation val="minMax"/><c:min val="0"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines><c:spPr><a:ln w="9525"><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></a:ln></c:spPr></c:majorGridlines><c:numFmt formatCode="${fmt}" sourceLinked="0"/><c:majorTickMark val="none"/><c:tickLblPos val="nextTo"/>${textStyle()}<c:crossAx val="10"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>${noFill}</c:plotArea><c:plotVisOnly val="0"/><c:dispBlanksAs val="gap"/></c:chart>${noFill}</c:chartSpace>`;
+}
 export function createXlsx(sheets: SheetData[]): ArrayBuffer {
   const files: { name: string; text: string }[] = [];
   const overrides: string[] = [];
@@ -155,7 +167,12 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
             '"/>',
         )
         .join("") +
-      '</sheets><definedNames>' + sheets.map((s,i)=>s.chart && s.rows.length>3 ? '<definedName localSheetId="'+i+'" name="ChartLabels'+(i+1)+'">'+xml("OFFSET('"+s.name.replace(/'/g,"''")+"'!$A$4,0,0,MAX(1,COUNT('"+s.name.replace(/'/g,"''")+"'!$B$4:$B$"+s.rows.length+")),1)")+'</definedName><definedName localSheetId="'+i+'" name="ChartValues'+(i+1)+'">'+xml("OFFSET('"+s.name.replace(/'/g,"''")+"'!$B$4,0,0,MAX(1,COUNT('"+s.name.replace(/'/g,"''")+"'!$B$4:$B$"+s.rows.length+")),1)")+'</definedName>' : '').join('') + '</definedNames><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>',
+      '</sheets><definedNames>' + sheets.map((s,i)=>{
+        if(!s.chart || s.rows.length<=3)return '';
+        const sheet="'"+s.name.replace(/'/g,"''")+"'!";
+        const range=(column:string)=>xml(`OFFSET(${sheet}$${column}$4,0,0,MAX(1,COUNT(${sheet}$B$4:$B$${s.rows.length})),1)`);
+        return `<definedName localSheetId="${i}" name="ChartLabels${i+1}">${range('A')}</definedName>`+chartSeries(s).map((series,j)=>`<definedName localSheetId="${i}" name="${valueName(i+1,j)}">${range(col(series.column))}</definedName>`).join('');
+      }).join('') + '</definedNames><calcPr calcId="191029" fullCalcOnLoad="1"/></workbook>',
     spreadsheetType + "sheet.main+xml",
   );
   add(
@@ -183,7 +200,7 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
     "xl/styles.xml",
     '<styleSheet xmlns="' +
       main +
-      '"><numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Microsoft YaHei"/><color rgb="FF263650"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Microsoft YaHei"/></font><font><b/><sz val="16"/><name val="Microsoft YaHei"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2468E8"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>',
+      '"><numFmts count="1"><numFmt numFmtId="164" formatCode="0.00%"/></numFmts><fonts count="3"><font><sz val="11"/><name val="Microsoft YaHei"/><color rgb="FF263650"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Microsoft YaHei"/></font><font><b/><sz val="16"/><name val="Microsoft YaHei"/></font></fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF2468E8"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0"/><xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>',
     spreadsheetType + "styles+xml",
   );
   sheets.forEach((s, i) => {
@@ -218,7 +235,7 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
                   '" s="' +
                   style +
                   '"' +
-                  (typeof c.value === "string" ? ' t="str"' : "") +
+                  (c.error ? ' t="e"' : typeof c.value === "string" ? ' t="str"' : "") +
                   "><f>" +
                   xml(c.formula) +
                   "</f><v>" +
@@ -280,11 +297,11 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
       );
       add(
         "xl/drawings/drawing" + id + ".xml",
-        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:twoCellAnchor><xdr:from><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>3</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:to><xdr:col>12</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>22</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="' +
+        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><xdr:oneCellAnchor><xdr:from><xdr:col>3</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>3</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="' + (Math.max(1000,s.rows.slice(3).filter(r=>typeof cached(r[1])==="number").length*76)*9525) + '" cy="5715000"/><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="' +
           xml(s.name) +
           '"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:r="' +
           relation +
-          '" r:id="chart"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>',
+          '" r:id="chart"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor></xdr:wsDr>',
         "application/vnd.openxmlformats-officedocument.drawing+xml",
       );
       add(
@@ -297,40 +314,9 @@ export function createXlsx(sheets: SheetData[]): ArrayBuffer {
           id +
           '.xml"/></Relationships>',
       );
-      const data = s.rows.slice(3).filter(r=>typeof cached(r[1]) === "number"),
-        fmt = s.chartPercent === false || s.name.includes("人数") ? "0" : "0.0%";
       add(
         "xl/charts/chart" + id + ".xml",
-        '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:t>' +
-          xml(s.name) +
-          '</a:t></a:r></a:p></c:rich></c:tx></c:title><c:plotArea><c:layout/><c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:v>' +
-          xml(s.name) +
-          "</c:v></c:tx><c:cat><c:strRef><c:f>" +
-          xml("'"+s.name.replace(/'/g,"''")+"'!ChartLabels"+id) +
-          '</c:f><c:strCache><c:ptCount val="' +
-          data.length +
-          '"/>' +
-          data
-            .map(
-              (r, j) =>
-                '<c:pt idx="' + j + '"><c:v>' + xml(cached(r[0])) + "</c:v></c:pt>",
-            )
-            .join("") +
-          "</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>" +
-          xml("'"+s.name.replace(/'/g,"''")+"'!ChartValues"+id) +
-          "</c:f><c:numCache><c:formatCode>" +
-          fmt +
-          '</c:formatCode><c:ptCount val="' +
-          data.length +
-          '"/>' +
-          data
-            .map(
-              (r, j) => '<c:pt idx="' + j + '"><c:v>' + cached(r[1]) + "</c:v></c:pt>",
-            )
-            .join("") +
-          '</c:numCache></c:numRef></c:val></c:ser><c:axId val="10"/><c:axId val="20"/></c:barChart><c:catAx><c:axId val="10"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="b"/><c:tickLblPos val="nextTo"/><c:crossAx val="20"/><c:crosses val="autoZero"/></c:catAx><c:valAx><c:axId val="20"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:axPos val="l"/><c:numFmt formatCode="' +
-          fmt +
-          '" sourceLinked="0"/><c:tickLblPos val="nextTo"/><c:crossAx val="10"/><c:crosses val="autoZero"/></c:valAx></c:plotArea><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart></c:chartSpace>',
+        chartXml(s,id),
         "application/vnd.openxmlformats-officedocument.drawingml.chart+xml",
       );
     }

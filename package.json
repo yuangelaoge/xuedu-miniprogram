@@ -8,7 +8,10 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json",
     "test": "node --import tsx --test tests/*.test.ts",
     "test:db": "node scripts/v2-db-test.mjs",
-    "test:wxml": "node scripts/check-wxml.mjs"
+    "test:wxml": "node scripts/check-wxml.mjs",
+    "test:db:all": "node scripts/v2-db-test.mjs --all",
+    "check:release": "node scripts/release-check.mjs",
+    "check:release:verify": "node scripts/release-check.mjs --verify"
   },
   "keywords": [],
   "author": "",

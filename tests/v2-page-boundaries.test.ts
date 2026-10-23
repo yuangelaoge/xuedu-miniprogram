@@ -152,7 +152,13 @@ test('首页启动合并：本周保持一次请求，下周独立一次读取',
   assert.ok(member.data.weekData.records.every((record: Entity) => record.memberId === 'member'));
   const wx = (globalThis as any).wx;
   const legacy = await wx.cloud.callFunction({data:{protocolVersion:2,operation:'query',epoch:'epoch-boundary',semesterId:'semester',payload:{kind:'week',week:1}}});
-  assert.deepEqual(member.data.weekData, {...legacy.result.data.data,occurrences:[]}, '首页省去课程实例，任务、记录与统计口径保持一致');
+  const weekData = legacy.result.data.data;
+  assert.deepEqual(member.data.weekData, {
+    semester:weekData.semester,plan:weekData.plan,tasks:weekData.tasks,
+    availability:weekData.availability,records:weekData.records,occurrences:[],
+    summary:{taskCount:1,recordCount:1,coverage:1},
+  }, '首页保留本人完整任务和记录链接，概览独立返回，不携带草稿历史和课程实例');
+  assert.ok(member.data.weekData.records.every((record:Entity)=>Object.keys(record.data).every(key=>key==='classLabel')));
 }));
 
 test('首页启动合并：未入组与无启用学期不返回内部周数据', async () => fixture(async f => {
@@ -234,9 +240,13 @@ test('页面合并：未入组、维护、越权管理和他人记录仍受限�
   await assert.rejects(invoke('manage',{section:'classes'}),/权限/);
   const existing=await f.repository.get('records','record'), state=await f.repository.workspace();
   await f.repository.commit({epoch:state.epoch,workspaceVersion:state.version,permissionsVersion:state.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'foreign-record',reads:[],changes:[{resource:'records',id:'foreign',expectedVersion:0,value:{...existing,id:'foreign',memberId:'admin',taskId:'foreign-task'}}],result:{}});
-  await assert.rejects(invoke('record',{targetId:'foreign'}),/无权查看/);
-  const own=await invoke('records');assert.ok(own.data.page.list.items.every((r:Entity)=>r.memberId==='member'));
-  assert.equal(own.data.page.summary.submitted,1);
+  const shared=await invoke('record',{targetId:'foreign'});assert.equal(shared.data.page.record.record.data.photos,undefined);assert.equal(shared.data.page.record.canEdit,false);
+  f.who('member-wechat');f.calls.length=0;const detail=await f.page('record',{id:'foreign',semesterId:'semester'});
+  assert.equal(detail.data.error,'');assert.equal(detail.data.canViewRecordPhotos,false);assert.deepEqual(detail.data.photoUrls,[]);
+  await detail.previewPhoto(event());await detail.versionPhotos(event({id:'forged'}));
+  assert.ok(!f.calls.some((c:any)=>c.operation==='photoUrls'));
+  const own=await invoke('records');assert.equal(own.data.page.list.items.length,2);
+  assert.equal(own.data.page.summary.submitted,2);
   await assert.rejects(invoke('submission',{targetId:'missing'}),/不存在/);
   f.who('applicant');const applicant=await f.page('records');assert.equal(applicant.data.memberId,'');assert.equal(applicant.data.rows.length,1);
   const rejected=await f.gateway({protocolVersion:2,operation:'bootstrap',payload:{page:{view:'records'}}},{OPENID:'applicant',APPID:'app'});
@@ -434,4 +444,15 @@ test('安排页读取尚未完成时从首页跳转，最终显示新指定周�
   await schedule.onShow();release();await loading;
   assert.equal(schedule.data.week,8);assert.equal(schedule.data.error,'');assert.equal(schedule.data.busy,false);
   assert.equal(f.calls.at(-1).payload.page.week,8);
+}));
+
+test('legacy fast records RPC falls back for authenticated member and retains text/photo separation',async()=>fixture(async f=>{
+  const existing=await f.repository.get('records','record'),w=await f.repository.workspace();
+  await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'fast-shared',reads:[],changes:[{resource:'records',id:'foreign',expectedVersion:0,value:{...existing,id:'foreign',memberId:'admin',taskId:'foreign-task'}}],result:{}});
+  let fastCalls=0;
+  f.repository.bootstrapPage=async()=>{fastCalls++;return {protocolVersion:2,epoch:w.epoch,resourceVersions:{workspace:1},data:{member:await f.repository.get('members','member'),page:{list:{items:[existing],cursor:''}}}};};
+  const result=await f.gateway({protocolVersion:2,operation:'bootstrap',payload:{fastPage:true,page:{view:'records',week:1,semesterId:'semester'}}},{OPENID:'member-wechat',APPID:'app'});
+  assert.equal(fastCalls,1);assert.equal(result.data.page.list.items.length,2);
+  assert.equal(result.data.page.list.items.find((r:Entity)=>r.id==='foreign').data.photos,undefined);
+  assert.deepEqual(result.data.page.list.items.find((r:Entity)=>r.id==='record').data.photos,['photo']);
 }));

@@ -64,8 +64,8 @@ function api(repo:Repository,hooks:{uploaded?:()=>Promise<void>;now?:number}={})
  const photos=createPhotos({async upload(path,bytes,options){uploads++;assert.equal(options.upsert,true);files.set(path,bytes);await hooks.uploaded?.();return {data:{},error:null};},async list(){return {data:{objects:[],folders:[],hasNext:false},error:null};},async remove(){throw Error('must not delete');},async createSignedUrls(paths){return {data:paths.map(path=>({path,signedURL:'https://synthetic.invalid/'+path})),error:null};}},b=>Buffer.from(b,'base64'));
  return {call:createGatewayV2({repository:repo,appid:'app',bootstrapOpenid:'unused',photos,maxExecutionMs:3000,uuid:()=>`record-${++serial}`,now:()=>hooks.now ?? now}),files,uploads:()=>uploads};
 }
-pgtest('old-client writes: 1–3 photos, three RPCs per upload/submit/edit; fresh-ID retries reuse real success',async()=>{
- for (const n of [1,2,3]) {
+pgtest('old-client writes: one photo, three RPCs per upload/submit/edit; fresh-ID retries reuse real success',async()=>{
+ const n=1;
   seed();const fallback=new PostgresRepository(db);fallback.recordRead=async()=>null;
   const old=api(fallback),oldIds:string[]=[];
   for(let i=1;i<=n;i++) {calls.length=0;oldIds.push(String((await old.call(photo(i),ctx())).data.fileID));assert.equal(calls.length,9);}
@@ -85,6 +85,47 @@ pgtest('old-client writes: 1–3 photos, three RPCs per upload/submit/edit; fres
   const after=JSON.parse(raw(`SELECT data FROM xuedu_v2.records WHERE id=${literal(saved.id)}`));assert.equal(after.firstSubmittedAt,saved.data.firstSubmittedAt);assert.equal(after.revision,2);
   // A later explicit edit with the new version remains a distinct revision.
   await a.call({...update,requestId:'next-edit',expectedVersion:2},ctx());assert.equal(raw(`SELECT data->>'revision' FROM xuedu_v2.records WHERE id=${literal(saved.id)}`),'3');
+});
+pgtest('new submissions reject two or three photos without creating a record or completing the task',async()=>{
+ for (const n of [2,3]) {
+  seed();const a=api(new PostgresRepository(db)),ids:string[]=[];
+  for(let i=1;i<=n;i++) ids.push(String((await a.call(photo(i),ctx())).data.fileID));
+  const before=raw("SELECT version FROM xuedu_v2.workspace WHERE id='main'");
+  await assert.rejects(a.call(submit(ids,'multi-photo-submit'),ctx()),/每份记录需上传1张签字照片/);
+  // The gateway fallback enforces the same rule for a staged deployment without the read RPC.
+  const fallback=new PostgresRepository(db);fallback.recordRead=async()=>null;
+  await assert.rejects(api(fallback).call(submit(ids,'multi-photo-fallback'),ctx()),/每份记录需上传1张签字照片/);
+  assert.equal(raw("SELECT version FROM xuedu_v2.workspace WHERE id='main'"),before);
+  assert.equal(Number(raw("SELECT count(*) FROM xuedu_v2.records WHERE task_id='review-task-open'")),0);
+  assert.equal(raw("SELECT data->>'status' FROM xuedu_v2.tasks WHERE id='review-task-open'"),'confirmed');
+  assert.equal(Number(raw("SELECT count(*) FROM xuedu_v2.photos WHERE task_id='review-task-open' AND record_id IS NOT NULL")),0);
+ }
+});
+pgtest('historical two- or three-photo records keep all original photos through corrections and fresh-ID retries',async()=>{
+ for (const n of [2,3]) {
+  const s=synthetic(),record=s.rows.records!.find(row=>row.id==='review-record')!;
+  const source=s.rows.photos!.find(row=>row.id==='review-photo-sample')!,ids=[source.id];
+  for(let i=1;i<n;i++) {
+   const id='review-photo-legacy-'+i;ids.push(id);
+   s.rows.photos!.push({...source,id,data:{...source.data,storageId:'synthetic-legacy-file-'+i}});
+  }
+  record.data.photos=ids.slice();
+  for(const version of s.rows.record_versions!.filter(row=>row.recordId===record.id)) version.data.photos=ids.slice();
+  seed(s);const a=api(new PostgresRepository(db));
+  const request:ApiRequest={...edit(),payload:{...edit().payload,photos:ids}};
+  calls.length=0;const corrected=await a.call(request,ctx('leader'));assert.equal(calls.length,3);
+  calls.length=0;assert.deepEqual((await a.call({...request,requestId:'legacy-edit-new-id'},ctx('leader'))).data,corrected.data);assert.equal(calls.length,2);
+  const after=JSON.parse(raw("SELECT data FROM xuedu_v2.records WHERE id='review-record'")) as Record<string,unknown>;
+  assert.deepEqual(after.photos,ids);assert.equal(after.firstSubmittedAt,record.data.firstSubmittedAt);assert.equal(after.revision,2);
+  const history=JSON.parse(raw("SELECT jsonb_agg(data ORDER BY version,id) FROM xuedu_v2.record_versions WHERE record_id='review-record'")) as Record<string,unknown>[];
+  assert.equal(history.length,2);assert.ok(history.every(row=>JSON.stringify(row.photos)===JSON.stringify(ids)));
+  // A different multi-photo set is not grandfathered in, even if it is made of the owner's photos.
+  const replacement={...source,id:'review-photo-replacement',data:{...source.data,storageId:'synthetic-replacement'}};
+  raw(`INSERT INTO xuedu_v2.photos(id,epoch,version,data,semester_id,member_id,task_id,record_id)
+   VALUES(${literal(replacement.id)},${literal(replacement.epoch)},1,${quote(replacement.data)},${literal(replacement.semesterId)},${literal(replacement.memberId)},${literal(replacement.taskId)},${literal(replacement.recordId)});`);
+  await assert.rejects(a.call({...request,requestId:'changed-legacy-photos',expectedVersion:2,
+   payload:{...request.payload,photos:[...ids.slice(0,-1),replacement.id]}},ctx('leader')),/每份记录需上传1张签字照片/);
+  assert.equal(raw("SELECT data->>'revision' FROM xuedu_v2.records WHERE id='review-record'"),'2');
  }
 });
 pgtest('lost responses: old-client new-ID retry recovers photo, submit and edit without duplicate revisions',async()=>{

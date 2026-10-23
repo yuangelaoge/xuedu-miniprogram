@@ -35,14 +35,14 @@ export function optionApi(repository:Repository) {
   const {who='admin',...rest}=extra;
   return api({protocolVersion:2,operation,epoch:'review-options',semesterId:'review-semester',requestId:'client-'+ ++serial,expectedVersion:0,payload,...rest},{OPENID:reviewIdentity('options',who),APPID:'app'});
  };
- return {call,uploads:()=>uploads};
+ return {repo:repository,call,uploads:()=>uploads};
 }
-export function optionFixture(seed=optionSeed()) {const repo=new MemoryRepository(seed.workspace,seed.rows,()=>optionNow);return {seed,repo,...optionApi(repo)};}
+export function optionFixture(seed=optionSeed()) {const repo=new MemoryRepository(seed.workspace,seed.rows,()=>optionNow);return {seed,...optionApi(repo)};}
 export function changed(result:{data:Record<string,unknown>},predicate:(e:Entity)=>boolean):Entity {return (result.data.changed as Entity[]).find(predicate)!;}
 export async function generateOptions(f:ReturnType<typeof optionApi>, priorityGrade='') {
  const draft=await f.call('command',{type:'planGenerate',week:2,priorityGrade});
- const plan=changed(draft,e=>e.data.status==='draft' && e.data.uncovered!==undefined);
- const task=changed(draft,e=>e.memberId==='review-member' && e.data.courseOptions!==undefined);
+ const plan=(await f.repo.get('plans',String(draft.data.planId)))!;
+ const task=(await f.repo.query('tasks',{eq:{parentId:plan.id,memberId:'review-member',status:'draft'}})).items[0];
  return {plan,task};
 }
 

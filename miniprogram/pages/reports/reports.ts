@@ -1,4 +1,4 @@
-import { canViewAllRecords, canExportFullXlsx, canExportNames } from "../../domain/capabilities";
+import { canViewAllRecords, canViewAllRecordPhotos, canExportFullXlsx, canExportNames } from "../../domain/capabilities";
 import { isCloud as cloudEnabled } from "../../config/runtime";
 import { registerCloudPage } from "../../services/v2/page";
 import { context, published, run } from "../../services/store";
@@ -50,7 +50,7 @@ if (cloudEnabled()) registerCloudPage("records"); else memberPage({
     const c = context();
     const identity = c.user.id + ":" + c.user.role;
     if (identity !== this.viewIdentity) {
-      this.setData({ tab: canViewAllRecords(c.user.role) ? "all" : "mine", filePath: "", filename: "" });
+      this.setData({ tab: canViewAllRecordPhotos(c.user.role) ? "all" : "mine", filePath: "", filename: "" });
       this.viewIdentity = identity;
     }
     if (!this.initialized) {

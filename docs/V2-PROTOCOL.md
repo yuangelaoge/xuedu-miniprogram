@@ -38,6 +38,7 @@ interface Response<T> {
 - 修改需 `requestId`；同一逻辑请求重试使用原ID，新操作换ID。服务端按 epoch+可信身份+requestId 独立保存结果。不要把超时视为没有提交，也不要用新ID盲重放。
 - `resourceVersions.workspace` 是工作区读版本，其他键为 `resource:id`。服务端事务还核对 permissionsVersion、操作者当前绑定、所有读取/修改对象版本，冲突提示刷新，不覆盖并发结果。
 - 写入data返回 `changed` 实体和 `refresh` 资源范围及该命令附加结果，不返回全部历史。`changed`为实体数组，bindings/photos/audit不回传内部内容；按refresh重新请求相关页面。
+- 排班命令 `planGenerate / taskAdjust / planConfirm / planSkip` 的精简回执返回 `changed: []`、`planId`、`planVersion` 和 `refresh`；完整计划与任务通过页面查询读取，不能从 `changed` 推断没有变更。此调整避免新旧任务快照重复存入 `requests.data` 超过 128 KiB；事务内完整变更、读版本及权限检查保持不变。同一请求编号仍重放已保存的回执，历史完整回执兼容保留。2026-10-22 已部署，验证范围见 [排班回执修复](SCHEDULING-RECEIPT-REPAIR-2026-10-22.md)。
 
 ## 独立资源
 
@@ -129,6 +130,16 @@ startDate必须星期一；仅服务端指定微信且没有管理员时可执�
 autoApproval 的 setting 保存 enabled、expiresAt、updatedBy、updatedByName、updatedAt。到期不需要后台任务修改该行，active 始终按服务器时间计算，客户端不可只读 enabled 判断。非管理员 bootstrap 不返回该配置。自动入组 SQL 还用数据库时钟检查截止，并校验成员、绑定、申请与审计四项的关系；到期或冲突全事务回滚。详见 [限时入组说明](AUTO-APPROVAL.md)。
 
 report以记录中的班级/课程快照构造历史统计，不按当前名称反推。report读前后检查工作区版本；生成文件后仍应调用reportCheck再交付，以发现生成过程中修改。该版本保护可因其他业务操作触发保守重做，不拼接两个版本的数据。
+
+### 有界读取与分页报表（2026-10-23，本地实现，尚未部署）
+
+- 013 与服务端普通资源分页增加 384 KiB 整条实体预算，实际返回条数可能少于请求上限；必须继续读取 `cursor`，不能按“少于 50 条”判断结束。首条实体完整保留，不截断备注或课程快照。
+- 周查询的 `records` 仅为任务/记录链接及班级标签，完整正文仍从记录列表、详情或报表读取。首页仅携带本人任务和记录链接，概览使用 `home.summary`；快速与兼容读取遵循同一范围。
+- `report / excelReport / namesReport` 可发送 `payload: { kind, week, paged: true, reportVersion? }`；顶层仍携带 `epoch / semesterId / cursor`。首包返回 `data: { reportPage: true, metadata, records, version }`，其中 `metadata.records=[]`；后续包仅返回 `reportPage / records / version`，顶层 `cursor` 为空才结束。
+- 后续包必须带首包 `reportVersion`，每包重新鉴权并核对轮次、工作区版本；客户端完整取齐并校验游标与记录唯一性后才组装报表。中途版本改变即停止，不交付半份或混合版本文件，文件生成后的 `reportCheck` 保留。
+- 未使用分页参数的旧客户端仍可读取小报表；只读响应超过 900 KiB 时返回明确的 `RESPONSE_TOO_LARGE`。写命令不套用这个响应拦截，避免已提交成功后被改报失败。
+
+验证与发布边界见 [稳定性检查](STABILITY-2026-10-23.md)。上述内容不表示 013、云函数或前端已上线。
 
 ## 写命令 `operation: command`
 

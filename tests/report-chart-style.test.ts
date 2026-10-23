@@ -18,19 +18,19 @@ test('图表区间准确覆盖临界点，缺失不着色，行为人次超过10
   for(const v of [null,-1,NaN])assert.equal(chartBand(v,false),'missing');
 });
 test('同专业合班简写，跨专业不误合并，年级动态处理',()=>{
-  assert.equal(cellValue(chartClassLabel('B4','24软工中外3班 / 24软工中外4班','24')),'软工中外3/4');
+  assert.equal(cellValue(chartClassLabel('B4','24软工中外3班 / 24软工中外4班')),'24软工中外3/4');
   assert.equal(cellValue(chartClassLabel('B4','27自动化1班 / 27自动化2班')),'27自动化1/2');
   assert.equal(cellValue(chartClassLabel('B4','27自动化1班 / 28计科2班')),'27自动化1/28计科2');
-  assert.equal(cellValue(chartClassLabel('B4','2028自动化1班 / 2028自动化2班','2028')),'自动化1/2');
+  assert.equal(cellValue(chartClassLabel('B4','2028自动化1班 / 2028自动化2班')),'28自动化1/2');
 });
 test('所有图使用比例并保持每条观测，颜色源跟随排序公式，零值仅一根柱',()=>{
   const sheets=reportSheets(weeklyChartFixture(),8);
   const attendance=sheets.find(s=>s.name==='24级出勤情况')!;
   assert.equal(cellValue(attendance.rows[3][1]),1);
-  assert.equal(cellValue(attendance.rows[11][0]),'软工中外3/4');
+  assert.equal(cellValue(attendance.rows[11][0]),'24软工中外3/4');
   assert.equal(cellValue(attendance.rows[11][1]),46/58);
   const boundary=sheets.find(s=>s.name==='25级出勤情况')!;
-  assert.equal(boundary.rows.filter(r=>cellValue(r[0])==='边界乙1').length,2);
+  assert.equal(boundary.rows.filter(r=>cellValue(r[0])==='25边界乙1').length,2);
   for(const sheet of sheets.filter(s=>s.chart)) {
     assert.equal(sheet.chartPercent,true);
     for(const row of sheet.rows.slice(3)) {

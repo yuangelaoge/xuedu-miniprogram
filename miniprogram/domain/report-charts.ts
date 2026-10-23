@@ -2,22 +2,21 @@ import { Cell, SheetData } from './xlsx';
 const formula=(formula:string,value:string|number):Cell=>({formula,value});
 export const cellValue=(cell:Cell|undefined):string|number=>cell===null || cell===undefined ? '' : typeof cell==='object'?cell.value:cell;
 export const CHART_COLORS={blue:'2E75B6',orange:'ED7D31',red:'C00000'};
-/** Keep one observation per bar. Only abbreviate repeated grade/major prefixes. */
-export function chartClassLabel(reference:string,label:string,grade=''):Cell {
+/** Keep the two-digit intake year, abbreviating only repeated grade/major prefixes. */
+export function chartClassLabel(reference:string,label:string):Cell {
   let expression=reference,value=label;
   const replace=(from:string,to:string)=>{
     expression=`SUBSTITUTE(${expression},"${from.replace(/"/g,'""')}","${to.replace(/"/g,'""')}")`;
     value=value.split(from).join(to);
   };
   replace(' ','');replace('／','/');replace('班','');
+  for(const part of value.split('/')) {
+    const match=part.match(/^(\d{4})([^\d]+)(\d+)$/);
+    if(match)replace(match[0],match[1].slice(-2)+match[2]+match[3]);
+  }
   const parts=value.split('/'),matches=parts.map(part=>part.match(/^(\d{4}|\d{2})([^\d]+)(\d+)$/));
   if(matches.length>1 && matches.every(m=>m && m[1]===matches[0]?.[1] && m[2]===matches[0]?.[2]))
     replace('/'+matches[0]![1]+matches[0]![2],'/');
-  if(grade) {
-    const escaped=grade.replace(/"/g,'""');
-    expression=`IF(LEFT(${expression},${grade.length})="${escaped}",MID(${expression},${grade.length+1},32767),${expression})`;
-    if(value.startsWith(grade))value=value.slice(grade.length);
-  }
   return formula(`IF(${reference}="","",${expression})`,value);
 }
 export function chartBand(rate:number|null,attendance:boolean):'blue'|'orange'|'red'|'missing' {
@@ -34,7 +33,7 @@ export function linkedCharts(source:SheetData,grades:string[],week:number,metric
     const column=metricColumns[mi];
     const candidates=source.rows.slice(3).map((row,i)=>{
       const metric=cellValue(row[index(column)]),grade=String(cellValue(row[index(gradeColumn)]));
-      return {label:String(cellValue(chartClassLabel(get(labelColumn,i+4),String(cellValue(row[index(labelColumn)])),group.grade))),value:typeof metric==='number'&&metric>=0&&(!group.grade || grade===group.grade)?metric:null,index:i};
+      return {label:String(cellValue(chartClassLabel(get(labelColumn,i+4),String(cellValue(row[index(labelColumn)]))))),value:typeof metric==='number'&&metric>=0&&(!group.grade || grade===group.grade)?metric:null,index:i};
     });
     const sorted=candidates.filter(r=>r.value!==null).sort((a,b)=>b.value!-a.value! || a.index-b.index);
     const rows:Cell[][]=[[group.name+name],[`第${week}周 · 修改原始数据后图表自动更新；缺失不记零`],['听课班级',mi===0?'出勤率':mi===1?'违纪率（行为人次）':'迟到率','','','','','','','','','','','来源班级','有效指标','排序序号','蓝色','橙色','红色']];
@@ -47,7 +46,7 @@ export function linkedCharts(source:SheetData,grades:string[],week:number,metric
         formula(`IFERROR(INDEX($M$4:$M$${end},MATCH(ROW()-3,$O$4:$O$${end},0)),"")`,sorted[i]?.label || ''),
         formula(`IFERROR(INDEX($N$4:$N$${end},MATCH(ROW()-3,$O$4:$O$${end},0)),"")`,sorted[i]?.value ?? ''),
         ...Array<Cell>(10).fill(null),
-        chartClassLabel(get(labelColumn,r),String(cellValue(raw[index(labelColumn)])),group.grade),
+        chartClassLabel(get(labelColumn,r),String(cellValue(raw[index(labelColumn)]))),
         formula(`IF(AND(ISNUMBER(${metric}),${metric}>=0${grade}),${metric},"")`,value??''),
         formula(`IF(ISNUMBER(N${r}),COUNTIF($N$4:$N$${end},">"&N${r})+COUNTIF($N$4:N${r},N${r}),"")`,rank),
         ...(['blue','orange','red'] as const).map(band=>{

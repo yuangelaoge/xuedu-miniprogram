@@ -102,7 +102,8 @@ export async function call<T = Record<string, unknown>>(operation: string, optio
   if (!["bootstrap", "query", "photoUrls", "clearPreview"].includes(operation)) pageRevision++;
   const page = options.payload?.page as PageLoadRequest | undefined;
   const readHint = boot?.member ? { memberId: boot.member.id, semesterId: options.semesterId || page?.semesterId || boot.workspace.activeSemesterId } : undefined;
-  const data = { protocolVersion: 2, operation, epoch: epoch || undefined, readHint, review: reviewActive(), ...options };
+  const data = { protocolVersion: 2, operation, epoch: epoch || undefined, readHint, review: reviewActive(), ...options,
+    clientCapabilities: {recordTextSharing:true} };
   const photoOperation = operation === 'photo' || operation === 'photoFile';
   const requestBytes = photoOperation ? jsonBytes(data) : 0;
   if (requestBytes > PHOTO_REQUEST_BYTES) throw new Error('照片传输数据过大，请重新添加照片以使用文件传输');

@@ -236,7 +236,7 @@ test('页面合并：翻页只追加下一页，不重取学期列表、统计�
 }));
 
 test('页面合并：未入组、维护、越权管理和他人记录仍受限制', async () => fixture(async f => {
-  const invoke=(view:string,other:any={})=>f.gateway({protocolVersion:2,operation:'bootstrap',payload:{page:{view,week:1,semesterId:'semester',...other}}},{OPENID:'member-wechat',APPID:'app'});
+  const invoke=(view:string,other:any={})=>f.gateway({protocolVersion:2,operation:'bootstrap',clientCapabilities:{recordTextSharing:true},payload:{page:{view,week:1,semesterId:'semester',...other}}},{OPENID:'member-wechat',APPID:'app'});
   await assert.rejects(invoke('manage',{section:'classes'}),/权限/);
   const existing=await f.repository.get('records','record'), state=await f.repository.workspace();
   await f.repository.commit({epoch:state.epoch,workspaceVersion:state.version,permissionsVersion:state.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'foreign-record',reads:[],changes:[{resource:'records',id:'foreign',expectedVersion:0,value:{...existing,id:'foreign',memberId:'admin',taskId:'foreign-task'}}],result:{}});
@@ -451,7 +451,7 @@ test('legacy fast records RPC falls back for authenticated member and retains te
   await f.repository.commit({epoch:w.epoch,workspaceVersion:w.version,permissionsVersion:w.permissionsVersion,identityKey:'owner',actorId:'admin',requestId:'fast-shared',reads:[],changes:[{resource:'records',id:'foreign',expectedVersion:0,value:{...existing,id:'foreign',memberId:'admin',taskId:'foreign-task'}}],result:{}});
   let fastCalls=0;
   f.repository.bootstrapPage=async()=>{fastCalls++;return {protocolVersion:2,epoch:w.epoch,resourceVersions:{workspace:1},data:{member:await f.repository.get('members','member'),page:{list:{items:[existing],cursor:''}}}};};
-  const result=await f.gateway({protocolVersion:2,operation:'bootstrap',payload:{fastPage:true,page:{view:'records',week:1,semesterId:'semester'}}},{OPENID:'member-wechat',APPID:'app'});
+  const result=await f.gateway({protocolVersion:2,operation:'bootstrap',clientCapabilities:{recordTextSharing:true},payload:{fastPage:true,page:{view:'records',week:1,semesterId:'semester'}}},{OPENID:'member-wechat',APPID:'app'});
   assert.equal(fastCalls,1);assert.equal(result.data.page.list.items.length,2);
   assert.equal(result.data.page.list.items.find((r:Entity)=>r.id==='foreign').data.photos,undefined);
   assert.deepEqual(result.data.page.list.items.find((r:Entity)=>r.id==='record').data.photos,['photo']);

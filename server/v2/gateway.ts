@@ -84,6 +84,10 @@ export function createGatewayV2(deps: DependenciesV2) {
     const startedAt = Date.now();
     if (!context.OPENID || context.APPID !== deps.appid) fail("微信身份无效", "UNAUTHENTICATED");
     if (!input || input.protocolVersion !== 2) fail("请更新小程序", "UPGRADE_REQUIRED");
+    // Legacy pages always request photo URLs after opening a record. Keep their
+    // original self-only record scope until the client supports text-only views.
+    const recordTextSharing = input.clientCapabilities?.recordTextSharing === true;
+    const readsAllRecords = (role: unknown) => canViewAllRecordPhotos(role) || recordTextSharing && canViewAllRecords(role);
     const allowed = ["bootstrap", "initialize", "query", "command", "photo", "photoFile", "photoUrls", "clearPreview", "clearBegin", "clearStep"];
     if (!allowed.includes(input.operation)) fail("请更新小程序", "UPGRADE_REQUIRED");
     const requestLimit = input.operation === "photoFile" ? PHOTO_REQUEST_BYTES : input.operation === "photo" ? MAX_PHOTO_BASE64_LENGTH + 16384 : 1200000;
@@ -93,7 +97,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       const fast = await repo.bootstrapPage(context.OPENID, {...input.payload,epoch:input.epoch},context.OPENID === deps.bootstrapOpenid);
       // Existing database RPCs scope member records to self. Use the authorized
       // paginated gateway for this new text-only view without requiring a migration.
-      const memberRecords = (input.payload.page as PageLoadRequest | undefined)?.view === "records"
+      const memberRecords = recordTextSharing && (input.payload.page as PageLoadRequest | undefined)?.view === "records"
         && (fast?.data.member as Entity | undefined)?.data.role === "member";
       if (fast && !memberRecords) return boundedReadResponse({...fast,data:{...fast.data,executionConfigured}});
     }
@@ -320,13 +324,13 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (["courses", "records", "recordVersions"].includes(kind)) { if (!knownSemester) await get("semesters", text(request.semesterId, "学期标识", 200)); query.eq = { semesterId: request.semesterId }; }
       if (kind === "records") {
         if (request.week !== undefined) query.eq!.week = integer(request.week, "周次", 1, 60);
-        if (!canViewAllRecords(member().data.role)) query.eq!.memberId = member().id;
+        if (!readsAllRecords(member().data.role)) query.eq!.memberId = member().id;
       }
       let recordOwner: string | undefined;
       if (kind === "recordVersions") {
         const record = (await get("records", text(request.id, "记录标识")))!;
         if (record.semesterId !== request.semesterId) fail("学期不匹配");
-        if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        if (!readsAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         query.eq!.recordId = record.id; recordOwner = record.memberId;
       }
       const result = await page(paginated[kind], query);
@@ -354,7 +358,7 @@ export function createGatewayV2(deps: DependenciesV2) {
         // A cleared workspace invalidates saved semester selections; reset the client before querying.
         const staleEpoch = !!input.epoch && input.epoch !== workspace.epoch;
         pageData = validActor && !workspace.maintenance && !staleEpoch ? await readPageData(request, {
-          actor: validActor, workspace, now, get, page, all, clean: cleanForViewer, fail,
+          actor: validActor, workspace, now, recordTextSharing, get, page, all, clean: cleanForViewer, fail,
           count: (resource, query) => repo.count(resource, {...query,eq:{...query.eq,epoch:workspace.epoch}}),
           list: (kind, semester, week, cursor) => readList(kind, {semesterId:semester?.id,week,cursor}, !!semester),
         }) : null;
@@ -462,7 +466,7 @@ export function createGatewayV2(deps: DependenciesV2) {
       if (kind === "record") {
         member(); await requireSemester(); const record = (await get("records", text(p.id, "记录标识")))!;
         if (record.semesterId !== input.semesterId) fail("学期不匹配");
-        if (!canViewAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
+        if (!readsAllRecords(member().data.role) && record.memberId !== member().id) fail("不可查看他人记录", "FORBIDDEN");
         return response({ record: cleanForViewer(record), canEdit: member().data.role === "admin" || record.memberId === member().id && now - Date.parse(String(record.data.firstSubmittedAt)) < DAY });
       }
       if (kind === "week" || kind === "report" || kind === "excelReport" || kind === "namesReport") {

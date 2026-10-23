@@ -390,7 +390,7 @@ test('officer record pagination is complete, reports match admin including empty
  await f.call('command',{type:'availabilitySave',week:2,slots:['3:3'],note:'own-only'},{who:'oo',expectedVersion:0});
  const saved=await f.call('query',{kind:'week',week:2,memberId:'member'},{who:'oo'});assert.deepEqual((saved.data.availability as any).data.slots,['3:3']);assert.doesNotMatch(JSON.stringify(saved),/"1:1"/);
  await f.call('command',{type:'roleChange',id:'officer',role:'member',reason:'合成降级',confirmed:true},{expectedVersion:1});
- const shared=await f.call('query',{kind:'records',week:2},{who:'oo'});
+ const shared=await f.call('query',{kind:'records',week:2},{who:'oo',clientCapabilities:{recordTextSharing:true}});
  assert.equal(shared.data.items.length,50); assert.ok(shared.data.items.every((r:Entity)=>r.data.photos===undefined));
  await assert.rejects(f.call('photoUrls',{ids:['p1']},{who:'oo'}),/不可/);
  await assert.rejects(f.call('query',{kind:'excelReport',week:2},{who:'oo'}),/仅管理员/);
@@ -402,9 +402,9 @@ test('officer record pagination is complete, reports match admin including empty
  test('member text sharing blocks current/history/direct photos, reports and edits while preserving own photos',async()=>{
  const f=officerFixture(),record=await submit(f);
  await f.call('command',{type:'roleChange',id:'officer',role:'member',reason:'测试',confirmed:true},{expectedVersion:1});
- const detail=await f.call('query',{kind:'record',id:record.id},{who:'oo'});
+ const detail=await f.call('query',{kind:'record',id:record.id},{who:'oo',clientCapabilities:{recordTextSharing:true}});
  assert.equal(detail.data.canEdit,false);assert.equal(detail.data.record.data.metrics.actual,29);assert.equal(detail.data.record.data.photos,undefined);
- const history=await f.call('query',{kind:'recordVersions',id:record.id},{who:'oo'});
+ const history=await f.call('query',{kind:'recordVersions',id:record.id},{who:'oo',clientCapabilities:{recordTextSharing:true}});
  assert.ok(history.data.items.length); assert.ok(history.data.items.every((r:Entity)=>r.data.photos===undefined));
  for(const payload of [{recordId:record.id},{ids:['p1']},{recordId:record.id,versionId:history.data.items[0].id}])await assert.rejects(f.call('photoUrls',payload,{who:'oo'}),/不可查看他人照片/);
  for(const kind of ['report','excelReport','namesReport','submissionStatus'])await assert.rejects(f.call('query',{kind,week:2},{who:'oo'}),/权限|仅管理员/);

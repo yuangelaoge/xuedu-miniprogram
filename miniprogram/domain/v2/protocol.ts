@@ -33,6 +33,8 @@ export interface Commit {
   result: Record<string, unknown>;
 }
 export interface ApiRequest {
+  /** UI compatibility only; never grants a role or photo access. Omitted by legacy clients. */
+  clientCapabilities?: { recordTextSharing?: boolean };
   /** Read-ahead hints only; the server still verifies the live WeChat binding and role. */
   readHint?: { memberId?: string; semesterId?: string };
   protocolVersion: 2; operation: string; epoch?: string; semesterId?: string;

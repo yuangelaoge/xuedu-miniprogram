@@ -44,7 +44,7 @@ interface Measurement {key: string; bytes: number; calls: number; localWallMs: n
 const measured: Measurement[] = [];
 const baseline = new Map<string, Measurement>();
 const bootRequest = (view: string, fast = true, week = 8, semesterId = 'synthetic-current'): ApiRequest => ({
-  protocolVersion: 2, operation: 'bootstrap', epoch: 'synthetic-epoch',
+  protocolVersion: 2, operation: 'bootstrap', epoch: 'synthetic-epoch', clientCapabilities:{recordTextSharing:true},
   payload: {fastPage: fast, ...(view === 'home' ? {includeHome: true} : {page: {view, week, semesterId}})},
 });
 async function measure(key: string, request: ApiRequest, role: typeof roles[number] = 'admin') {

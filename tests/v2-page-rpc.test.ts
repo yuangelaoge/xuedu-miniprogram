@@ -26,7 +26,7 @@ const repo=new PostgresRepository(db);
 const deps={repository:repo,appid:'app',bootstrapOpenid:'wx-admin',uuid:()=> 'unused',maxExecutionMs:3000,
  photos:{async upload(){throw Error('unused');},async list(){return [];},async delete(){},async urls(){photoUrlCalls++;return [];}}};
 const api=createGatewayV2(deps);
-const request=(view:string,extra:Record<string,unknown>={},fast=true):ApiRequest=>({protocolVersion:2,operation:'bootstrap',epoch:'e',payload:{fastPage:fast,...(view==='home'?{includeHome:true}:{page:{view,...extra}})}});
+const request=(view:string,extra:Record<string,unknown>={},fast=true):ApiRequest=>({protocolVersion:2,operation:'bootstrap',epoch:'e',clientCapabilities:{recordTextSharing:true},payload:{fastPage:fast,...(view==='home'?{includeHome:true}:{page:{view,...extra}})}});
 const call=(view:string,extra:Record<string,unknown>={},who='wx-admin',fast=true)=>api(request(view,extra,fast),{OPENID:who,APPID:'app'});
 const seed=(r:string,id:string,data:Record<string,unknown>,extra:Record<string,unknown>={})=>{
  const e={id,epoch:'e',version:1,data,...extra};
@@ -159,7 +159,7 @@ pgtest('page RPC: officer sees every record but only own availability and no man
 });
 pgtest('page RPC: member shared detail/history retain text but never expose another member photo or download capability',async()=>{
  const context={OPENID:'wx-member',APPID:'app'};
- const read=(kind:string,extra:Record<string,unknown>={})=>api({protocolVersion:2,operation:'query',epoch:'e',semesterId:'s',payload:{kind,...extra}},context);
+ const read=(kind:string,extra:Record<string,unknown>={})=>api({protocolVersion:2,operation:'query',epoch:'e',semesterId:'s',clientCapabilities:{recordTextSharing:true},payload:{kind,...extra}},context);
  const detail=await read('record',{id:'r000'});
  assert.equal(detail.data.canEdit,false);assert.equal(detail.data.record.data.photos,undefined);
  assert.match(detail.data.record.data.notes,/observation/);
@@ -171,6 +171,18 @@ pgtest('page RPC: member shared detail/history retain text but never expose anot
   await assert.rejects(api({protocolVersion:2,operation:'photoUrls',epoch:'e',semesterId:'s',payload},context),/不可查看他人照片/);
  assert.equal(photoUrlCalls,before,'no signed URL request may occur for denied photos');
  for(const kind of ['summaryReport','excelReport','namesReport','scheduleReport']) await assert.rejects(read(kind,{week:1}),/权限|仅管理员|FORBIDDEN/);
+});
+pgtest('page RPC: archived clients retain own-record SQL and fallback shapes without needing a frontend release',async()=>{
+ const context={OPENID:'wx-member',APPID:'app'};
+ const legacy=(fast:boolean):ApiRequest=>({...request('records',{week:1},fast),clientCapabilities:undefined});
+ calls.length=0;const fast=await api(legacy(true),context);
+ assert.deepEqual(calls,['xuedu_v2_bootstrap_page']);
+ const fallback=await api(legacy(false),context);
+ assert.deepEqual(JSON.parse(JSON.stringify(fast.data.page)),JSON.parse(JSON.stringify(fallback.data.page)));
+ assert.deepEqual(fast.data.page.summary,{total:57,submitted:56,skipped:false});
+ assert.ok(fast.data.page.list.items.every((row:Entity)=>row.memberId==='member'));
+ assert.ok(fast.data.page.list.items.every((row:Entity)=>Array.isArray(row.data.photos)));
+ for(const kind of ['record','recordVersions']) await assert.rejects(api({protocolVersion:2,operation:'query',epoch:'e',semesterId:'s',payload:{kind,id:'r000'}},context),/不可查看他人记录/);
 });
 pgtest('page RPC: rejects malformed selections, stale pagination and mixed identities',async()=>{
  for(const extra of [{week:0},{week:61},{week:1.5},{week:'1'},{cursor:123},{semesterId:[]},{more:'yes'},{more:true,selectionOwner:'other'}]) {

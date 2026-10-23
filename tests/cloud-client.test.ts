@@ -12,6 +12,7 @@ test("V2客户端：协议拒绝、启动去重、本机学期账号隔离、版
   g.wx = { getStorageSync: (k: string) => storage.get(k), removeStorageSync: (k: string) => storage.delete(k), setStorageSync: (k: string, v: unknown) => storage.set(k, v), cloud: {
     init() {}, async callFunction({ data }: any) {
       calls++; assert.equal(data.protocolVersion, 2);
+      assert.deepEqual(data.clientCapabilities,{recordTextSharing:true});
       const snapshot = { protocolVersion, epoch, resourceVersions: {workspace: version}, data: data.operation === "bootstrap" ? {workspace: {epoch, version, activeSemesterId: "active"},member: {id: actor},status: "ready",...(data.payload?.includeHome ? {home:{semester:null,week:1,weekData:null}} : {})} : {items: []}};
       if (delay && data.operation === "query") { delay = false; await new Promise<void>(r => { release = r; }); }
       return {result: {ok: true, data: snapshot}};

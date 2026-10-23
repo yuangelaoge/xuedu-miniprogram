@@ -182,6 +182,12 @@ JSON导入仍复用现有 `classes/courses` 格式，禁止导入members；单�
 
 观察字段：`metrics`为expected/actual/late/early/sleep/phone/talk/other，`absentNames/leaveNames/otherDescription/evaluation/feedback/suggestion`为文本，`photos`为1个已登记照片ID；既有多照片记录可原样保留附件进行文字更正，替换照片时限1张。修改不能提交memberId/taskId/semesterId/course/date/firstSubmittedAt/createdAt/classes等归属字段。首次提交和各次更正均保存record_versions；后续更正不重开24小时窗口。部长仅能在窗口内改本人记录，不获得他人纠错权限。
 
+## 新旧前端记录范围兼容（2026-10-23）
+
+新版请求在顶层声明 `clientCapabilities: { recordTextSharing: true }`，表示页面能展示他人文字记录且不会自动请求其照片；服务端仍从可信微信绑定或审核会话取得有效成员及实际角色。这个标识不是角色或权限凭据，只在当前业务已允许的文字读取范围内启用新版行为，不能授予照片、导出、修改或管理权限。
+
+未声明或声明为 `false` 的旧前端，普通成员的记录列表、详情和历史版本保持本人范围；`records` 的快速 SQL 页面与后备查询、概览统计使用相同范围。新版普通成员才读取全组文字并剔除他人照片标识；`photoUrls` 无论是否声明均逐项独立校验，旧版管理员、组部长、信息部干事的读取范围不变。审核样例也沿用该兼容规则。
+
 ## 照片
 
 `photo`：epoch、semesterId、requestId，payload `{ taskId, base64 }`。不接受任意目标路径；服务器检查任务归属/管理员纠错资格、期限与单张2MB（2×1024×1024字节）限制，写入服务端派生的 `cloud/<epoch>/stable-<hash>.jpg` 私有路径并登记（旧 UUID 路径继续可读），返回 `photoId`（`fileID`为同一业务ID兼容字段）。随后recordSubmit/Edit引用此ID；不能跨记录引用照片。上传成功而登记失败可能留下该轮次孤儿文件，维护扫描固定轮次目录处理。
